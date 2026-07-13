@@ -975,28 +975,47 @@ end
 
 
 -- CreateMaskTexture polyfill for 3.3.5a (Frame / StatusBar / Cooldown / Texture)
+-- IMPORTANT: some environments (e.g. !!!ClassicAPI) pre-define CreateMaskTexture
+-- as a void stub that returns nil. Callers like StatusIcon.lua immediately index
+-- the result ("attempt to index local 'mask' (a nil value)"), so a simple
+-- "if not defined" guard is not enough - we must also verify the existing
+-- implementation actually returns an object, and override it if it does not.
 do
+    local function makeMask(self)
+        -- 3.3.5a has no real mask textures; fake it with a hidden Frame (empty)
+        -- We use a Frame instead of Texture to avoid the "white box" issue if SetTexture is called.
+        -- Textures cannot parent frames, so fall back to their parent frame.
+        local parent = self
+        if not self.CreateTexture then -- not a Frame (e.g. Texture region)
+            parent = self:GetParent() or UIParent
+        end
+        local mask = CreateFrame("Frame", nil, parent)
+        mask:SetAllPoints(self)
+        mask:EnableMouse(false) -- Ensure it doesn't block clicks
+
+        -- Add dummy methods that Actions.lua expects on a Texture/Mask
+        mask.SetTexture = function() end
+        mask.SetRotated = function() end
+
+        return mask
+    end
+
     local function addCreateMaskTexture(obj)
         local mt = getmetatable(obj)
         if not mt or type(mt.__index) ~= "table" then
             return
         end
 
-        if not mt.__index.CreateMaskTexture then
-            function mt.__index:CreateMaskTexture()
-                -- 3.3.5a has no real mask textures; fake it with a hidden Frame (empty)
-                -- We use a Frame instead of Texture to avoid the "white box" issue if SetTexture is called.
-                local mask = CreateFrame("Frame", nil, self)
-                mask:SetAllPoints(self)
-                mask:EnableMouse(false) -- Ensure it doesn't block clicks
-                
-                -- Add dummy methods that Actions.lua expects on a Texture/Mask
-                mask.SetTexture = function() end
-                mask.SetRotated = function() end
-                
-                return mask
+        local existing = mt.__index.CreateMaskTexture
+        if existing then
+            -- Probe it: if it returns a usable object, leave it alone.
+            local ok, result = pcall(existing, obj)
+            if ok and result ~= nil then
+                return
             end
         end
+
+        mt.__index.CreateMaskTexture = makeMask
     end
 
     -- Patch the types we care about
