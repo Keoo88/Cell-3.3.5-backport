@@ -290,6 +290,22 @@ local function BuildAndNotify(unit)
     lib.callbacks:Fire(UPDATE_EVENT, guid, unit, cache[guid])
 end
 
+-- 3.3.5: role by class + dominant talent tree (tab index order is fixed).
+-- Feral druids are mapped to DAMAGER (bear/cat is indistinguishable from
+-- talents alone); bear tanks are covered by raid main tank assignment.
+local WRATH_TREE_ROLES = {
+    WARRIOR     = {"DAMAGER", "DAMAGER", "TANK"},
+    PALADIN     = {"HEALER", "TANK", "DAMAGER"},
+    HUNTER      = {"DAMAGER", "DAMAGER", "DAMAGER"},
+    ROGUE       = {"DAMAGER", "DAMAGER", "DAMAGER"},
+    PRIEST      = {"HEALER", "HEALER", "DAMAGER"},
+    DEATHKNIGHT = {"TANK", "DAMAGER", "DAMAGER"},
+    SHAMAN      = {"DAMAGER", "DAMAGER", "HEALER"},
+    MAGE        = {"DAMAGER", "DAMAGER", "DAMAGER"},
+    WARLOCK     = {"DAMAGER", "DAMAGER", "DAMAGER"},
+    DRUID       = {"DAMAGER", "DAMAGER", "HEALER"},
+}
+
 local function BuildAndNotify_Wrath(unit)
     Print("|cffff7777LGI:BuildAndNotify_Wrath|r", unit)
 
@@ -299,6 +315,7 @@ local function BuildAndNotify_Wrath(unit)
     -- spec
     local isInspect = not UnitIsUnit(unit, "player")
     local maxPoints = 0
+    local maxTab
 
     if isInspect then
         for i = 1, GetNumTalentTabs(true) do
@@ -311,6 +328,7 @@ local function BuildAndNotify_Wrath(unit)
 
             if pointsSpent > maxPoints then
                 maxPoints = pointsSpent
+                maxTab = i
                 cache[guid].specName = name
                 cache[guid].specIcon = texture
             end
@@ -326,10 +344,19 @@ local function BuildAndNotify_Wrath(unit)
 
             if pointsSpent > maxPoints then
                 maxPoints = pointsSpent
+                maxTab = i
                 cache[guid].specName = name
                 cache[guid].specIcon = texture
             end
         end
+    end
+
+    -- derive role from class + dominant tree (was never set in the wrath
+    -- path, leaving specRole nil and breaking role detection downstream)
+    if maxTab and cache[guid].class and WRATH_TREE_ROLES[cache[guid].class] then
+        cache[guid].specRole = WRATH_TREE_ROLES[cache[guid].class][maxTab]
+    else
+        cache[guid].specRole = nil
     end
 
     --! fire
@@ -367,7 +394,13 @@ function frame:PLAYER_LOGIN()
     frame:RegisterEvent("PLAYER_ENTERING_WORLD")
     frame:RegisterEvent("PLAYER_REGEN_ENABLED")
     frame:RegisterEvent("PLAYER_REGEN_DISABLED")
-    frame:RegisterEvent("INSPECT_READY")
+    if IS_WRATH then
+        -- 3.3.5: INSPECT_READY doesn't exist (added in 4.0); the WotLK
+        -- equivalent is INSPECT_TALENT_READY (fires with no guid argument)
+        frame:RegisterEvent("INSPECT_TALENT_READY")
+    else
+        frame:RegisterEvent("INSPECT_READY")
+    end
     frame:RegisterEvent("GROUP_ROSTER_UPDATE")
     frame:RegisterEvent("UNIT_LEVEL")
     frame:RegisterEvent("UNIT_NAME_UPDATE")
@@ -495,6 +528,16 @@ function frame:INSPECT_READY(guid)
         lib.callbacks:Fire(QUEUE_EVENT, guid, queueGUIDs[guid].unit, "INSPECT_READY")
         Query(queueGUIDs[guid].unit)
         queueGUIDs[guid] = nil
+    end
+end
+
+-- 3.3.5: INSPECT_TALENT_READY carries no guid. The queue inspects strictly
+-- one unit at a time (only queue[1] can be in "requesting" state), so the
+-- head of the queue is the unit whose talents just arrived.
+function frame:INSPECT_TALENT_READY()
+    local guid = queue[1]
+    if guid and queueGUIDs[guid] and queueGUIDs[guid].status == "requesting" then
+        self:INSPECT_READY(guid)
     end
 end
 
