@@ -2121,7 +2121,8 @@ end
 -- OmniCD
 -------------------------------------------------
 function F.UpdateOmniCDPosition(frame)
-    if OmniCD and OmniCD[1].db.position.uf == frame then
+    -- upstream r271: nil-guard OmniCD[1].db (errors when OmniCD's DB isn't initialized yet)
+    if OmniCD and OmniCD[1].db and OmniCD[1].db.position.uf == frame then
         C_Timer.After(0.5, function()
             OmniCD[1].Party:UpdatePosition()
         end)
@@ -2217,7 +2218,10 @@ local IsSpellInRange = (C_Spell and C_Spell.IsSpellInRange) and C_Spell.IsSpellI
 local IsItemInRange = (C_Spell and C_Item.IsItemInRange) and C_Item.IsItemInRange or IsItemInRange
 local CheckInteractDistance = CheckInteractDistance
 local UnitIsDead = UnitIsDead
-local IsSpellKnownOrOverridesKnown = IsSpellKnownOrOverridesKnown
+-- upstream r273 switched to IsSpellKnown; on 3.3.5 IsSpellKnownOrOverridesKnown
+-- doesn't exist at all (MoP+ API), so without this fallback the local is nil
+-- and SPELLS_CHANGED errors on every spellbook update
+local IsSpellKnownOrOverridesKnown = IsSpellKnownOrOverridesKnown or IsSpellKnown
 -- local GetSpellTabInfo = GetSpellTabInfo
 -- local GetNumSpellTabs = GetNumSpellTabs
 -- local GetSpellBookItemName = GetSpellBookItemName
