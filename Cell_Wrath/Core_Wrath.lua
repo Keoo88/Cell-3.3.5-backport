@@ -654,6 +654,9 @@ function eventFrame:PLAYER_ENTERING_WORLD()
     if isIn then
         PreUpdateLayout()
         inInstance = true
+        -- notify listeners (TargetedSpells "only in instance" mode depends on this;
+        -- upstream Cell fires these from PLAYER_ENTERING_WORLD, was lost in the port)
+        Cell.Fire("EnterInstance", iType)
 
         -- NOTE: delayed raid difficulty check
         if iType == "raid" then
@@ -679,6 +682,7 @@ function eventFrame:PLAYER_ENTERING_WORLD()
     elseif inInstance then -- left insntance
         PreUpdateLayout()
         inInstance = false
+        Cell.Fire("LeaveInstance")
 
         if not InCombatLockdown() and not UnitAffectingCombat("player") then
             collectgarbage("collect")
