@@ -527,13 +527,11 @@ local function ApplyClickCastings(b)
                 spellName = spellName .. F.GetRankSuffix(rank)
             end
 
-            --! NOTE: fix Primordial Wave
-            -- NOTE: only Necrolord shamans have this issue
-            -- https://www.wowhead.com/spell=375982/primordial-wave#comments:id=5484251
-            if t[3] == 428332 then
-                local subtext = C_Spell.GetSpellSubtext(428332)
-                spellName = spellName .. "(" .. (subtext or EXPANSION_NAME8) .. ")"
-            end
+            -- NOTE: removed the retail-only Primordial Wave (428332) workaround:
+            -- the spell doesn't exist on 3.3.5 and C_Spell.GetSpellSubtext isn't
+            -- polyfilled - the branch could only produce a nil-call error here.
+            -- Spell ranks are handled above via F.GetSpellInfo + F.GetRankSuffix
+            -- (the same spellbook-based approach Clique 3.3.5 uses).
 
             local condition = ""
             if not F.IsSoulstone(spellName) then
