@@ -373,6 +373,42 @@ else
 end
 
 -------------------------------------------------
+-- RAID_CLASS_COLORS.colorStr polyfill for 3.3.5a
+-- The .colorStr field was added in 4.2; on 3.3.5 it is nil, which breaks
+-- Cell's accent color init (Widgets.lua: "|c"..colorStr concat with nil)
+-- and F.GetClassColorStr. Derive it from the r/g/b values.
+-- (Same approach as WeakAuras-WotLK Compatibility.lua)
+-------------------------------------------------
+do
+    local function fill(colors)
+        if type(colors) ~= "table" then return end
+        for _, color in pairs(colors) do
+            if type(color) == "table" and color.r and not color.colorStr then
+                color.colorStr = string.format("ff%02x%02x%02x",
+                    math.floor(color.r * 255 + 0.5),
+                    math.floor(color.g * 255 + 0.5),
+                    math.floor(color.b * 255 + 0.5))
+            end
+        end
+    end
+    fill(RAID_CLASS_COLORS)
+    fill(CUSTOM_CLASS_COLORS)
+end
+
+-------------------------------------------------
+-- Global WrapTextInColorCode polyfill for 3.3.5a
+-- The global (from retail's util) doesn't exist on 3.3.5; Cell calls it in
+-- Cell.WrapTextInAccentColor. Tolerates color strings that already carry a
+-- leading "|c" (Cell's accentColor.s does) to avoid double-prefixing.
+-------------------------------------------------
+if not WrapTextInColorCode then
+    function WrapTextInColorCode(text, colorHexString)
+        local hex = tostring(colorHexString or "ffffffff"):gsub("^|c", "")
+        return ("|c%s%s|r"):format(hex, tostring(text))
+    end
+end
+
+-------------------------------------------------
 -- Frame CreateFontString polyfill for WotLK
 -- Ensures all created font strings have a default font set
 -- This prevents "Font not set" errors when calling SetText
@@ -482,11 +518,97 @@ end
 
 -- UnitHasIncomingResurrection
 if not UnitHasIncomingResurrection then
-    -- Retail API: returns true if unit has an incoming resurrection (like Battle Res)
-    -- WotLK doesn't have this API, always return false
-    function UnitHasIncomingResurrection(unit)
-        return false
+    -- Retail API (4.0+): returns true if a resurrection is being cast on the unit.
+    -- Backed by LibResComm-1.0 (comm-based res tracking between addon users,
+    -- same approach as WeakAuras-WotLK). Falls back to false without the lib.
+    local resComm
+    local function GetResComm()
+        if resComm == nil then
+            resComm = (LibStub and LibStub("LibResComm-1.0", true)) or false
+        end
+        return resComm or nil
     end
+
+    function UnitHasIncomingResurrection(unit)
+        local comm = GetResComm()
+        if not comm then return false end
+        local name = unit and UnitName(unit)
+        if not name then return false end
+        return comm:IsUnitBeingRessed(name) and true or false
+    end
+
+    -- Synthetic INCOMING_RESURRECT_CHANGED dispatch ---------------------------
+    -- The event doesn't exist on 3.3.5; track frames that register it (same
+    -- metatable hook pattern as the heal prediction proxy) and fire their
+    -- OnEvent handler from LibResComm callbacks.
+    local rezFrames = setmetatable({}, { __mode = "k" })
+
+    do
+        local sample = CreateFrame("Frame")
+        local mt = getmetatable(sample)
+        mt = mt and mt.__index
+        if mt and mt.RegisterEvent and not mt._CellIncResHook then
+            hooksecurefunc(mt, "RegisterEvent", function(self, event)
+                if event == "INCOMING_RESURRECT_CHANGED" then
+                    rezFrames[self] = true
+                end
+            end)
+            hooksecurefunc(mt, "UnregisterEvent", function(self, event)
+                if event == "INCOMING_RESURRECT_CHANGED" then
+                    rezFrames[self] = nil
+                end
+            end)
+            hooksecurefunc(mt, "UnregisterAllEvents", function(self)
+                rezFrames[self] = nil
+            end)
+            mt._CellIncResHook = true
+        end
+    end
+
+    local function NameToUnit(name)
+        if UnitName("player") == name then return "player" end
+        local n = GetNumRaidMembers and GetNumRaidMembers() or 0
+        if n > 0 then
+            for i = 1, n do
+                if UnitName("raid"..i) == name then return "raid"..i end
+            end
+        else
+            for i = 1, 4 do
+                if UnitExists("party"..i) and UnitName("party"..i) == name then
+                    return "party"..i
+                end
+            end
+        end
+    end
+
+    local function FireIncomingRes(targetName)
+        if not targetName then return end
+        local unit = NameToUnit(targetName)
+        if not unit then return end
+        for frame in pairs(rezFrames) do
+            local handler = frame:GetScript("OnEvent")
+            if handler then
+                pcall(handler, frame, "INCOMING_RESURRECT_CHANGED", unit)
+            end
+        end
+    end
+
+    local rezCallbackOwner = {}
+    local rezInitFrame = CreateFrame("Frame", "CellIncomingResProxy")
+    rezInitFrame:RegisterEvent("PLAYER_LOGIN")
+    rezInitFrame:SetScript("OnEvent", function(self)
+        self:UnregisterEvent("PLAYER_LOGIN")
+        local comm = GetResComm()
+        if not comm then return end
+        -- ResComm_ResStart(event, sender, endTime, targetName)
+        comm.RegisterCallback(rezCallbackOwner, "ResComm_ResStart", function(_, _, _, target)
+            FireIncomingRes(target)
+        end)
+        -- ResComm_ResEnd(event, sender, targetName)
+        comm.RegisterCallback(rezCallbackOwner, "ResComm_ResEnd", function(_, _, target)
+            FireIncomingRes(target)
+        end)
+    end)
 end
 
 -- UnitInPhase

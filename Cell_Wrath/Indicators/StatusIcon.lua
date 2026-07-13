@@ -110,9 +110,11 @@ function I.CreateStatusIcon(parent)
 
     resurrectionIcon.tex = resurrectionIcon:CreateTexture(nil, "ARTWORK")
     resurrectionIcon.tex:SetAllPoints(resurrectionIcon)
+    -- 3.3.5: SetTexture resets desaturation state (see WeakAuras-WotLK
+    -- FixTextureDesaturation), so SetTexture must come BEFORE SetDesaturated
+    resurrectionIcon.tex:SetTexture("Interface\\RaidFrame\\Raid-Icon-Rez")
     resurrectionIcon.tex:SetDesaturated(true)
     resurrectionIcon.tex:SetVertexColor(0.4, 0.4, 0.4, 0.5)
-    resurrectionIcon.tex:SetTexture("Interface\\RaidFrame\\Raid-Icon-Rez")
 
     local bar = CreateFrame("StatusBar", nil, resurrectionIcon)
     bar:SetAllPoints(resurrectionIcon)
