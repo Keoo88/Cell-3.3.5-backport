@@ -36,7 +36,7 @@ local function CreateDescriptionPane()
     descText:SetText(
         "|cfffabd2fCell Wrath (Ascension)|r\n"..
         "|cffffffffFast, compact raid and party frames with crisp debuff tracking, healer-friendly indicators, and a no-fuss setup tuned for Ascension WoW.|r\n\n"..
-        "|cff78d5ffPorted by|r |cffffffffZB|r\n"..
+        "|cff78d5ff3.3.5a backport by|r |cffffffffKeoo|r\n"..
         "|cffa6e22ePort date|r |cffffffff2025-12-03|r\n\n"..
         "|cff66ff99Reach me|r\n"..
         " • |cffffffffDiscord|r: |cff9aedffZB#08374|r\n"..

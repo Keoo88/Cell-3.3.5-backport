@@ -14,7 +14,7 @@ Clean, responsive raid and party frames designed to surface the information you 
 
 **Ascension Wrath port**
 
-- Ported by ZB.
+- 3.3.5a backport by Keoo.
 - Improvements & bugs: Discord Username `08374` or in-game on Bronzebeard (`Zeruto` / `Zeruta` / `Reana`).
 - Port date: 2025-12-03.
 
