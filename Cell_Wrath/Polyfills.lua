@@ -1077,6 +1077,27 @@ do
     addWidgetShims(holder:CreateFontString())    -- FontString
 end
 
+-- Cooldown:SetSwipeColor strictness shim
+-- Retail contract: SetSwipeColor(r, g, b[, a]) - alpha is OPTIONAL.
+-- !!!ClassicAPI's backport (WidgetAPI.lua) requires all 4 args and throws
+-- "Usage: ...:SetSwipeColor(r, g, b, a)" when alpha is nil, which breaks
+-- Cell's 3-arg calls (Base.lua, TargetedSpells.lua). Wrap the existing
+-- implementation to default alpha to 1, matching retail behavior.
+do
+    local cd = CreateFrame("Cooldown")
+    local mt = getmetatable(cd)
+    if mt and type(mt.__index) == "table" then
+        local index = mt.__index
+        local orig = index.SetSwipeColor
+        if orig and not index._CellSwipeColorShim then
+            index.SetSwipeColor = function(self, r, g, b, a)
+                return orig(self, r, g, b, a or 1)
+            end
+            index._CellSwipeColorShim = true
+        end
+    end
+end
+
 -- C_Timer - completely replace with working implementation for WotLK 3.3.5
 -- WotLK has a broken C_Timer that causes errors in C_TimerAugment.lua
 -- Pooled implementation (modeled after !!!ClassicAPI): ONE driver frame for all

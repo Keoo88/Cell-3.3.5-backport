@@ -295,7 +295,9 @@ local function SetCooldown(frame, start, duration, icon, count)
 
     frame.border:Show()
     frame.cooldown:Show()
-    frame.cooldown:SetSwipeColor(unpack(Cell.vars.targetedSpellsGlow[2]))
+    -- alpha may be missing from saved color; ClassicAPI's SetSwipeColor requires 4 args
+    local sr, sg, sb, sa = unpack(Cell.vars.targetedSpellsGlow[2])
+    frame.cooldown:SetSwipeColor(sr, sg, sb, sa or 1)
     frame.cooldown:SetCooldown(start, duration)
     frame.icon:SetTexture(icon)
     frame:Show()
