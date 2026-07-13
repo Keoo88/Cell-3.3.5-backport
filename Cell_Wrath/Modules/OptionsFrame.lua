@@ -9,7 +9,12 @@ local optionsFrame = Cell.CreateFrame("CellOptionsFrame", Cell.frames.mainFrame,
 Cell.frames.optionsFrame = optionsFrame
 PixelUtil.SetPoint(optionsFrame, "CENTER", CellParent, "CENTER", 1, -1)
 optionsFrame:SetFrameStrata("DIALOG")
-optionsFrame:SetFrameLevel(520)
+-- 3.3.5: frame level is capped at 128 (retail allows huge values like 520).
+-- Values above the cap get clamped, collapsing ALL children/masks/popups into
+-- one level and breaking draw order (backgrounds render on top of content).
+-- Keep the base low so relative offsets (+30 mask, +50 popups, +60 combat
+-- mask, +70/+75 confirm/notification popups) stay within the cap.
+optionsFrame:SetFrameLevel(20)
 optionsFrame:SetClampedToScreen(true)
 optionsFrame:SetClampRectInsets(0, 0, 40, 0)
 optionsFrame:SetMovable(true)

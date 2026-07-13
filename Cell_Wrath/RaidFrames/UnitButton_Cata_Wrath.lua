@@ -3947,37 +3947,40 @@ function CellUnitButton_OnLoad(button)
     --* indicatorFrame
     local indicatorFrame = CreateFrame("Frame", name.."IndicatorFrame", button)
     button.widgets.indicatorFrame = indicatorFrame
-    indicatorFrame:SetFrameLevel(button:GetFrameLevel()+220)
+    -- 3.3.5: frame level cap is 128 (retail offsets +120..+220 overflow and
+    -- collapse into one level, breaking draw order). Compressed scheme keeps
+    -- the same relative order: mid(+20) < high(+30) < glows(+40) < indicators(+50).
+    indicatorFrame:SetFrameLevel(button:GetFrameLevel()+50)
     indicatorFrame:SetAllPoints(button)
 
     --* tsGlowFrame (Targeted Spells)
     local tsGlowFrame = CreateFrame("Frame", name.."TSGlowFrame", button)
     button.widgets.tsGlowFrame = tsGlowFrame
-    tsGlowFrame:SetFrameLevel(button:GetFrameLevel()+200)
+    tsGlowFrame:SetFrameLevel(button:GetFrameLevel()+40) -- 3.3.5: was +200, level cap is 128
     tsGlowFrame:SetAllPoints(button)
 
     --* srGlowFrame (Spell Request)
     local srGlowFrame = CreateFrame("Frame", name.."SRGlowFrame", button)
     button.widgets.srGlowFrame = srGlowFrame
-    srGlowFrame:SetFrameLevel(button:GetFrameLevel()+200)
+    srGlowFrame:SetFrameLevel(button:GetFrameLevel()+40) -- 3.3.5: was +200, level cap is 128
     srGlowFrame:SetAllPoints(button)
 
     --* drGlowFrame (Dispel Request)
     local drGlowFrame = CreateFrame("Frame", name.."DRGlowFrame", button)
     button.widgets.drGlowFrame = drGlowFrame
-    drGlowFrame:SetFrameLevel(button:GetFrameLevel()+200)
+    drGlowFrame:SetFrameLevel(button:GetFrameLevel()+40) -- 3.3.5: was +200, level cap is 128
     drGlowFrame:SetAllPoints(button)
 
     --* highLevelFrame
     local highLevelFrame = CreateFrame("Frame", name.."HighLevelFrame", button)
     button.widgets.highLevelFrame = highLevelFrame
-    highLevelFrame:SetFrameLevel(button:GetFrameLevel()+140)
+    highLevelFrame:SetFrameLevel(button:GetFrameLevel()+30) -- 3.3.5: was +140, level cap is 128
     highLevelFrame:SetAllPoints(button)
 
     --* midLevelFrame
     local midLevelFrame = CreateFrame("Frame", name.."MidLevelFrame", button)
     button.widgets.midLevelFrame = midLevelFrame
-    midLevelFrame:SetFrameLevel(button:GetFrameLevel()+120)
+    midLevelFrame:SetFrameLevel(button:GetFrameLevel()+20) -- 3.3.5: was +120, level cap is 128
     midLevelFrame:SetAllPoints(healthBar)
 
     -- shield bar

@@ -1746,7 +1746,9 @@ function Cell.CreateCombatMask(parent, x1, y1, x2, y2)
 
     Cell.StylizeFrame(mask, {0.17, 0.15, 0.15, 0.8}, {0, 0, 0, 0})
     -- mask:SetFrameStrata("DIALOG")
-    mask:SetFrameLevel(parent:GetFrameLevel()+100)
+    -- 3.3.5: level cap is 128; +100 would overflow with the options frame base.
+    -- +60 keeps it above regular masks (+30) and popups (+50).
+    mask:SetFrameLevel(parent:GetFrameLevel()+60)
     mask:EnableMouse(true) -- can't click-through
     mask:EnableMouseWheel(true) -- can't scroll-through
 
@@ -1884,7 +1886,7 @@ function Cell.CreateConfirmPopup(parent, width, text, onAccept, onReject, mask, 
     end)
 
     -- parent.confirmPopup:SetFrameStrata("DIALOG")
-    parent.confirmPopup:SetFrameLevel(parent:GetFrameLevel() + 300)
+    parent.confirmPopup:SetFrameLevel(parent:GetFrameLevel() + 70) -- 3.3.5: was +300, level cap is 128
     parent.confirmPopup:ClearAllPoints() -- prepare for SetPoint()
     parent.confirmPopup:Show()
 
@@ -1947,7 +1949,7 @@ function Cell.CreateNotificationPopup(parent, width, text, mask)
     end)
 
     -- parent.notificationPopup:SetFrameStrata("DIALOG")
-    parent.notificationPopup:SetFrameLevel(parent:GetFrameLevel() + 310)
+    parent.notificationPopup:SetFrameLevel(parent:GetFrameLevel() + 75) -- 3.3.5: was +310, level cap is 128
     parent.notificationPopup:ClearAllPoints() -- prepare for SetPoint()
     parent.notificationPopup:Show()
 
@@ -3473,7 +3475,7 @@ function Cell.CreateReceivingFrame(parent)
     f:SetUserPlaced(true)
     f:RegisterForDrag("LeftButton")
     f:SetFrameStrata("DIALOG")
-    f:SetFrameLevel(277)
+    f:SetFrameLevel(110) -- 3.3.5: was 277, level cap is 128; keep above options frame content (max ~96)
     f:SetClampedToScreen(true)
     P.Size(f, 249, 135)
     f:SetPoint("TOPRIGHT", CellParent, "CENTER")
