@@ -90,8 +90,17 @@ Cell.supporters2 = Cell.supporters2 or {}
 -- Screen size polyfill for WotLK
 -------------------------------------------------
 if not GetPhysicalScreenSize then
-    -- WotLK uses GetScreenWidth() and GetScreenHeight() instead
+    -- Real physical resolution from the gxResolution CVar (ElvUI 3.3.5 technique).
+    -- GetScreenWidth/Height return UI units (scale-dependent) and break
+    -- pixel-perfect math, so only fall back to them if the CVar is unreadable.
     function GetPhysicalScreenSize()
+        local resolution = GetCVar and GetCVar("gxResolution")
+        if resolution then
+            local w, h = resolution:match("(%d+)x(%d+)")
+            if w and h then
+                return tonumber(w), tonumber(h)
+            end
+        end
         return GetScreenWidth(), GetScreenHeight()
     end
 end
@@ -491,17 +500,25 @@ end
 
 -- UnitGroupRolesAssigned
 if not UnitGroupRolesAssigned then
-    -- WotLK 3.3.5a NATIVE API: returns THREE BOOLEANS (isTank, isHealer, isDamage)
-    -- This is DIFFERENT from Retail which returns a single string
-    -- WotLK has role detection through GetRaidRosterInfo and LFG system
-    
+    -- RETAIL CONTRACT: returns ONE string - "TANK" / "HEALER" / "DAMAGER" / "NONE".
+    -- Every consumer (UnitButton, SpotlightFrame, LibGroupInfo) relies on this.
+    -- Do NOT change this back to the 3.3.5 three-boolean convention: mixing the
+    -- two contracts silently breaks role comparisons like (role == "TANK").
+    --
+    -- Sources, in priority order:
+    --   1. GetRaidRosterInfo role (LFG / raid assignments)
+    --   2. Party MAINTANK / MAINASSIST assignments
+    --   3. LibGroupInfo talent-based specRole ONLY (never assignedRole - that
+    --      field is written FROM this function, reading it back would create
+    --      a circular dependency)
+
     -- Debug flag for role detection (toggle with /cell debug role)
     local roleDebugEnabled = false
-    
+
     function UnitGroupRolesAssigned(unit)
-        if not unit then return false, false, false end
-        
-        local isTank, isHealer, isDamage = false, false, false
+        if not unit then return "NONE" end
+
+        local result = nil
         local roleSource = "none"
 
         -- For raid members, get role from GetRaidRosterInfo
@@ -512,16 +529,14 @@ if not UnitGroupRolesAssigned then
                 local raidUnit = "raid" .. i
 
                 if UnitIsUnit(unit, raidUnit) then
-                    -- role is returned from GetRaidRosterInfo (from LFG/Dungeon Finder system or raid assignments)
                     if role and role ~= "NONE" and role ~= "" then
                         roleSource = "GetRaidRosterInfo"
-                        -- Convert WotLK role format to booleans
                         if role == "MAINTANK" or role == "TANK" then
-                            isTank = true
+                            result = "TANK"
                         elseif role == "HEALER" then
-                            isHealer = true
+                            result = "HEALER"
                         elseif role == "MAINASSIST" or role == "DAMAGER" or role == "DPS" then
-                            isDamage = true
+                            result = "DAMAGER"
                         end
                     end
                     break
@@ -530,58 +545,56 @@ if not UnitGroupRolesAssigned then
         end
 
         -- Fallback: Check party assignments (Main Tank/Main Assist)
-        if not isTank and not isHealer and not isDamage then
+        if not result then
             if GetPartyAssignment("MAINTANK", unit) then
-                isTank = true
+                result = "TANK"
                 roleSource = "MainTank assignment"
             elseif GetPartyAssignment("MAINASSIST", unit) then
-                isDamage = true
+                result = "DAMAGER"
                 roleSource = "MainAssist assignment"
             end
         end
-        
-        -- Fallback: Use spec-based detection via LibGroupInfo
-        if not isTank and not isHealer and not isDamage then
+
+        -- Fallback: talent-based detection via LibGroupInfo (specRole ONLY)
+        if not result then
             local LibGroupInfo = LibStub and LibStub:GetLibrary("LibGroupInfo", true)
             if LibGroupInfo then
                 local guid = UnitGUID(unit)
                 if guid then
                     local cachedInfo = LibGroupInfo:GetCachedInfo(guid)
                     if cachedInfo then
-                        -- GetCachedInfo returns a table with assignedRole and specRole fields
-                        local specRole = cachedInfo.assignedRole or cachedInfo.specRole
+                        local specRole = cachedInfo.specRole
                         if specRole and specRole ~= "NONE" then
                             roleSource = "LibGroupInfo (spec-based)"
                             if specRole == "TANK" then
-                                isTank = true
+                                result = "TANK"
                             elseif specRole == "HEALER" then
-                                isHealer = true
+                                result = "HEALER"
                             elseif specRole == "DAMAGER" or specRole == "MELEE" or specRole == "RANGED" then
-                                isDamage = true
+                                result = "DAMAGER"
                             end
                         end
                     end
                 end
             end
         end
-        
+
         -- Final fallback: Default to DAMAGER if still no role detected
         -- This helps on custom servers like Ascension where spec detection may not work
-        if not isTank and not isHealer and not isDamage then
-            isDamage = true
+        if not result then
+            result = "DAMAGER"
             roleSource = "default fallback"
         end
-        
+
         -- Debug output
         if roleDebugEnabled then
-            local roleName = isTank and "TANK" or isHealer and "HEALER" or "DAMAGER"
-            print(string.format("[Role Debug] %s -> %s (source: %s)", 
-                UnitName(unit) or unit, roleName, roleSource))
+            print(string.format("[Role Debug] %s -> %s (source: %s)",
+                UnitName(unit) or unit, result, roleSource))
         end
 
-        return isTank, isHealer, isDamage
+        return result
     end
-    
+
     -- Debug command toggle - create sFuncs table if needed
     if _G.Cell then
         _G.Cell.sFuncs = _G.Cell.sFuncs or {}
@@ -1006,10 +1019,53 @@ do
     end
 end
 
+-- SetIgnoreParentAlpha / IsIgnoringParentAlpha polyfill for 3.3.5a
+-- (added in 7.x; called from Built-in.lua, StatusIcon.lua, PartyFrame.lua, etc.)
+-- True parent-alpha isolation is impossible on this client, so we store the
+-- flag and no-op — this prevents "attempt to call method ... (a nil value)".
+-- SetResizeBounds (added in 9.x) maps to SetMinResize/SetMaxResize.
+do
+    local function addWidgetShims(obj)
+        local mt = getmetatable(obj)
+        if not mt or type(mt.__index) ~= "table" then return end
+        local index = mt.__index
+
+        if not index.SetIgnoreParentAlpha then
+            function index:SetIgnoreParentAlpha(ignore)
+                self._ignoreParentAlpha = ignore and true or false
+            end
+            function index:IsIgnoringParentAlpha()
+                return self._ignoreParentAlpha or false
+            end
+        end
+
+        if index.SetMinResize and not index.SetResizeBounds then
+            function index:SetResizeBounds(minW, minH, maxW, maxH)
+                self:SetMinResize(minW, minH)
+                if maxW and maxH then
+                    self:SetMaxResize(maxW, maxH)
+                end
+            end
+        end
+    end
+
+    local holder = CreateFrame("Frame")
+    addWidgetShims(holder)                       -- Frame (and inheriting: Button, StatusBar share via CreateFrame types below)
+    addWidgetShims(CreateFrame("Button"))
+    addWidgetShims(CreateFrame("StatusBar"))
+    addWidgetShims(CreateFrame("Cooldown"))
+    addWidgetShims(holder:CreateTexture())       -- Texture
+    addWidgetShims(holder:CreateFontString())    -- FontString
+end
+
 -- C_Timer - completely replace with working implementation for WotLK 3.3.5
 -- WotLK has a broken C_Timer that causes errors in C_TimerAugment.lua
--- We completely replace it to avoid those errors
+-- Pooled implementation (modeled after !!!ClassicAPI): ONE driver frame for all
+-- timers, timer objects are recycled, NewTicker honors the iterations argument.
 do
+    local tinsert, tremove = table.insert, table.remove
+    local geterrorhandler = geterrorhandler
+
     local Ticker = {}
     Ticker.__index = Ticker
 
@@ -1021,34 +1077,72 @@ do
         return self._cancelled
     end
 
-    local function CreateTimer(duration, callback, isTicker)
-        -- Validate arguments - use defaults instead of erroring
-        if type(duration) ~= "number" then
-            duration = 0.01 -- fallback to minimal duration
-        end
-        if type(callback) ~= "function" then
-            callback = function() end -- no-op callback
-        end
+    local active = {}   -- array of running timers
+    local pool = {}     -- recycled timer objects
+    local driver = CreateFrame("Frame", "CellTimerDriver")
+    driver:Hide()
 
-        local timer = setmetatable({}, Ticker)
-        local total = 0
-        local frame = CreateFrame("Frame")
-        frame:SetScript("OnUpdate", function(self, elapsed)
-            if timer:IsCancelled() then
-                self:SetScript("OnUpdate", nil)
-                return
-            end
-            total = total + elapsed
-            if total >= duration then
-                if isTicker then
-                    total = 0
-                    pcall(callback, timer) -- Protect callback execution
-                else
-                    self:SetScript("OnUpdate", nil)
-                    pcall(callback) -- Protect callback execution
+    local function onError(err)
+        local handler = geterrorhandler and geterrorhandler()
+        if handler then handler(err) end
+    end
+
+    driver:SetScript("OnUpdate", function(self, elapsed)
+        local n = #active
+        for i = n, 1, -1 do
+            local timer = active[i]
+            if timer._cancelled then
+                tremove(active, i)
+                tinsert(pool, timer)
+            else
+                timer._elapsed = timer._elapsed + elapsed
+                if timer._elapsed >= timer._duration then
+                    if timer._iterations then
+                        -- ticker: fire, then either continue or finish
+                        timer._elapsed = 0
+                        local ok, err = pcall(timer._callback, timer)
+                        if not ok then onError(err) end
+                        if timer._iterations > 0 then
+                            timer._iterations = timer._iterations - 1
+                            if timer._iterations == 0 then
+                                timer._cancelled = true
+                            end
+                        end
+                    else
+                        -- one-shot timer
+                        timer._cancelled = true
+                        local ok, err = pcall(timer._callback, timer)
+                        if not ok then onError(err) end
+                    end
                 end
             end
-        end)
+        end
+        if #active == 0 then
+            self:Hide()
+        end
+    end)
+
+    -- iterations: nil = one-shot, -1 = infinite ticker, N>0 = N-shot ticker
+    local function CreateTimer(duration, callback, iterations)
+        if type(duration) ~= "number" then
+            duration = 0.01
+        end
+        if type(callback) ~= "function" then
+            callback = function() end
+        end
+
+        local timer = tremove(pool)
+        if not timer then
+            timer = setmetatable({}, Ticker)
+        end
+        timer._duration = duration
+        timer._callback = callback
+        timer._iterations = iterations
+        timer._elapsed = 0
+        timer._cancelled = false
+
+        tinsert(active, timer)
+        driver:Show()
         return timer
     end
 
@@ -1058,19 +1152,16 @@ do
             -- Handle both C_Timer.After(duration, callback) and C_Timer:After(duration, callback)
             local duration, callback
             if type(durationOrSelf) == "table" and durationOrSelf == C_Timer then
-                -- Called with colon syntax: C_Timer:After(duration, callback)
                 duration = callbackOrDuration
                 callback = maybeCallback
             else
-                -- Called with dot syntax: C_Timer.After(duration, callback)
                 duration = durationOrSelf
                 callback = callbackOrDuration
             end
-            CreateTimer(duration, callback, false)
+            CreateTimer(duration, callback, nil)
         end,
 
         NewTimer = function(durationOrSelf, callbackOrDuration, maybeCallback)
-            -- Handle both calling conventions
             local duration, callback
             if type(durationOrSelf) == "table" and durationOrSelf == C_Timer then
                 duration = callbackOrDuration
@@ -1079,11 +1170,10 @@ do
                 duration = durationOrSelf
                 callback = callbackOrDuration
             end
-            return CreateTimer(duration, callback, false)
+            return CreateTimer(duration, callback, nil)
         end,
 
         NewTicker = function(durationOrSelf, callbackOrDuration, iterationsOrCallback, maybeIterations)
-            -- Handle both calling conventions
             local duration, callback, iterations
             if type(durationOrSelf) == "table" and durationOrSelf == C_Timer then
                 duration = callbackOrDuration
@@ -1094,7 +1184,10 @@ do
                 callback = callbackOrDuration
                 iterations = iterationsOrCallback
             end
-            return CreateTimer(duration, callback, true)
+            if type(iterations) ~= "number" or iterations <= 0 then
+                iterations = -1 -- infinite
+            end
+            return CreateTimer(duration, callback, iterations)
         end
     }
 end
@@ -1172,17 +1265,16 @@ elseif not C_Item.IsUsableItem then
 end
 
 -------------------------------------------------
--- UnitAura safety wrapper for addons that pass bad params
--- WotLK errors on nil/empty unit or nil index/name; retail is lenient.
+-- NOTE: the global UnitAura override was removed on purpose.
+-- Overriding globals affects every addon and adds overhead to a hot path.
+-- Cell code goes through Cell.UnitBuff/Cell.UnitDebuff/C_UnitAuras below,
+-- which guard their parameters locally.
 -------------------------------------------------
-if not _G._CellOriginalUnitAura then
-    _G._CellOriginalUnitAura = UnitAura
-    function UnitAura(unit, indexOrName, ...)
-        if not unit or unit == "" or indexOrName == nil then
-            return
-        end
-        return _G._CellOriginalUnitAura(unit, indexOrName, ...)
+local function safeUnitAura(unit, indexOrName, filter)
+    if not unit or unit == "" or indexOrName == nil then
+        return
     end
+    return UnitAura(unit, indexOrName, filter)
 end
 
 -------------------------------------------------
@@ -1216,7 +1308,7 @@ if not C_UnitAuras then
     C_UnitAuras = {}
     function C_UnitAuras.GetAuraDataBySlot(unit, slot)
         -- This is a simplified mapping. Real C_UnitAuras returns a table.
-        local name, rank, icon, count, debuffType, duration, expirationTime, unitCaster, isStealable, shouldConsolidate, spellId = UnitAura(unit, slot)
+        local name, rank, icon, count, debuffType, duration, expirationTime, unitCaster, isStealable, shouldConsolidate, spellId = safeUnitAura(unit, slot)
         if name then
             return {
                 name = name,
@@ -1236,7 +1328,7 @@ if not C_UnitAuras then
 
     function C_UnitAuras.GetAuraDataBySpellName(unit, spellName, filter)
         for i = 1, 40 do
-            local name, rank, icon, count, debuffType, duration, expirationTime, unitCaster, isStealable, shouldConsolidate, spellId = UnitAura(unit, i, filter)
+            local name, rank, icon, count, debuffType, duration, expirationTime, unitCaster, isStealable, shouldConsolidate, spellId = safeUnitAura(unit, i, filter)
             if not name then break end
             if name == spellName then
                 return {
@@ -1263,7 +1355,7 @@ if not C_UnitAuras then
         local max = maxSlots or 40 -- Default max auras
 
         while index <= max do
-            local name = UnitAura(unit, index, filter)
+            local name = safeUnitAura(unit, index, filter)
             if name then
                 table.insert(slots, index)
                 index = index + 1
@@ -1473,8 +1565,9 @@ end
 do
     local tooltip = CreateFrame("GameTooltip")
     local mt = getmetatable(tooltip)
-    if mt and mt.__index then
-        -- FORCE overwrite to ensure we control it
+    -- Only define when missing: force-overwriting a shared widget metatable
+    -- breaks other addons/servers that provide their own implementation.
+    if mt and mt.__index and not mt.__index.SetSpellByID then
         mt.__index.SetSpellByID = function(self, spellID)
             if not spellID then return end
             -- Try to get link
@@ -1803,20 +1896,17 @@ do
     proxyFrame:RegisterEvent("PARTY_MEMBER_ENABLE")
     proxyFrame:RegisterEvent("PARTY_MEMBER_DISABLE")
 
-    local lastFireTime = 0
-    proxyFrame:SetScript("OnEvent", function(self, event)
+    -- Coalescing dispatch: bursts of roster events (e.g. party->raid convert,
+    -- mass joins) fire many events in one frame. Instead of dropping events
+    -- inside a debounce window (which can leave frames with a stale roster),
+    -- we coalesce them into a single dispatch on the NEXT frame via OnUpdate.
+    -- No events are ever lost; at most one dispatch happens per frame.
+    local dispatchPending = false
 
-        -- Debounce to avoid firing multiple times per frame
-        local DEBOUNCE_TIME = 0.1
-
-        local now = GetTime()
-        if now - lastFireTime < DEBOUNCE_TIME then
-            return
-        end
-        lastFireTime = now
+    local function DispatchRosterUpdate()
         local count = 0
         for _ in pairs(groupRosterFrames) do count = count + 1 end
-        ProxyDebug("RosterProxy fired from", event, "dispatching to", tostring(count), "frames")
+        ProxyDebug("RosterProxy dispatching to", tostring(count), "frames")
 
         -- Fire GROUP_ROSTER_UPDATE on all registered frames
         for frame in pairs(groupRosterFrames) do
@@ -1827,6 +1917,22 @@ do
                     pcall(handler, frame, "GROUP_ROSTER_UPDATE")
                 end
             end
+        end
+    end
+
+    proxyFrame:Hide()
+    proxyFrame:SetScript("OnUpdate", function(self)
+        self:Hide()
+        if dispatchPending then
+            dispatchPending = false
+            DispatchRosterUpdate()
+        end
+    end)
+
+    proxyFrame:SetScript("OnEvent", function(self, event)
+        if not dispatchPending then
+            dispatchPending = true
+            self:Show() -- run OnUpdate next frame
         end
     end)
     
@@ -1883,6 +1989,169 @@ do
             mt._CellGroupRosterHook = true
         end
     end
+end
+
+-------------------------------------------------
+-- UnitGetIncomingHeals + UNIT_HEAL_PREDICTION via LibHealComm-4.0
+-- (modeled after !!!ClassicAPI HealPrediction.lua and CRF_HealEx)
+-- 3.3.5 has neither the API nor the event; LibHealComm provides both the
+-- data (comm-based) and callbacks we translate into a synthetic
+-- UNIT_HEAL_PREDICTION event for frames that registered it.
+-- NOTE: Polyfills.lua loads BEFORE Libs, so LibHealComm is fetched lazily.
+-------------------------------------------------
+if not UnitGetIncomingHeals then
+    local HEAL_WINDOW = 5 -- seconds ahead, same as ClassicAPI
+
+    local HealComm
+    local function GetHealComm()
+        if HealComm == nil then
+            HealComm = (LibStub and LibStub:GetLibrary("LibHealComm-4.0", true)) or false
+        end
+        return HealComm or nil
+    end
+
+    -- GUID -> unit token map, rebuilt lazily and invalidated on roster changes
+    local guidToUnit = {}
+    local guidMapDirty = true
+
+    local function AddUnit(unit)
+        if UnitExists(unit) then
+            local guid = UnitGUID(unit)
+            if guid then
+                guidToUnit[guid] = unit
+            end
+        end
+    end
+
+    local function RebuildGuidMap()
+        wipe(guidToUnit)
+        AddUnit("player")
+        AddUnit("pet")
+        if GetNumRaidMembers() > 0 then
+            for i = 1, GetNumRaidMembers() do
+                AddUnit("raid" .. i)
+                AddUnit("raidpet" .. i)
+            end
+        else
+            for i = 1, GetNumPartyMembers() do
+                AddUnit("party" .. i)
+                AddUnit("partypet" .. i)
+            end
+        end
+        guidMapDirty = false
+    end
+
+    local function GuidToUnit(guid)
+        if guidMapDirty then
+            RebuildGuidMap()
+        end
+        return guidToUnit[guid]
+    end
+
+    function UnitGetIncomingHeals(unit, healer)
+        local comm = GetHealComm()
+        if not comm then return 0 end
+
+        local guid = UnitGUID(unit)
+        if not guid then return 0 end
+
+        local amount
+        if healer then
+            local healerGUID = UnitGUID(healer)
+            if not healerGUID then return 0 end
+            amount = comm:GetHealAmount(guid, comm.CASTED_HEALS, GetTime() + HEAL_WINDOW, healerGUID)
+        else
+            amount = comm:GetHealAmount(guid, comm.CASTED_HEALS, GetTime() + HEAL_WINDOW)
+        end
+
+        if not amount or amount == 0 then return 0 end
+        return math.floor(amount * (comm:GetHealModifier(guid) or 1) + 0.5)
+    end
+
+    -- Absorbs do not exist as an API on 3.3.5; return 0 like ClassicAPI does
+    if not UnitGetTotalAbsorbs then
+        function UnitGetTotalAbsorbs() return 0 end
+    end
+    if not UnitGetTotalHealAbsorbs then
+        function UnitGetTotalHealAbsorbs() return 0 end
+    end
+
+    -- Synthetic UNIT_HEAL_PREDICTION dispatch --------------------------------
+    -- Frames that RegisterEvent("UNIT_HEAL_PREDICTION") never receive it from
+    -- the 3.3.5 client, so we track them (via the same metatable hook pattern
+    -- as the roster proxy) and fire their OnEvent handler from HealComm
+    -- callbacks.
+    local healPredFrames = setmetatable({}, { __mode = "k" })
+
+    do
+        local sample = CreateFrame("Frame")
+        local mt = getmetatable(sample)
+        mt = mt and mt.__index
+        if mt and mt.RegisterEvent and not mt._CellHealPredictionHook then
+            hooksecurefunc(mt, "RegisterEvent", function(self, event)
+                if event == "UNIT_HEAL_PREDICTION" then
+                    healPredFrames[self] = true
+                end
+            end)
+            hooksecurefunc(mt, "UnregisterEvent", function(self, event)
+                if event == "UNIT_HEAL_PREDICTION" then
+                    healPredFrames[self] = nil
+                end
+            end)
+            hooksecurefunc(mt, "UnregisterAllEvents", function(self)
+                healPredFrames[self] = nil
+            end)
+            mt._CellHealPredictionHook = true
+        end
+    end
+
+    local function FireHealPrediction(guid)
+        local unit = GuidToUnit(guid)
+        if not unit then return end
+        for frame in pairs(healPredFrames) do
+            local handler = frame:GetScript("OnEvent")
+            if handler then
+                pcall(handler, frame, "UNIT_HEAL_PREDICTION", unit)
+            end
+        end
+    end
+
+    local callbackOwner = {}
+    local function OnHealEvent(event, casterGUID, spellID, healType, endTime, ...)
+        for i = 1, select("#", ...) do
+            FireHealPrediction((select(i, ...)))
+        end
+    end
+    local function OnHealStopped(event, casterGUID, spellID, healType, interrupted, ...)
+        for i = 1, select("#", ...) do
+            FireHealPrediction((select(i, ...)))
+        end
+    end
+    local function OnModifierChanged(event, guid)
+        FireHealPrediction(guid)
+    end
+
+    -- Init frame: LibHealComm loads after Polyfills, so wire up on login;
+    -- roster events invalidate the GUID map.
+    local initFrame = CreateFrame("Frame", "CellHealPredictionProxy")
+    initFrame:RegisterEvent("PLAYER_LOGIN")
+    initFrame:RegisterEvent("PARTY_MEMBERS_CHANGED")
+    initFrame:RegisterEvent("RAID_ROSTER_UPDATE")
+    initFrame:RegisterEvent("UNIT_PET")
+    initFrame:SetScript("OnEvent", function(self, event)
+        if event == "PLAYER_LOGIN" then
+            local comm = GetHealComm()
+            if comm then
+                comm.RegisterCallback(callbackOwner, "HealComm_HealStarted", OnHealEvent)
+                comm.RegisterCallback(callbackOwner, "HealComm_HealUpdated", OnHealEvent)
+                comm.RegisterCallback(callbackOwner, "HealComm_HealDelayed", OnHealEvent)
+                comm.RegisterCallback(callbackOwner, "HealComm_HealStopped", OnHealStopped)
+                comm.RegisterCallback(callbackOwner, "HealComm_ModifierChanged", OnModifierChanged)
+                comm.RegisterCallback(callbackOwner, "HealComm_GUIDDisappeared", OnModifierChanged)
+            end
+        end
+        guidMapDirty = true
+    end)
 end
 
 -- LocalizedClassList

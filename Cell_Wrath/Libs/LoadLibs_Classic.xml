@@ -16,5 +16,7 @@
     <Script file="LibBadWords.lua"/>
     <Include file="LibTranslit-1.0\LibTranslit-1.0.xml"/>
     <Script file="LibGroupInfo.lua"/>
+    <!-- LibHealComm-4.0: incoming heals on 3.3.5 (backs the UnitGetIncomingHeals polyfill) -->
+    <Include file="LibHealComm-4.0\LibHealComm-4.0.xml"/>
     <!-- <Script file="LibRangeCheck-2.0\LibRangeCheck-2.0.lua"/> -->
 </Ui>

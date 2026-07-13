@@ -1772,10 +1772,9 @@ UnitButton_UpdateRole = function(self)
     local unit = self.states.unit
     if not unit then return end
 
-    -- UnitGroupRolesAssigned returns 3 booleans in WotLK: isTank, isHealer, isDamage
-    local isTank, isHealer, isDamage = UnitGroupRolesAssigned(unit)
-    -- Convert to string format that roleIcon:SetRole expects
-    local role = isTank and "TANK" or isHealer and "HEALER" or isDamage and "DAMAGER" or "NONE"
+    -- UnitGroupRolesAssigned polyfill follows the RETAIL contract:
+    -- returns a single string ("TANK"/"HEALER"/"DAMAGER"/"NONE")
+    local role = UnitGroupRolesAssigned(unit)
     self.states.role = role
 
     local roleIcon = self.indicators.roleIcon
