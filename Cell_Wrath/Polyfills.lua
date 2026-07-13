@@ -1093,7 +1093,13 @@ do
             local timer = active[i]
             if timer._cancelled then
                 tremove(active, i)
-                tinsert(pool, timer)
+                -- Only recycle timers whose handle never escaped to callers
+                -- (C_Timer.After). NewTimer/NewTicker handles are kept by
+                -- calling code; reusing them would let a stale :Cancel()
+                -- kill an unrelated timer.
+                if timer._poolable then
+                    tinsert(pool, timer)
+                end
             else
                 timer._elapsed = timer._elapsed + elapsed
                 if timer._elapsed >= timer._duration then
@@ -1123,7 +1129,8 @@ do
     end)
 
     -- iterations: nil = one-shot, -1 = infinite ticker, N>0 = N-shot ticker
-    local function CreateTimer(duration, callback, iterations)
+    -- poolable: true only when the handle does not escape (C_Timer.After)
+    local function CreateTimer(duration, callback, iterations, poolable)
         if type(duration) ~= "number" then
             duration = 0.01
         end
@@ -1131,7 +1138,10 @@ do
             callback = function() end
         end
 
-        local timer = tremove(pool)
+        local timer
+        if poolable then
+            timer = tremove(pool)
+        end
         if not timer then
             timer = setmetatable({}, Ticker)
         end
@@ -1140,6 +1150,7 @@ do
         timer._iterations = iterations
         timer._elapsed = 0
         timer._cancelled = false
+        timer._poolable = poolable or false
 
         tinsert(active, timer)
         driver:Show()
@@ -1158,7 +1169,7 @@ do
                 duration = durationOrSelf
                 callback = callbackOrDuration
             end
-            CreateTimer(duration, callback, nil)
+            CreateTimer(duration, callback, nil, true)
         end,
 
         NewTimer = function(durationOrSelf, callbackOrDuration, maybeCallback)
