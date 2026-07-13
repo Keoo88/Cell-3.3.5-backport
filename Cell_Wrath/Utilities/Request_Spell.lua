@@ -669,7 +669,7 @@ function U.CreateSpellRequestIcon(parent)
     local srIcon = CreateFrame("Frame", parent:GetName().."SpellRequestIcon", parent.widgets.indicatorFrame)
     parent.widgets.srIcon = srIcon
     srIcon:SetIgnoreParentAlpha(true)
-    srIcon:SetFrameLevel(parent.widgets.indicatorFrame:GetFrameLevel()+110)
+    srIcon:SetFrameLevel(parent.widgets.indicatorFrame:GetFrameLevel()+30) -- 3.3.5: was +110, level cap is 128
     srIcon:Hide()
 
     -- srIcon:SetBackdrop({bgFile = Cell.vars.whiteTexture})

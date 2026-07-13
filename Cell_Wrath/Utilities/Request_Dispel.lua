@@ -403,7 +403,7 @@ function U.CreateDispelRequestText(parent)
     local drText = CreateFrame("Frame", parent:GetName().."DispelRequestText", parent.widgets.indicatorFrame)
     parent.widgets.drText = drText
     drText:SetIgnoreParentAlpha(true)
-    drText:SetFrameLevel(parent.widgets.indicatorFrame:GetFrameLevel()+110)
+    drText:SetFrameLevel(parent.widgets.indicatorFrame:GetFrameLevel()+30) -- 3.3.5: was +110, level cap is 128
     drText:Hide()
 
     local tex = drText:CreateTexture(nil, "ARTWORK")

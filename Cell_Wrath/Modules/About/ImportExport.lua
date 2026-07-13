@@ -207,7 +207,7 @@ local function CreateImportConfirmationFrame()
     confirmationFrame:SetSize(361, 165)
     Cell.StylizeFrame(confirmationFrame, {0.1, 0.1, 0.1, 0.95}, Cell.GetAccentColorTable())
     confirmationFrame:EnableMouse(true)
-    confirmationFrame:SetFrameLevel(Cell.frames.aboutTab:GetFrameLevel() + 300)
+    confirmationFrame:SetFrameLevel(Cell.frames.aboutTab:GetFrameLevel() + 80) -- 3.3.5: was +300, level cap is 128
     confirmationFrame:SetPoint("TOP", importExportFrame, 0, -25)
     confirmationFrame:Hide()
 
