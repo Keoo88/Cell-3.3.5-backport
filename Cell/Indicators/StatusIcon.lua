@@ -242,7 +242,7 @@ if Cell.isRetail then
             icon:SetTexture("Interface\\RaidFrame\\Raid-Icon-Rez")
             icon:SetTexCoord(0, 1, 0, 1)
             icon:Show()
-        elseif CELL_SUMMON_ICONS_ENABLED and C_IncomingSummon.HasIncomingSummon(unit) then
+        elseif CELL_SUMMON_ICONS_ENABLED and C_IncomingSummon and C_IncomingSummon.HasIncomingSummon(unit) then
             local status = C_IncomingSummon.IncomingSummonStatus(unit)
             if status == Enum.SummonStatus.Pending then
                 icon:SetAtlas("Raid-Icon-SummonPending")
