@@ -66,7 +66,7 @@ end
 -------------------------------------------------
 local function CreateEB(label, width, height, isNumeric, group)
     local eb = Cell.CreateEditBox(colorPicker, width, height, false, false, isNumeric)
-    eb.label = eb:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    eb.label = eb:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     eb.label:SetPoint("BOTTOMLEFT", eb, "TOPLEFT", 0, 1)
     eb.label:SetText(label)
 

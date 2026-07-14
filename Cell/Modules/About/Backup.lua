@@ -14,11 +14,11 @@ local DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 local function CreateItem(index)
     local b = Cell.CreateButton(backupFrame.list.content, nil, "accent-hover", {20, 20})
 
-    b.version = b:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    b.version = b:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     b.version:SetJustifyH("LEFT")
     b.version:SetPoint("LEFT", 5, 0)
 
-    b.text = b:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    b.text = b:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     b.text:SetJustifyH("LEFT")
     b.text:SetWordWrap(false)
     b.text:SetPoint("LEFT", 100, 0)
@@ -118,7 +118,7 @@ local function CreateBackupFrame()
     end
 
     -- title
-    local title = backupFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_CLASS")
+    local title = backupFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_CLASS")
     title:SetPoint("TOPLEFT", 5, -5)
     title:SetText(L["Backups"])
 
@@ -128,7 +128,7 @@ local function CreateBackupFrame()
     tips:SetPoint("LEFT", title, "RIGHT", 5, 0)
 
     -- close
-    local closeBtn = Cell.CreateButton(backupFrame, "X", "red", {18, 18}, false, false, "CELL_WRATH_FONT_WIDGET_TITLE", "CELL_WRATH_FONT_WIDGET_TITLE_DISABLE")
+    local closeBtn = Cell.CreateButton(backupFrame, "X", "red", {18, 18}, false, false, "CELL_FONT_WIDGET_TITLE", "CELL_FONT_WIDGET_TITLE_DISABLE")
     closeBtn:SetPoint("TOPRIGHT", P.Scale(-5), P.Scale(-1))
     closeBtn:SetScript("OnClick", function() backupFrame:Hide() end)
 

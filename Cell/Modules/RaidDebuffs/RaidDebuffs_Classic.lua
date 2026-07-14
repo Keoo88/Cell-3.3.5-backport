@@ -476,7 +476,7 @@ local function CreateInstanceFrame()
     imageFrame.tex:SetSize(121, 64)
     imageFrame.tex:SetPoint("TOPRIGHT", -1, -1)
 
-    local instanceNameText = imageFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local instanceNameText = imageFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     instanceNameText:SetPoint("TOPLEFT", imageFrame, "BOTTOMLEFT", 0, -1)
     instanceNameText:SetPoint("TOPRIGHT", imageFrame, "BOTTOMRIGHT", 0, -1)
 
@@ -579,7 +579,7 @@ local function CreateBossesFrame()
     imageFrame.tex:SetSize(128, 64)
     imageFrame.tex:SetPoint("TOPRIGHT")
 
-    local bossNameText = imageFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local bossNameText = imageFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     bossNameText:SetPoint("TOPLEFT", imageFrame, "BOTTOMLEFT", 0, -1)
     bossNameText:SetPoint("TOPRIGHT", imageFrame, "BOTTOMRIGHT", 0, -1)
 
@@ -862,7 +862,7 @@ local function CreateDebuffsFrame()
     dragged.icon:SetPoint("LEFT", 2, 0)
     dragged.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
     -- text
-    dragged.text = dragged:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    dragged.text = dragged:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     dragged.text:SetPoint("LEFT", dragged.icon, "RIGHT", 2, 0)
     dragged.text:SetPoint("RIGHT", -2, 0)
     dragged.text:SetJustifyH("LEFT")
@@ -1161,7 +1161,7 @@ local function CreatePreviewButton()
     Cell.StylizeFrame(previewButtonBG, {0.1, 0.1, 0.1, 0.77}, {0, 0, 0, 0})
     previewButtonBG:Show()
 
-    local previewText = previewButtonBG:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET_TITLE")
+    local previewText = previewButtonBG:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET_TITLE")
     previewText:SetPoint("TOP", 0, -3)
     previewText:SetText(Cell.GetAccentColorString()..L["Preview"])
 
@@ -1284,13 +1284,13 @@ local function CreateDetailsFrame()
     spellIcon:SetPoint("BOTTOMRIGHT", spellIconBG, -1, 1)
 
     -- spell name & id
-    spellNameText = detailsContentFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    spellNameText = detailsContentFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     spellNameText:SetPoint("TOPLEFT", spellIconBG, "TOPRIGHT", 2, 0)
     spellNameText:SetPoint("RIGHT", -1, 0)
     spellNameText:SetJustifyH("LEFT")
     spellNameText:SetWordWrap(false)
 
-    spellIdText = detailsContentFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    spellIdText = detailsContentFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     spellIdText:SetPoint("BOTTOMLEFT", spellIconBG, "BOTTOMRIGHT", 2, 0)
     spellIdText:SetPoint("RIGHT")
     spellIdText:SetJustifyH("LEFT")
@@ -1409,7 +1409,7 @@ local function CreateDetailsFrame()
     --------------------------------------------------
     -- condition
     --------------------------------------------------
-    local conditionText = detailsContentFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local conditionText = detailsContentFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     conditionText:SetText(L["Condition"])
     conditionText:SetPoint("TOPLEFT", useElapsedTimeCB, "BOTTOMLEFT", 0, -10)
 
@@ -1487,7 +1487,7 @@ local function CreateDetailsFrame()
     --------------------------------------------------
     -- glow
     --------------------------------------------------
-    glowTypeText = detailsContentFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    glowTypeText = detailsContentFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     glowTypeText:SetText(L["Glow Type"])
 
     glowTypeDropdown = Cell.CreateDropdown(detailsContentFrame, 117)
@@ -1575,7 +1575,7 @@ local function CreateDetailsFrame()
     glowOptionsFrame:SetPoint("BOTTOMRIGHT")
 
     -- glowCondition
-    local glowConditionText = glowOptionsFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local glowConditionText = glowOptionsFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     glowConditionText:SetText(L["Glow Condition"])
     glowConditionText:SetPoint("TOPLEFT", glowOptionsFrame, 5, 0)
 
@@ -2009,7 +2009,7 @@ end
 
 -- spell description
 -- Cell.CreateScrollFrame(detailsContentFrame, -270, 0) -- spell description
--- local descText = detailsContentFrame.scrollFrame.content:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+-- local descText = detailsContentFrame.scrollFrame.content:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
 -- descText:SetPoint("TOPLEFT", 5, -1)
 -- descText:SetPoint("RIGHT", -5, 0)
 -- descText:SetJustifyH("LEFT")

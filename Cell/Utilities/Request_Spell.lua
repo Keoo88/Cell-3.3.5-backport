@@ -149,7 +149,7 @@ local function CreateSRPane()
     end)
 
 
-    local srTips = srPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local srTips = srPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     srTips:SetPoint("TOPLEFT", 5, -25)
     srTips:SetJustifyH("LEFT")
     srTips:SetSpacing(5)
@@ -219,7 +219,7 @@ local function CreateSRPane()
         end
     end)
 
-    srReplyCastEB.tip = srReplyCastEB:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    srReplyCastEB.tip = srReplyCastEB:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     srReplyCastEB.tip:SetPoint("LEFT", 5, 0)
     srReplyCastEB.tip:SetTextColor(0.4, 0.4, 0.4, 1)
     srReplyCastEB.tip:SetText(L["Reply After Cast"])
@@ -262,7 +262,7 @@ local function CreateSRPane()
         },
     })
 
-    srResponseText = srPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    srResponseText = srPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     srResponseText:SetPoint("BOTTOMLEFT", srResponseDD, "TOPLEFT", 0, 1)
     srResponseText:SetText(L["Response Type"])
     ---------------------------------------------------------------------------------
@@ -285,7 +285,7 @@ local function CreateSRPane()
     end
     srTimeoutDD:SetItems(items)
 
-    srTimeoutText = srPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    srTimeoutText = srPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     srTimeoutText:SetPoint("BOTTOMLEFT", srTimeoutDD, "TOPLEFT", 0, 1)
     srTimeoutText:SetText(L["Timeout"])
     ---------------------------------------------------------------------------------
@@ -294,7 +294,7 @@ local function CreateSRPane()
     srSpellsDD = Cell.CreateDropdown(srPane, 268)
     srSpellsDD:SetPoint("TOPLEFT", srResponseDD, "BOTTOMLEFT", 0, -37)
 
-    srSpellsText = srPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    srSpellsText = srPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     srSpellsText:SetPoint("BOTTOMLEFT", srSpellsDD, "TOPLEFT", 0, 1)
     srSpellsText:SetText(L["Spells"])
     ---------------------------------------------------------------------------------
@@ -344,11 +344,11 @@ local function CreateSRPane()
     srMacroEB = Cell.CreateEditBox(srPane, 412, 20)
     srMacroEB:SetPoint("TOPLEFT", srSpellsDD, "BOTTOMLEFT", 0, -27)
 
-    srMacroText = srPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    srMacroText = srPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     srMacroText:SetPoint("BOTTOMLEFT", srMacroEB, "TOPLEFT", 0, 1)
     srMacroText:SetText(L["Macro"])
 
-    srMacroEB.gauge = srMacroEB:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    srMacroEB.gauge = srMacroEB:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     srMacroEB:SetScript("OnEditFocusGained", function()
         local requiredWidth = srMacroEB.gauge:GetStringWidth()
         if requiredWidth > srMacroEB:GetWidth() then
@@ -397,7 +397,7 @@ local function CreateSRPane()
         },
     })
 
-    srTypeText = srPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    srTypeText = srPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     srTypeText:SetPoint("BOTTOMLEFT", srTypeDD, "TOPLEFT", 0, 1)
     srTypeText:SetText(L["Type"])
 
@@ -451,7 +451,7 @@ local function CreateSpellEditFrame()
     end)
 
     -- title
-    title = spellEditFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET_TITLE")
+    title = spellEditFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET_TITLE")
     title:SetWordWrap(true)
     title:SetJustifyH("CENTER")
     title:SetPoint("TOPLEFT", 5, -8)
@@ -499,7 +499,7 @@ local function CreateSpellEditFrame()
         spellIdEB.tip:SetTextColor(0, 1, 0, 0.777)
     end)
 
-    spellIdEB.tip = spellIdEB:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    spellIdEB.tip = spellIdEB:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     spellIdEB.tip:SetTextColor(0.4, 0.4, 0.4, 1)
     spellIdEB.tip:SetText(L["Spell"].." ID")
     spellIdEB.tip:SetPoint("RIGHT", -5, 0)
@@ -536,7 +536,7 @@ local function CreateSpellEditFrame()
         buffIdEB.tip:SetTextColor(0, 1, 0, 0.777)
     end)
 
-    buffIdEB.tip = buffIdEB:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    buffIdEB.tip = buffIdEB:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     buffIdEB.tip:SetTextColor(0.4, 0.4, 0.4, 1)
     buffIdEB.tip:SetText(L["Buff"].." ID")
     buffIdEB.tip:SetPoint("RIGHT", -5, 0)

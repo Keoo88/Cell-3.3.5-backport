@@ -73,7 +73,7 @@ LoadList = function()
             end)
 
             -- playerName
-            customs[i].playerName = customs[i]:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+            customs[i].playerName = customs[i]:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
             customs[i].playerName:SetPoint("LEFT", 5, 0)
             customs[i].playerName:SetPoint("RIGHT", customs[i].del, "LEFT", -5, 0)
             customs[i].playerName:SetJustifyH("LEFT")

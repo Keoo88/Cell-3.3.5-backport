@@ -541,8 +541,8 @@ function I.CreateAura_BorderIcon(name, parent, borderSize)
     icon:SetTexCoord(0.12, 0.88, 0.12, 0.88)
     icon:SetAllPoints(iconFrame)
 
-    frame.stack = iconFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_STATUS")
-    frame.duration = iconFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_STATUS")
+    frame.stack = iconFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_STATUS")
+    frame.duration = iconFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_STATUS")
 
     local ag = frame:CreateAnimationGroup()
     frame.ag = ag
@@ -662,8 +662,8 @@ function I.CreateAura_BarIcon(name, parent)
     P.Point(icon, "BOTTOMRIGHT", frame, "BOTTOMRIGHT", -CELL_BORDER_SIZE, CELL_BORDER_SIZE)
     -- icon:SetDrawLayer("ARTWORK", 1)
 
-    frame.stack = frame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_STATUS")
-    frame.duration = frame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_STATUS")
+    frame.stack = frame:CreateFontString(nil, "OVERLAY", "CELL_FONT_STATUS")
+    frame.duration = frame:CreateFontString(nil, "OVERLAY", "CELL_FONT_STATUS")
 
     local ag = frame:CreateAnimationGroup()
     frame.ag = ag
@@ -1093,7 +1093,7 @@ function I.CreateAura_Text(name, parent)
     frame:Hide()
     frame.indicatorType = "text"
 
-    local text = frame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_STATUS")
+    local text = frame:CreateFontString(nil, "OVERLAY", "CELL_FONT_STATUS")
     frame.text = text
     text:SetPoint("CENTER", 1, 0)
 
@@ -1223,8 +1223,8 @@ function I.CreateAura_Rect(name, parent)
     frame.tex = tex
     tex:SetAllPoints()
 
-    frame.stack = frame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_STATUS")
-    frame.duration = frame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_STATUS")
+    frame.stack = frame:CreateFontString(nil, "OVERLAY", "CELL_FONT_STATUS")
+    frame.duration = frame:CreateFontString(nil, "OVERLAY", "CELL_FONT_STATUS")
 
     frame.SetFont = Rect_SetFont
     frame.SetCooldown = Rect_SetCooldown
@@ -1354,8 +1354,8 @@ function I.CreateAura_Bar(name, parent)
     bar:Hide()
     bar.indicatorType = "bar"
 
-    bar.stack = bar:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_STATUS")
-    bar.duration = bar:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_STATUS")
+    bar.stack = bar:CreateFontString(nil, "OVERLAY", "CELL_FONT_STATUS")
+    bar.duration = bar:CreateFontString(nil, "OVERLAY", "CELL_FONT_STATUS")
 
     bar.SetFont = Bar_SetFont
     bar.SetCooldown = Bar_SetCooldown
@@ -2160,8 +2160,8 @@ function I.CreateAura_Block(name, parent)
 
     Shared_SetCooldownStyle(frame, CELL_COOLDOWN_STYLE, true)
 
-    frame.stack = frame.cooldown:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_STATUS")
-    frame.duration = frame.cooldown:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_STATUS")
+    frame.stack = frame.cooldown:CreateFontString(nil, "OVERLAY", "CELL_FONT_STATUS")
+    frame.duration = frame.cooldown:CreateFontString(nil, "OVERLAY", "CELL_FONT_STATUS")
 
     frame.SetFont = Shared_SetFont
     frame.SetColors = Block_SetColors

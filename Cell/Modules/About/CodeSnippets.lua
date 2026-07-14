@@ -107,7 +107,7 @@ local function CreateCodeSnippetsFrame()
     end)
 
     -- current line number
-    local lineNumber = codeSnippetsFrame.header:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_CLASS")
+    local lineNumber = codeSnippetsFrame.header:CreateFontString(nil, "OVERLAY", "CELL_FONT_CLASS")
     lineNumber:SetPoint("LEFT", 5, 0)
 
     -- code
@@ -160,13 +160,13 @@ local function CreateCodeSnippetsFrame()
     errorPopup:SetPoint("BOTTOMRIGHT")
     errorPopup:Hide()
 
-    errorPopup.close = Cell.CreateButton(errorPopup, "X", "red", {18, 18}, false, false, "CELL_WRATH_FONT_WIDGET_TITLE", "CELL_WRATH_FONT_WIDGET_TITLE_DISABLE")
+    errorPopup.close = Cell.CreateButton(errorPopup, "X", "red", {18, 18}, false, false, "CELL_FONT_WIDGET_TITLE", "CELL_FONT_WIDGET_TITLE_DISABLE")
     errorPopup.close:SetPoint("TOPRIGHT")
     errorPopup.close:SetScript("OnClick", function()
         errorPopup:Hide()
     end)
 
-    errorPopup.text = errorPopup:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    errorPopup.text = errorPopup:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     errorPopup.text:SetTextColor(1, 0.19, 0.19)
     errorPopup.text:SetPoint("TOPLEFT", 20, -20)
     errorPopup.text:SetPoint("TOPRIGHT", -20, -20)
@@ -195,7 +195,7 @@ LoadList = function()
         end)
 
         -- label
-        buttons[0].label = buttons[0]:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+        buttons[0].label = buttons[0]:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
         buttons[0].label:SetPoint("LEFT", buttons[0].cb, "RIGHT", 3, 0)
         buttons[0].label:SetPoint("RIGHT", -3, 0)
         buttons[0].label:SetJustifyH("LEFT")
@@ -269,7 +269,7 @@ LoadList = function()
             end)
 
             -- label
-            buttons[i].label = buttons[i]:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+            buttons[i].label = buttons[i]:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
             buttons[i].label:SetPoint("LEFT", buttons[i].cb, "RIGHT", 3, 0)
             buttons[i].label:SetPoint("RIGHT", buttons[i].del, "LEFT", -3, 0)
             buttons[i].label:SetJustifyH("LEFT")

@@ -39,11 +39,11 @@ local function CreateIndicatorsCopyFrame()
     toDropdown = Cell.CreateDropdown(copyFrame, 126)
     toDropdown:SetPoint("TOPLEFT", fromDropdown, "BOTTOMLEFT", 0, -22)
 
-    local fromText = copyFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_CLASS")
+    local fromText = copyFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_CLASS")
     fromText:SetPoint("BOTTOMLEFT", fromDropdown, "TOPLEFT", 0, 1)
     fromText:SetText(L["From"])
 
-    local toText = copyFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_CLASS")
+    local toText = copyFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_CLASS")
     toText:SetPoint("BOTTOMLEFT", toDropdown, "TOPLEFT", 0, 1)
     toText:SetText(L["To"])
 

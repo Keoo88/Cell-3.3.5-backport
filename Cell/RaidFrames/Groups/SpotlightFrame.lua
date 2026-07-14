@@ -86,7 +86,7 @@ end)
 -- target frame: drag and set
 -------------------------------------------------
 local targetFrame = Cell.CreateFrame(nil, spotlightFrame, 50, 20)
-targetFrame.label = targetFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+targetFrame.label = targetFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
 targetFrame.label:SetPoint("CENTER")
 targetFrame:EnableMouse(false)
 
@@ -222,7 +222,7 @@ local function CreatePlaceHolder(index)
     placeholder:Hide()
     Cell.StylizeFrame(placeholder, {0, 0, 0, 0.27})
 
-    placeholder.text = placeholder:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    placeholder.text = placeholder:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     placeholder.text:SetPoint("LEFT")
     placeholder.text:SetPoint("RIGHT")
     placeholder.text:SetWordWrap(true)
@@ -725,9 +725,9 @@ function menu:Save(index, unit)
 end
 
 -- update width to show full text
-local dumbFS1 = menu:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+local dumbFS1 = menu:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
 dumbFS1:SetText(L["Target of Target"])
-local dumbFS2 = menu:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+local dumbFS2 = menu:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
 dumbFS2:SetText(L["Unit's Target"])
 
 function menu:UpdatePixelPerfect()

@@ -33,7 +33,7 @@ local function CreatePreviewButton()
     Cell.StylizeFrame(previewButtonBG, {0.1, 0.1, 0.1, 0.77}, {0, 0, 0, 0})
     previewButtonBG:Show()
 
-    local previewText = previewButtonBG:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET_TITLE")
+    local previewText = previewButtonBG:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET_TITLE")
     previewText:SetPoint("TOP", 0, -3)
     previewText:SetText(Cell.GetAccentColorString()..L["Preview"])
 
@@ -156,7 +156,7 @@ local function CreateTextOptionsFrame()
         },
     })
 
-    local textTypeText = textOptionsFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local textTypeText = textOptionsFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     textTypeText:SetText(L["Type"])
     textTypeText:SetPoint("BOTTOMLEFT", textType, "TOPLEFT", 0, 1)
 
@@ -198,7 +198,7 @@ local function CreateTextOptionsFrame()
     end
     textAnchor:SetItems(items)
 
-    local textAnchorText = textOptionsFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local textAnchorText = textOptionsFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     textAnchorText:SetText(L["Anchor Point"])
     textAnchorText:SetPoint("BOTTOMLEFT", textAnchor, "TOPLEFT", 0, 1)
 
@@ -219,7 +219,7 @@ local function CreateTextOptionsFrame()
     end
     textAnchorTo:SetItems(items)
 
-    local textAnchorToText = textOptionsFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local textAnchorToText = textOptionsFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     textAnchorToText:SetText(L["To UnitButton's"])
     textAnchorToText:SetPoint("BOTTOMLEFT", textAnchorTo, "TOPLEFT", 0, 1)
 

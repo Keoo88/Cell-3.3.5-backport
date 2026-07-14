@@ -24,7 +24,7 @@ local function CreateTextureSelector()
     -- add
     local addEB = Cell.CreateEditBox(textureSelector, 355, 20)
     addEB:SetPoint("TOPLEFT", 5, -5)
-    addEB.tip = addEB:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    addEB.tip = addEB:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     addEB.tip:SetTextColor(0.4, 0.4, 0.4, 1)
     addEB.tip:SetText("Interface\\... (tga|blp|png|jpg)")
     addEB.tip:SetPoint("LEFT", 5, 0)
@@ -74,7 +74,7 @@ local function CreateTextureSelector()
     scrollFrame:SetScrollStep(55)
 
     -- current path
-    currentTexturePath = textureSelector:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    currentTexturePath = textureSelector:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     currentTexturePath:SetPoint("BOTTOMLEFT", 5, 5)
     currentTexturePath:SetPoint("RIGHT", confirmBtn, "LEFT", -5, 0)
     currentTexturePath:SetJustifyH("LEFT")

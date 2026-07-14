@@ -32,9 +32,9 @@ function F.CreateUtilityList(anchor)
     Cell.StylizeFrame(listFrame, nil, Cell.GetAccentColorTable())
 
     -- update width to show full text
-    local dumbFS1 = listFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local dumbFS1 = listFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     dumbFS1:SetText(L["Quick Assist"])
-    local dumbFS2 = listFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local dumbFS2 = listFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     dumbFS2:SetText(L["Dispel Request"])
 
     -- buttons

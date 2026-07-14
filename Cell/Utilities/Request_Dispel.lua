@@ -33,7 +33,7 @@ local function CreateDRPane()
         U.HideTextOptions()
     end)
 
-    local drTips = drPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local drTips = drPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     drTips:SetPoint("TOPLEFT", 5, -25)
     drTips:SetJustifyH("LEFT")
     drTips:SetSpacing(5)
@@ -85,7 +85,7 @@ local function CreateDRPane()
         },
     })
 
-    drResponseText = drPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    drResponseText = drPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     drResponseText:SetPoint("BOTTOMLEFT", drResponseDD, "TOPLEFT", 0, 1)
     drResponseText:SetText(L["Response Type"])
     ---------------------------------------------------------------------------------
@@ -108,7 +108,7 @@ local function CreateDRPane()
     end
     drTimeoutDD:SetItems(items)
 
-    drTimeoutText = drPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    drTimeoutText = drPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     drTimeoutText:SetPoint("BOTTOMLEFT", drTimeoutDD, "TOPLEFT", 0, 1)
     drTimeoutText:SetText(L["Timeout"])
     ---------------------------------------------------------------------------------
@@ -128,7 +128,7 @@ local function CreateDRPane()
         end
     end)
 
-    drMacroEB.gauge = drMacroEB:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    drMacroEB.gauge = drMacroEB:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     drMacroEB.gauge:SetText(drMacroEB:GetText())
 
     drMacroEB:SetScript("OnEditFocusGained", function()
@@ -145,7 +145,7 @@ local function CreateDRPane()
         drMacroEB:HighlightText(0, 0)
     end)
 
-    drMacroText = drPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    drMacroText = drPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     drMacroText:SetPoint("BOTTOMLEFT", drMacroEB, "TOPLEFT", 0, 1)
     drMacroText:SetText(L["Macro"])
 
@@ -208,7 +208,7 @@ local function CreateDRPane()
         popup:SetTips("|cffababab"..L["Input spell id"])
     end)
 
-    drDebuffsText = drPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    drDebuffsText = drPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     drDebuffsText:SetPoint("BOTTOMLEFT", drDebuffsList, "TOPLEFT", 0, 1)
     drDebuffsText:SetText(L["Debuffs"])
     ---------------------------------------------------------------------------------
@@ -245,7 +245,7 @@ local function CreateDRPane()
         },
     })
 
-    drTypeText = drPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    drTypeText = drPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     drTypeText:SetPoint("BOTTOMLEFT", drTypeDD, "TOPLEFT", 0, 1)
     drTypeText:SetText(L["Type"])
 
@@ -301,14 +301,14 @@ LoadList = function(scrollToBottom)
             debuffItems[i].spellIcon:Hide()
 
             -- spellId text
-            debuffItems[i].spellIdText = debuffItems[i]:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+            debuffItems[i].spellIdText = debuffItems[i]:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
             debuffItems[i].spellIdText:SetPoint("LEFT", debuffItems[i].spellIconBg, "RIGHT", 5, 0)
             debuffItems[i].spellIdText:SetPoint("RIGHT", debuffItems[i], "LEFT", 80, 0)
             debuffItems[i].spellIdText:SetWordWrap(false)
             debuffItems[i].spellIdText:SetJustifyH("LEFT")
 
             -- spellName text
-            debuffItems[i].spellNameText = debuffItems[i]:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+            debuffItems[i].spellNameText = debuffItems[i]:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
             debuffItems[i].spellNameText:SetPoint("LEFT", debuffItems[i].spellIdText, "RIGHT", 5, 0)
             debuffItems[i].spellNameText:SetPoint("RIGHT", -20, 0)
             debuffItems[i].spellNameText:SetWordWrap(false)

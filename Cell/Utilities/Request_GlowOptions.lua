@@ -36,7 +36,7 @@ local function CreatePreviewButton()
     Cell.StylizeFrame(previewButtonBG, {0.1, 0.1, 0.1, 0.77}, {0, 0, 0, 0})
     previewButtonBG:Show()
 
-    local previewText = previewButtonBG:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET_TITLE")
+    local previewText = previewButtonBG:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET_TITLE")
     previewText:SetPoint("TOP", 0, -3)
     previewText:SetText(Cell.GetAccentColorString()..L["Preview"])
 
@@ -221,7 +221,7 @@ local function CreateGlowOptionsFrame()
     glowOptionsFrame = Cell.CreateFrame("CellOptionsFrame_GlowOptions", Cell.frames.optionsFrame, 127, 371)
     glowOptionsFrame:SetPoint("BOTTOMLEFT", Cell.frames.optionsFrame, "BOTTOMRIGHT", 5, 0)
 
-    local glowTypeText = glowOptionsFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local glowTypeText = glowOptionsFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     glowTypeText:SetText(L["Glow Type"])
     glowTypeText:SetPoint("TOPLEFT", 5, -5)
 

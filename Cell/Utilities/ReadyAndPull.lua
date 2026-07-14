@@ -25,7 +25,7 @@ end)
 -------------------------------------------------
 -- mover
 -------------------------------------------------
-buttonsFrame.moverText = buttonsFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+buttonsFrame.moverText = buttonsFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
 buttonsFrame.moverText:SetPoint("TOP", 0, -3)
 buttonsFrame.moverText:SetText(L["Mover"])
 buttonsFrame.moverText:Hide()

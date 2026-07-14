@@ -43,7 +43,7 @@ local function CreatePreviewButton()
     Cell.StylizeFrame(previewButtonBG, {0.1, 0.1, 0.1, 0.77}, {0, 0, 0, 0})
     previewButtonBG:Show()
 
-    local previewText = previewButtonBG:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET_TITLE")
+    local previewText = previewButtonBG:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET_TITLE")
     previewText:SetPoint("TOP", 0, -3)
     previewText:SetText(Cell.GetAccentColorString()..L["Preview"])
 
@@ -156,7 +156,7 @@ local function CreateLayoutPreview()
         P.SavePosition(layoutPreviewAnchor, selectedLayoutTable["main"]["position"])
     end)
 
-    layoutPreviewName = layoutPreviewAnchor:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_CLASS_TITLE")
+    layoutPreviewName = layoutPreviewAnchor:CreateFontString(nil, "OVERLAY", "CELL_FONT_CLASS_TITLE")
 
     -- init raid preview
     layoutPreview.fadeIn = layoutPreview:CreateAnimationGroup()
@@ -196,7 +196,7 @@ local function CreateLayoutPreview()
             header[j].tex:SetPoint("TOPLEFT", header[j], "TOPLEFT", P.Scale(1), P.Scale(-1))
             header[j].tex:SetPoint("BOTTOMRIGHT", header[j], "BOTTOMRIGHT", P.Scale(-1), P.Scale(1))
 
-            header[j].label = header:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET_SMALL")
+            header[j].label = header:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET_SMALL")
             header[j].label:SetPoint("BOTTOMRIGHT", header[j].tex, -2, 2)
             header[j].label:SetText(i.."-"..j)
             header[j].label:SetTextColor(0.5, 0.5, 0.5)
@@ -238,7 +238,7 @@ local function CreateLayoutPreview()
         f.tex:SetVertexColor(F.ConvertRGB(255, 0, 0, 1 + ((1 - i) * 0.02)))
         f.tex:SetAlpha(0.555)
 
-        f.label = layoutPreview.combinedHeader:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET_SMALL")
+        f.label = layoutPreview.combinedHeader:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET_SMALL")
         f.label:SetPoint("BOTTOMRIGHT", f.tex, -2, 2)
         f.label:SetText(i)
         f.label:SetTextColor(0.5, 0.5, 0.5)
@@ -505,7 +505,7 @@ local function CreateNPCPreview()
         P.SavePosition(npcPreviewAnchor, selectedLayoutTable["npc"]["position"])
     end)
 
-    npcPreviewName = npcPreviewAnchor:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_CLASS_TITLE")
+    npcPreviewName = npcPreviewAnchor:CreateFontString(nil, "OVERLAY", "CELL_FONT_CLASS_TITLE")
 
     npcPreview.fadeIn = npcPreview:CreateAnimationGroup()
     local fadeIn = npcPreview.fadeIn:CreateAnimation("alpha")
@@ -753,7 +753,7 @@ local function CreatePetPreview()
         P.SavePosition(petPreviewAnchor, selectedLayoutTable["pet"]["position"])
     end)
 
-    petPreviewName = petPreviewAnchor:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_CLASS_TITLE")
+    petPreviewName = petPreviewAnchor:CreateFontString(nil, "OVERLAY", "CELL_FONT_CLASS_TITLE")
 
     petPreview.fadeIn = petPreview:CreateAnimationGroup()
     local fadeIn = petPreview.fadeIn:CreateAnimation("alpha")
@@ -1033,7 +1033,7 @@ local function CreateSpotlightPreview()
         P.SavePosition(spotlightPreviewAnchor, selectedLayoutTable["spotlight"]["position"])
     end)
 
-    spotlightPreviewName = spotlightPreviewAnchor:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_CLASS_TITLE")
+    spotlightPreviewName = spotlightPreviewAnchor:CreateFontString(nil, "OVERLAY", "CELL_FONT_CLASS_TITLE")
 
     spotlightPreview.fadeIn = spotlightPreview:CreateAnimationGroup()
     local fadeIn = spotlightPreview.fadeIn:CreateAnimation("alpha")
@@ -1342,7 +1342,7 @@ local function CreateLayoutPane()
     local layoutPane = Cell.CreateTitledPane(layoutsTab, L["Layout"], 205, 80)
     layoutPane:SetPoint("TOPLEFT", 5, -5)
 
-    -- enabledLayoutText = layoutPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET_TITLE")
+    -- enabledLayoutText = layoutPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET_TITLE")
     -- enabledLayoutText:SetPoint("BOTTOMRIGHT", layoutPane.line, "TOPRIGHT", 0, P.Scale(2))
     -- enabledLayoutText:SetPoint("LEFT", layoutPane.title, "RIGHT", 5, 0)
     -- enabledLayoutText:SetWordWrap(false)
@@ -1684,7 +1684,7 @@ local function CreateAutoSwitchPane()
     Cell.StylizeFrame(currentProfileBox, {0.115, 0.115, 0.115, 1})
     P.Size(currentProfileBox, 140, 20)
 
-    currentProfileBox.text = currentProfileBox:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    currentProfileBox.text = currentProfileBox:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     currentProfileBox.text:SetPoint("LEFT", P.Scale(5), 0)
     currentProfileBox.text:SetPoint("RIGHT", P.Scale(-5), 0)
     currentProfileBox.text:SetJustifyH("LEFT")
@@ -1696,7 +1696,7 @@ local function CreateAutoSwitchPane()
         P.Height(autoSwitchFrame, 430)
     end
 
-    local currentProfileText = autoSwitchPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local currentProfileText = autoSwitchPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     currentProfileText:SetPoint("BOTTOMLEFT", currentProfileBox, "TOPLEFT", 0, 1)
     currentProfileText:SetTextColor(Cell.GetAccentColorRGB())
     currentProfileText:SetText(L["Current Profile"])
@@ -1705,7 +1705,7 @@ local function CreateAutoSwitchPane()
     soloDropdown = Cell.CreateDropdown(autoSwitchPane, 140)
     soloDropdown:SetPoint("TOPLEFT", currentProfileBox, "BOTTOMLEFT", 0, -30)
 
-    soloText = autoSwitchPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    soloText = autoSwitchPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     soloText:SetPoint("BOTTOMLEFT", soloDropdown, "TOPLEFT", 0, 1)
     soloText.text = L["Solo"]
 
@@ -1713,7 +1713,7 @@ local function CreateAutoSwitchPane()
     partyDropdown = Cell.CreateDropdown(autoSwitchPane, 140)
     partyDropdown:SetPoint("TOPLEFT", soloDropdown, "BOTTOMLEFT", 0, -30)
 
-    partyText = autoSwitchPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    partyText = autoSwitchPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     partyText:SetPoint("BOTTOMLEFT", partyDropdown, "TOPLEFT", 0, 1)
     partyText.text = L["Party"]
 
@@ -1721,7 +1721,7 @@ local function CreateAutoSwitchPane()
     raidOutdoorDropdown = Cell.CreateDropdown(autoSwitchPane, 140)
     raidOutdoorDropdown:SetPoint("TOPLEFT", partyDropdown, "BOTTOMLEFT", 0, -30)
 
-    raidOutdoorText = autoSwitchPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    raidOutdoorText = autoSwitchPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     raidOutdoorText:SetPoint("BOTTOMLEFT", raidOutdoorDropdown, "TOPLEFT", 0, 1)
     raidOutdoorText.text = raidOutdoor
 
@@ -1730,7 +1730,7 @@ local function CreateAutoSwitchPane()
         raidInstanceDropdown = Cell.CreateDropdown(autoSwitchPane, 140)
         raidInstanceDropdown:SetPoint("TOPLEFT", raidOutdoorDropdown, "BOTTOMLEFT", 0, -30)
 
-        raidInstanceText = autoSwitchPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+        raidInstanceText = autoSwitchPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
         raidInstanceText:SetPoint("BOTTOMLEFT", raidInstanceDropdown, "TOPLEFT", 0, 1)
         raidInstanceText.text = raidInstance
 
@@ -1738,7 +1738,7 @@ local function CreateAutoSwitchPane()
         raidMythicDropdown = Cell.CreateDropdown(autoSwitchPane, 140)
         raidMythicDropdown:SetPoint("TOPLEFT", raidInstanceDropdown, "BOTTOMLEFT", 0, -30)
 
-        raidMythicText = autoSwitchPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+        raidMythicText = autoSwitchPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
         raidMythicText:SetPoint("BOTTOMLEFT", raidMythicDropdown, "TOPLEFT", 0, 1)
         raidMythicText.text = raidMythic
 
@@ -1747,7 +1747,7 @@ local function CreateAutoSwitchPane()
         raid10Dropdown = Cell.CreateDropdown(autoSwitchPane, 140)
         raid10Dropdown:SetPoint("TOPLEFT", raidOutdoorDropdown, "BOTTOMLEFT", 0, -30)
 
-        raid10Text = autoSwitchPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+        raid10Text = autoSwitchPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
         raid10Text:SetPoint("BOTTOMLEFT", raid10Dropdown, "TOPLEFT", 0, 1)
         raid10Text.text = L["Raid"].." 10"
 
@@ -1755,7 +1755,7 @@ local function CreateAutoSwitchPane()
         raid25Dropdown = Cell.CreateDropdown(autoSwitchPane, 140)
         raid25Dropdown:SetPoint("TOPLEFT", raid10Dropdown, "BOTTOMLEFT", 0, -30)
 
-        raid25Text = autoSwitchPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+        raid25Text = autoSwitchPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
         raid25Text:SetPoint("BOTTOMLEFT", raid25Dropdown, "TOPLEFT", 0, 1)
         raid25Text.text = L["Raid"].." 25"
 
@@ -1764,7 +1764,7 @@ local function CreateAutoSwitchPane()
         raidInstanceDropdown = Cell.CreateDropdown(autoSwitchPane, 140)
         raidInstanceDropdown:SetPoint("TOPLEFT", raidOutdoorDropdown, "BOTTOMLEFT", 0, -30)
 
-        raidInstanceText = autoSwitchPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+        raidInstanceText = autoSwitchPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
         raidInstanceText:SetPoint("BOTTOMLEFT", raidInstanceDropdown, "TOPLEFT", 0, 1)
         raidInstanceText.text = raidInstance
     end
@@ -1779,7 +1779,7 @@ local function CreateAutoSwitchPane()
         arenaDropdown:SetPoint("TOPLEFT", raidInstanceDropdown, "BOTTOMLEFT", 0, -30)
     end
 
-    arenaText = autoSwitchPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    arenaText = autoSwitchPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     arenaText:SetPoint("BOTTOMLEFT", arenaDropdown, "TOPLEFT", 0, 1)
     arenaText.text = L["Arena"]
 
@@ -1788,7 +1788,7 @@ local function CreateAutoSwitchPane()
         bgDropdown = Cell.CreateDropdown(autoSwitchPane, 140)
         bgDropdown:SetPoint("TOPLEFT", arenaDropdown, "BOTTOMLEFT", 0, -30)
 
-        bgText = autoSwitchPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+        bgText = autoSwitchPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
         bgText:SetPoint("BOTTOMLEFT", bgDropdown, "TOPLEFT", 0, 1)
         bgText.text = _G.BATTLEGROUND
     else
@@ -1796,7 +1796,7 @@ local function CreateAutoSwitchPane()
         bg15Dropdown = Cell.CreateDropdown(autoSwitchPane, 140)
         bg15Dropdown:SetPoint("TOPLEFT", arenaDropdown, "BOTTOMLEFT", 0, -30)
 
-        bg15Text = autoSwitchPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+        bg15Text = autoSwitchPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
         bg15Text:SetPoint("BOTTOMLEFT", bg15Dropdown, "TOPLEFT", 0, 1)
         bg15Text.text = L["BG 1-15"]
 
@@ -1804,7 +1804,7 @@ local function CreateAutoSwitchPane()
         bg40Dropdown = Cell.CreateDropdown(autoSwitchPane, 140)
         bg40Dropdown:SetPoint("TOPLEFT", bg15Dropdown, "BOTTOMLEFT", 0, -30)
 
-        bg40Text = autoSwitchPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+        bg40Text = autoSwitchPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
         bg40Text:SetPoint("BOTTOMLEFT", bg40Dropdown, "TOPLEFT", 0, 1)
         bg40Text.text = L["BG 16-40"]
     end
@@ -2158,7 +2158,7 @@ local function CreateLayoutSetupPane()
         },
     })
 
-    local orientationText = orientationDropdown:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local orientationText = orientationDropdown:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     orientationText:SetPoint("BOTTOMLEFT", orientationDropdown, "TOPLEFT", 0, 1)
     orientationText:SetText(L["Orientation"])
 
@@ -2208,7 +2208,7 @@ local function CreateLayoutSetupPane()
         },
     })
 
-    local anchorText = layoutSetupPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local anchorText = layoutSetupPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     anchorText:SetPoint("BOTTOMLEFT", anchorDropdown, "TOPLEFT", 0, 1)
     anchorText:SetText(L["Anchor Point"])
 
@@ -2453,7 +2453,7 @@ local function CreateLayoutSetupPane()
         },
     })
 
-    local spotlightOrientationText = spotlightOrientationDropdown:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local spotlightOrientationText = spotlightOrientationDropdown:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     spotlightOrientationText:SetPoint("BOTTOMLEFT", spotlightOrientationDropdown, "TOPLEFT", 0, 1)
     spotlightOrientationText:SetText(L["Orientation"])
 
@@ -2583,7 +2583,7 @@ end
 -------------------------------------------------
 -- tips
 -------------------------------------------------
-local tips = layoutsTab:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+local tips = layoutsTab:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
 tips:SetPoint("BOTTOMLEFT", 5, 5)
 tips:SetJustifyH("LEFT")
 tips:SetText("|cffababab"..L["Tip: Every layout has its own position setting"])

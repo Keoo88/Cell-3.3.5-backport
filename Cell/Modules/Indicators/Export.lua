@@ -38,7 +38,7 @@ local function CreateIndicatorsExportFrame()
     listParent:Show()
 
     -- from
-    from = listParent:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_CLASS")
+    from = listParent:CreateFontString(nil, "OVERLAY", "CELL_FONT_CLASS")
     from:SetPoint("TOPLEFT", 5, -5)
 
     listFrame = CreateFrame("Frame", nil, listParent, nil)
@@ -56,7 +56,7 @@ local function CreateIndicatorsExportFrame()
     exportFrame:SetPoint("BOTTOMLEFT", listParent, "BOTTOMRIGHT", 5, 0)
 
     -- title
-    local title = exportFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_CLASS")
+    local title = exportFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_CLASS")
     title:SetPoint("TOPLEFT", 5, -5)
 
     -- textArea

@@ -38,17 +38,17 @@ end
 local generalBtn, appearanceBtn, clickCastingsBtn, aboutBtn, layoutsBtn, indicatorsBtn, debuffsBtn, utilitiesBtn, closeBtn
 
 local function CreateTabButtons()
-    generalBtn = Cell.CreateButton(optionsFrame, L["General"], "accent-hover", {105, 20}, false, false, "CELL_WRATH_FONT_WIDGET_TITLE", "CELL_WRATH_FONT_WIDGET_TITLE_DISABLE")
-    appearanceBtn = Cell.CreateButton(optionsFrame, L["Appearance"], "accent-hover", {105, 20}, false, false, "CELL_WRATH_FONT_WIDGET_TITLE", "CELL_WRATH_FONT_WIDGET_TITLE_DISABLE")
-    layoutsBtn = Cell.CreateButton(optionsFrame, L["Layouts"], "accent-hover", {105, 20}, false, false, "CELL_WRATH_FONT_WIDGET_TITLE", "CELL_WRATH_FONT_WIDGET_TITLE_DISABLE")
-    clickCastingsBtn = Cell.CreateButton(optionsFrame, L["Click-Castings"], "accent-hover", {120, 20}, false, false, "CELL_WRATH_FONT_WIDGET_TITLE", "CELL_WRATH_FONT_WIDGET_TITLE_DISABLE")
-    indicatorsBtn = Cell.CreateButton(optionsFrame, L["Indicators"], "accent-hover", {105, 20}, false, false, "CELL_WRATH_FONT_WIDGET_TITLE", "CELL_WRATH_FONT_WIDGET_TITLE_DISABLE")
-    debuffsBtn = Cell.CreateButton(optionsFrame, L["Raid Debuffs"], "accent-hover", {120, 20}, false, false, "CELL_WRATH_FONT_WIDGET_TITLE", "CELL_WRATH_FONT_WIDGET_TITLE_DISABLE")
-    utilitiesBtn = Cell.CreateButton(optionsFrame, L["Utilities"], "accent-hover", {105, 20}, false, false, "CELL_WRATH_FONT_WIDGET_TITLE", "CELL_WRATH_FONT_WIDGET_TITLE_DISABLE")
-    aboutBtn = Cell.CreateButton(optionsFrame, L["About"], "accent-hover", {86, 20}, false, false, "CELL_WRATH_FONT_WIDGET_TITLE", "CELL_WRATH_FONT_WIDGET_TITLE_DISABLE")
+    generalBtn = Cell.CreateButton(optionsFrame, L["General"], "accent-hover", {105, 20}, false, false, "CELL_FONT_WIDGET_TITLE", "CELL_FONT_WIDGET_TITLE_DISABLE")
+    appearanceBtn = Cell.CreateButton(optionsFrame, L["Appearance"], "accent-hover", {105, 20}, false, false, "CELL_FONT_WIDGET_TITLE", "CELL_FONT_WIDGET_TITLE_DISABLE")
+    layoutsBtn = Cell.CreateButton(optionsFrame, L["Layouts"], "accent-hover", {105, 20}, false, false, "CELL_FONT_WIDGET_TITLE", "CELL_FONT_WIDGET_TITLE_DISABLE")
+    clickCastingsBtn = Cell.CreateButton(optionsFrame, L["Click-Castings"], "accent-hover", {120, 20}, false, false, "CELL_FONT_WIDGET_TITLE", "CELL_FONT_WIDGET_TITLE_DISABLE")
+    indicatorsBtn = Cell.CreateButton(optionsFrame, L["Indicators"], "accent-hover", {105, 20}, false, false, "CELL_FONT_WIDGET_TITLE", "CELL_FONT_WIDGET_TITLE_DISABLE")
+    debuffsBtn = Cell.CreateButton(optionsFrame, L["Raid Debuffs"], "accent-hover", {120, 20}, false, false, "CELL_FONT_WIDGET_TITLE", "CELL_FONT_WIDGET_TITLE_DISABLE")
+    utilitiesBtn = Cell.CreateButton(optionsFrame, L["Utilities"], "accent-hover", {105, 20}, false, false, "CELL_FONT_WIDGET_TITLE", "CELL_FONT_WIDGET_TITLE_DISABLE")
+    aboutBtn = Cell.CreateButton(optionsFrame, L["About"], "accent-hover", {86, 20}, false, false, "CELL_FONT_WIDGET_TITLE", "CELL_FONT_WIDGET_TITLE_DISABLE")
     -- Use ASCII X so localization/fonts on 3.3.5a don't swap the glyph (e.g., ruRU showing "ч").
-    -- Use CELL_WRATH_FONT_WIDGET_TITLE (GameFontNormal-based) instead of FONT_SPECIAL (symbol font) for ASCII support
-    closeBtn = Cell.CreateButton(optionsFrame, "X", "red", {20, 20}, false, false, "CELL_WRATH_FONT_WIDGET_TITLE", "CELL_WRATH_FONT_WIDGET_TITLE_DISABLE")
+    -- Use CELL_FONT_WIDGET_TITLE (GameFontNormal-based) instead of FONT_SPECIAL (symbol font) for ASCII support
+    closeBtn = Cell.CreateButton(optionsFrame, "X", "red", {20, 20}, false, false, "CELL_FONT_WIDGET_TITLE", "CELL_FONT_WIDGET_TITLE_DISABLE")
     closeBtn:SetScript("OnClick", function()
         optionsFrame:Hide()
     end)

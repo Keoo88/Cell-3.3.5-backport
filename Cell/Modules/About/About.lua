@@ -28,7 +28,7 @@ local function CreateDescriptionPane()
         F.ShowCodeSnippets()
     end)
 
-    local descText = descriptionPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local descText = descriptionPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     descText:SetPoint("TOPLEFT", 5, -27)
     descText:SetPoint("BOTTOMRIGHT", -10, 5)
     descText:SetJustifyH("LEFT")
@@ -70,7 +70,7 @@ local function CreateSlashPane()
     local slashPane = Cell.CreateTitledPane(aboutTab, L["Slash Commands"], 205, 50)
     slashPane:SetPoint("TOPLEFT", aboutTab, "TOPLEFT", 222, -330)
 
-    local commandText = slashPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local commandText = slashPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     commandText:SetPoint("TOPLEFT", 5, -27)
     commandText:SetText("/cell")
 end

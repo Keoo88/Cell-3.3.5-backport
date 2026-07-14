@@ -52,7 +52,7 @@ local function CreatePowerFilter(parent, class, buttons, color, bgColor)
     Cell.StylizeFrame(filter, color, bgColor)
     P.Size(filter, 135, 20)
 
-    filter.text = filter:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    filter.text = filter:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     filter.text:SetPoint("LEFT", 5, 0)
     if class == "VEHICLE" or class == "PET" or class == "NPC" then
         filter.text:SetText("|cff00ff33"..L[class])

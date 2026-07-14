@@ -64,7 +64,7 @@ local function CreatePreviewButton()
         P.Size(self, width, height)
     end
 
-    local previewText = previewButtonBG:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_CLASS_TITLE")
+    local previewText = previewButtonBG:CreateFontString(nil, "OVERLAY", "CELL_FONT_CLASS_TITLE")
     previewText:SetPoint("TOP", 0, -3)
     previewText:SetText(L["Preview"])
 
@@ -1331,11 +1331,11 @@ local function CreateSyncPane()
     syncStatus:SetSize(150, 30)
     syncStatus:SetPoint("TOPRIGHT", syncPane, "TOPLEFT", -10, 3)
 
-    syncStatus.title = syncStatus:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_CLASS_TITLE")
+    syncStatus.title = syncStatus:CreateFontString(nil, "OVERLAY", "CELL_FONT_CLASS_TITLE")
     syncStatus.title:SetText(L["Sync Status"])
     syncStatus.title:SetPoint("BOTTOMLEFT", syncStatus, "TOPLEFT", 5, -18)
 
-    syncStatus.text = syncStatus:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    syncStatus.text = syncStatus:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     syncStatus.text:SetPoint("TOPLEFT", syncStatus.title, "BOTTOMLEFT", 5, -5)
     syncStatus.text:SetJustifyH("LEFT")
     syncStatus.text:SetSpacing(3)

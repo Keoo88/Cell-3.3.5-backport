@@ -25,7 +25,7 @@ end)
 -------------------------------------------------
 -- mover
 -------------------------------------------------
-marksFrame.moverText = marksFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+marksFrame.moverText = marksFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
 marksFrame.moverText:SetPoint("TOP", 0, -3)
 marksFrame.moverText:SetText(L["Mover"])
 marksFrame.moverText:Hide()

@@ -155,7 +155,7 @@ local function CreateProcessingFrame()
     progressBar:SetPoint("BOTTOMRIGHT", -10, 102)
 
     -- combat tips
-    combatTips = processingFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    combatTips = processingFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     combatTips:SetPoint("TOP", progressBar, "BOTTOM", 0, -5)
     combatTips:SetTextColor(1, 0.2, 0.2)
     combatTips:SetText(L["Waiting for combat to end..."])
@@ -317,7 +317,7 @@ local function CreateRaidRosterGrid(parent, index)
     roleIcon:SetPoint("BOTTOMRIGHT", roleIconBg, P.Scale(-1), P.Scale(1))
     roleIcon:SetTexCoord(0.1, 0.9, 0.1, 0.9)
 
-    local nameText = grid:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local nameText = grid:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     nameText:SetPoint("LEFT", roleIcon, "RIGHT", 2, 0)
     nameText:SetPoint("RIGHT", -2, 0)
     nameText:SetWordWrap(false)
@@ -496,7 +496,7 @@ local function CreateRaidRosterGroup(parent, groupIndex)
     P.Size(group, 95, 81)
     Cell.StylizeFrame(group, {0.1, 0.1, 0.1, 0.5})
 
-    local headerText = group:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local headerText = group:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     headerText:SetPoint("BOTTOM", group, "TOP", 0, 1)
     headerText:SetText("|cFFEEC900"..GROUP.." "..groupIndex)
 

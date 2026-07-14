@@ -150,7 +150,7 @@ function I.CreateTargetCounter(parent)
     parent.indicators.targetCounter = targetCounter
     targetCounter:Hide()
 
-    local text = targetCounter:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_STATUS")
+    local text = targetCounter:CreateFontString(nil, "OVERLAY", "CELL_FONT_STATUS")
     targetCounter.text = text
     -- stack:SetJustifyH("RIGHT")
     text:SetPoint("CENTER", 1, 0)

@@ -376,7 +376,7 @@ function Cell.CreateMovableFrame(title, name, width, height, frameStrata, frameL
     header.text:SetText(title)
     header.text:SetPoint("CENTER", header)
 
-    header.closeBtn = Cell.CreateButton(header, "X", "red", {20, 20}, false, false, "CELL_WRATH_FONT_WIDGET_TITLE", "CELL_WRATH_FONT_WIDGET_TITLE_DISABLE")
+    header.closeBtn = Cell.CreateButton(header, "X", "red", {20, 20}, false, false, "CELL_FONT_WIDGET_TITLE", "CELL_FONT_WIDGET_TITLE_DISABLE")
     header.closeBtn:SetPoint("TOPRIGHT")
     header.closeBtn:SetScript("OnClick", function() f:Hide() end)
 
@@ -3230,7 +3230,7 @@ function Cell.CreateBindingButton(parent, width)
         tinsert(UISpecialFrames, parent.bindingButton:GetName())
         Cell.StylizeFrame(parent.bindingButton, {0.1, 0.1, 0.1, 1}, {accentColor.t[1], accentColor.t[2], accentColor.t[3]})
 
-        parent.bindingButton.close = Cell.CreateButton(parent.bindingButton, "X", "red", {18, 18}, true, true, "CELL_WRATH_FONT_WIDGET_TITLE", "CELL_WRATH_FONT_WIDGET_TITLE_DISABLE")
+        parent.bindingButton.close = Cell.CreateButton(parent.bindingButton, "X", "red", {18, 18}, true, true, "CELL_FONT_WIDGET_TITLE", "CELL_FONT_WIDGET_TITLE_DISABLE")
         parent.bindingButton.close:SetPoint("TOPRIGHT", -1, -1)
         parent.bindingButton.close:SetScript("OnClick", function()
             parent.bindingButton:Hide()
@@ -3485,31 +3485,31 @@ function Cell.CreateReceivingFrame(parent)
     f:SetScript("OnDragStop", function() f:StopMovingOrSizing() end)
 
     -- labels
-    local typeLabel = f:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_CLASS")
+    local typeLabel = f:CreateFontString(nil, "OVERLAY", "CELL_FONT_CLASS")
     typeLabel:SetPoint("TOPLEFT", 10, -10)
     typeLabel:SetText(L["Type: "])
 
-    local nameLabel = f:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_CLASS")
+    local nameLabel = f:CreateFontString(nil, "OVERLAY", "CELL_FONT_CLASS")
     nameLabel:SetPoint("LEFT", 10, 0)
     nameLabel:SetText(L["Name: "])
 
-    local fromLabel = f:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_CLASS")
+    local fromLabel = f:CreateFontString(nil, "OVERLAY", "CELL_FONT_CLASS")
     fromLabel:SetPoint("LEFT", 10, 0)
     fromLabel:SetText(L["From: "])
 
-    local dataLabel = f:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_CLASS")
+    local dataLabel = f:CreateFontString(nil, "OVERLAY", "CELL_FONT_CLASS")
     dataLabel:SetPoint("LEFT", 10, 0)
     dataLabel:Hide()
 
     -- texts
-    local typeText = f:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local typeText = f:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     typeText:SetPoint("TOPLEFT", typeLabel, "TOPRIGHT")
     typeText:SetPoint("RIGHT", -10, 0)
     typeText:SetJustifyH("LEFT")
 
     nameLabel:SetPoint("TOP", typeText, "BOTTOM", 0, -10)
 
-    local nameText = f:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local nameText = f:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     nameText:SetPoint("TOPLEFT", nameLabel, "TOPRIGHT")
     nameText:SetPoint("RIGHT", -10, 0)
     nameText:SetJustifyH("LEFT")
@@ -3517,7 +3517,7 @@ function Cell.CreateReceivingFrame(parent)
 
     fromLabel:SetPoint("TOP", nameText, "BOTTOM", 0, -10)
 
-    local fromText = f:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local fromText = f:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     fromText:SetPoint("TOPLEFT", fromLabel, "TOPRIGHT")
     fromText:SetPoint("RIGHT", -10, 0)
     fromText:SetJustifyH("LEFT")
@@ -3525,7 +3525,7 @@ function Cell.CreateReceivingFrame(parent)
 
     dataLabel:SetPoint("TOP", fromText, "BOTTOM", 0, -10)
 
-    local dataText = f:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local dataText = f:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     dataText:SetPoint("TOPLEFT", dataLabel, "TOPRIGHT")
     dataText:SetPoint("RIGHT", -10, 0)
     dataText:SetJustifyH("LEFT")
@@ -3533,7 +3533,7 @@ function Cell.CreateReceivingFrame(parent)
     dataText:Hide()
 
     -- error
-    local infoMsg = f:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local infoMsg = f:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     infoMsg:SetJustifyH("LEFT")
     infoMsg:SetTextColor(unpack(colors.firebrick.t))
     infoMsg:SetWordWrap(true)

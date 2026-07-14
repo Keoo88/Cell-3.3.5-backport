@@ -35,7 +35,7 @@ local function CreatePreviewButton()
     Cell.StylizeFrame(previewButtonBG, {0.1, 0.1, 0.1, 0.77}, {0, 0, 0, 0})
     previewButtonBG:Show()
 
-    local previewText = previewButtonBG:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET_TITLE")
+    local previewText = previewButtonBG:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET_TITLE")
     previewText:SetPoint("TOP", 0, -3)
     previewText:SetText(Cell.GetAccentColorString()..L["Preview"])
 
@@ -177,7 +177,7 @@ local function CreateIconOptionsFrame()
         }
     })
 
-    local iconAnimationText = sharedOptionsFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local iconAnimationText = sharedOptionsFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     iconAnimationText:SetText(L["Animation"])
     iconAnimationText:SetPoint("BOTTOMLEFT", iconAnimation, "TOPLEFT", 0, 1)
 
@@ -207,7 +207,7 @@ local function CreateIconOptionsFrame()
     end
     iconAnchor:SetItems(items)
 
-    local iconAnchorText = sharedOptionsFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local iconAnchorText = sharedOptionsFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     iconAnchorText:SetText(L["Anchor Point"])
     iconAnchorText:SetPoint("BOTTOMLEFT", iconAnchor, "TOPLEFT", 0, 1)
 
@@ -228,7 +228,7 @@ local function CreateIconOptionsFrame()
     end
     iconAnchorTo:SetItems(items)
 
-    local iconAnchorToText = sharedOptionsFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local iconAnchorToText = sharedOptionsFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     iconAnchorToText:SetText(L["To UnitButton's"])
     iconAnchorToText:SetPoint("BOTTOMLEFT", iconAnchorTo, "TOPLEFT", 0, 1)
 

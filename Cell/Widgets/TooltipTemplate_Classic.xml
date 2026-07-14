@@ -3,7 +3,7 @@
     <GameTooltip name="CellTooltipTemplate" frameStrata="TOOLTIP" clampedToScreen="true" hidden="true" virtual="true">
         <Layers>
             <Layer level="ARTWORK">
-                <FontString name="$parentTextLeft1" justifyH="LEFT" inherits="CELL_WRATH_FONT_WIDGET_TITLE" hidden="true">
+                <FontString name="$parentTextLeft1" justifyH="LEFT" inherits="CELL_FONT_WIDGET_TITLE" hidden="true">
                     <Anchors>
                         <Anchor point="TOPLEFT">
                             <Offset>
@@ -12,7 +12,7 @@
                         </Anchor>
                     </Anchors>
                 </FontString>
-                <FontString name="$parentTextRight1" justifyH="RIGHT" inherits="CELL_WRATH_FONT_WIDGET_TITLE" hidden="true">
+                <FontString name="$parentTextRight1" justifyH="RIGHT" inherits="CELL_FONT_WIDGET_TITLE" hidden="true">
                     <Anchors>
                         <Anchor point="RIGHT" relativeTo="$parentTextLeft1" relativePoint="LEFT">
                             <Offset>
@@ -21,7 +21,7 @@
                         </Anchor>
                     </Anchors>
                 </FontString>
-                <FontString name="$parentTextLeft2" justifyH="LEFT" inherits="CELL_WRATH_FONT_WIDGET" hidden="true">
+                <FontString name="$parentTextLeft2" justifyH="LEFT" inherits="CELL_FONT_WIDGET" hidden="true">
                     <Anchors>
                         <Anchor point="TOPLEFT" relativeTo="$parentTextLeft1" relativePoint="BOTTOMLEFT">
                             <Offset>
@@ -30,7 +30,7 @@
                         </Anchor>
                     </Anchors>
                 </FontString>
-                <FontString name="$parentTextRight2" justifyH="RIGHT" inherits="CELL_WRATH_FONT_WIDGET" hidden="true">
+                <FontString name="$parentTextRight2" justifyH="RIGHT" inherits="CELL_FONT_WIDGET" hidden="true">
                     <Anchors>
                         <Anchor point="RIGHT" relativeTo="$parentTextLeft2" relativePoint="LEFT">
                             <Offset>
@@ -39,7 +39,7 @@
                         </Anchor>
                     </Anchors>
                 </FontString>
-                <FontString name="$parentTextLeft3" justifyH="LEFT" inherits="CELL_WRATH_FONT_WIDGET" hidden="true">
+                <FontString name="$parentTextLeft3" justifyH="LEFT" inherits="CELL_FONT_WIDGET" hidden="true">
                     <Anchors>
                         <Anchor point="TOPLEFT" relativeTo="$parentTextLeft2" relativePoint="BOTTOMLEFT">
                             <Offset>
@@ -48,7 +48,7 @@
                         </Anchor>
                     </Anchors>
                 </FontString>
-                <FontString name="$parentTextRight3" justifyH="RIGHT" inherits="CELL_WRATH_FONT_WIDGET" hidden="true">
+                <FontString name="$parentTextRight3" justifyH="RIGHT" inherits="CELL_FONT_WIDGET" hidden="true">
                     <Anchors>
                         <Anchor point="RIGHT" relativeTo="$parentTextLeft3" relativePoint="LEFT">
                             <Offset>
@@ -57,7 +57,7 @@
                         </Anchor>
                     </Anchors>
                 </FontString>
-                <FontString name="$parentTextLeft4" justifyH="LEFT" inherits="CELL_WRATH_FONT_WIDGET" hidden="true">
+                <FontString name="$parentTextLeft4" justifyH="LEFT" inherits="CELL_FONT_WIDGET" hidden="true">
                     <Anchors>
                         <Anchor point="TOPLEFT" relativeTo="$parentTextLeft3" relativePoint="BOTTOMLEFT">
                             <Offset>
@@ -66,7 +66,7 @@
                         </Anchor>
                     </Anchors>
                 </FontString>
-                <FontString name="$parentTextRight4" justifyH="RIGHT" inherits="CELL_WRATH_FONT_WIDGET" hidden="true">
+                <FontString name="$parentTextRight4" justifyH="RIGHT" inherits="CELL_FONT_WIDGET" hidden="true">
                     <Anchors>
                         <Anchor point="RIGHT" relativeTo="$parentTextLeft4" relativePoint="LEFT">
                             <Offset>
@@ -75,7 +75,7 @@
                         </Anchor>
                     </Anchors>
                 </FontString>
-                <FontString name="$parentTextLeft5" justifyH="LEFT" inherits="CELL_WRATH_FONT_WIDGET" hidden="true">
+                <FontString name="$parentTextLeft5" justifyH="LEFT" inherits="CELL_FONT_WIDGET" hidden="true">
                     <Anchors>
                         <Anchor point="TOPLEFT" relativeTo="$parentTextLeft4" relativePoint="BOTTOMLEFT">
                             <Offset>
@@ -84,7 +84,7 @@
                         </Anchor>
                     </Anchors>
                 </FontString>
-                <FontString name="$parentTextRight5" justifyH="RIGHT" inherits="CELL_WRATH_FONT_WIDGET" hidden="true">
+                <FontString name="$parentTextRight5" justifyH="RIGHT" inherits="CELL_FONT_WIDGET" hidden="true">
                     <Anchors>
                         <Anchor point="RIGHT" relativeTo="$parentTextLeft5" relativePoint="LEFT">
                             <Offset>
@@ -93,7 +93,7 @@
                         </Anchor>
                     </Anchors>
                 </FontString>
-                <FontString name="$parentTextLeft6" justifyH="LEFT" inherits="CELL_WRATH_FONT_WIDGET" hidden="true">
+                <FontString name="$parentTextLeft6" justifyH="LEFT" inherits="CELL_FONT_WIDGET" hidden="true">
                     <Anchors>
                         <Anchor point="TOPLEFT" relativeTo="$parentTextLeft5" relativePoint="BOTTOMLEFT">
                             <Offset>
@@ -102,7 +102,7 @@
                         </Anchor>
                     </Anchors>
                 </FontString>
-                <FontString name="$parentTextRight6" justifyH="RIGHT" inherits="CELL_WRATH_FONT_WIDGET" hidden="true">
+                <FontString name="$parentTextRight6" justifyH="RIGHT" inherits="CELL_FONT_WIDGET" hidden="true">
                     <Anchors>
                         <Anchor point="RIGHT" relativeTo="$parentTextLeft6" relativePoint="LEFT">
                             <Offset>
@@ -111,7 +111,7 @@
                         </Anchor>
                     </Anchors>
                 </FontString>
-                <FontString name="$parentTextLeft7" justifyH="LEFT" inherits="CELL_WRATH_FONT_WIDGET" hidden="true">
+                <FontString name="$parentTextLeft7" justifyH="LEFT" inherits="CELL_FONT_WIDGET" hidden="true">
                     <Anchors>
                         <Anchor point="TOPLEFT" relativeTo="$parentTextLeft6" relativePoint="BOTTOMLEFT">
                             <Offset>
@@ -120,7 +120,7 @@
                         </Anchor>
                     </Anchors>
                 </FontString>
-                <FontString name="$parentTextRight7" justifyH="RIGHT" inherits="CELL_WRATH_FONT_WIDGET" hidden="true">
+                <FontString name="$parentTextRight7" justifyH="RIGHT" inherits="CELL_FONT_WIDGET" hidden="true">
                     <Anchors>
                         <Anchor point="RIGHT" relativeTo="$parentTextLeft7" relativePoint="LEFT">
                             <Offset>
@@ -129,7 +129,7 @@
                         </Anchor>
                     </Anchors>
                 </FontString>
-                <FontString name="$parentTextLeft8" justifyH="LEFT" inherits="CELL_WRATH_FONT_WIDGET" hidden="true">
+                <FontString name="$parentTextLeft8" justifyH="LEFT" inherits="CELL_FONT_WIDGET" hidden="true">
                     <Anchors>
                         <Anchor point="TOPLEFT" relativeTo="$parentTextLeft7" relativePoint="BOTTOMLEFT">
                             <Offset>
@@ -138,7 +138,7 @@
                         </Anchor>
                     </Anchors>
                 </FontString>
-                <FontString name="$parentTextRight8" justifyH="RIGHT" inherits="CELL_WRATH_FONT_WIDGET" hidden="true">
+                <FontString name="$parentTextRight8" justifyH="RIGHT" inherits="CELL_FONT_WIDGET" hidden="true">
                     <Anchors>
                         <Anchor point="RIGHT" relativeTo="$parentTextLeft8" relativePoint="LEFT">
                             <Offset>

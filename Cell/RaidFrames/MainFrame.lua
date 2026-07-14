@@ -183,7 +183,7 @@ P.Point(loadingBar, "BOTTOMRIGHT", options, -1, 1)
 -- local memUsage = CreateFrame("Frame", nil, cellMainFrame)
 -- memUsage:SetSize(10, 10)
 -- memUsage:SetPoint("LEFT", raid, "RIGHT", 5, 0)
--- memUsage.text = memUsage:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+-- memUsage.text = memUsage:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
 -- memUsage.text:SetPoint("LEFT")
 -- memUsage:SetScript("OnUpdate", function(self, elapsed)
 --     self.elapsed = (self.elapsed or 0) + elapsed

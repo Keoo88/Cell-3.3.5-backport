@@ -37,7 +37,7 @@ local function CreateClickCastingImportExportFrame()
     end
 
     -- close
-    local closeBtn = Cell.CreateButton(importExportFrame, "X", "red", {18, 18}, false, false, "CELL_WRATH_FONT_WIDGET_TITLE", "CELL_WRATH_FONT_WIDGET_TITLE_DISABLE")
+    local closeBtn = Cell.CreateButton(importExportFrame, "X", "red", {18, 18}, false, false, "CELL_FONT_WIDGET_TITLE", "CELL_FONT_WIDGET_TITLE_DISABLE")
     closeBtn:SetPoint("TOPRIGHT", P.Scale(-5), P.Scale(-1))
     closeBtn:SetScript("OnClick", function() importExportFrame:Hide() end)
 
@@ -57,7 +57,7 @@ local function CreateClickCastingImportExportFrame()
     end)
 
     -- title
-    title = importExportFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_CLASS")
+    title = importExportFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_CLASS")
     title:SetPoint("TOPLEFT", 5, -5)
 
     -- textArea

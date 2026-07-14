@@ -142,7 +142,7 @@ local function CreateTooltipsPane()
     end
     tooltipsAnchor:SetItems(anchorItems)
 
-    tooltipsAnchorText = tooltipsPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    tooltipsAnchorText = tooltipsPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     tooltipsAnchorText:SetText(L["Anchor Point"])
     tooltipsAnchorText:SetPoint("BOTTOMLEFT", tooltipsAnchor, "TOPLEFT", 0, 1)
 
@@ -162,7 +162,7 @@ local function CreateTooltipsPane()
     end
     tooltipsAnchoredTo:SetItems(relativeToItems)
 
-    tooltipsAnchoredToText = tooltipsPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    tooltipsAnchoredToText = tooltipsPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     tooltipsAnchoredToText:SetText(L["Anchored To"])
     tooltipsAnchoredToText:SetPoint("BOTTOMLEFT", tooltipsAnchoredTo, "TOPLEFT", 0, 1)
 
@@ -221,7 +221,7 @@ local function CreatePositionPane()
         },
     })
 
-    local menuPositionText = positionPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local menuPositionText = positionPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     menuPositionText:SetText(L["Menu Position"])
     menuPositionText:SetPoint("BOTTOMLEFT", menuPositionDD, "TOPLEFT", 0, 1)
 end
@@ -271,7 +271,7 @@ local function CreateNicknamePane()
         nicknameEB:ClearFocus()
     end)
 
-    nicknameEB.tip = nicknameEB:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    nicknameEB.tip = nicknameEB:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     nicknameEB.tip:SetPoint("LEFT", 5, 0)
     nicknameEB.tip:SetTextColor(0.4, 0.4, 0.4, 1)
     nicknameEB.tip:SetText(L["My Nickname"])
@@ -452,7 +452,7 @@ local function CreateLibGetFramePane()
     --     },
     -- })
 
-    local framePriorityText = miscPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local framePriorityText = miscPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     framePriorityText:SetPoint("BOTTOMLEFT", framePriorityWidget, "TOPLEFT", 0, 7)
     framePriorityText:SetText(L["Frame priorities for LibGetFrame"])
 end

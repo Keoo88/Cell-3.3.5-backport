@@ -28,7 +28,7 @@ local function CreateIndicatorsImportFrame()
     importFrame:SetPoint("BOTTOMLEFT", P.Scale(1), 24)
 
     -- title
-    title = importFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_CLASS")
+    title = importFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_CLASS")
     title:SetPoint("TOPLEFT", 5, -5)
 
     -- list

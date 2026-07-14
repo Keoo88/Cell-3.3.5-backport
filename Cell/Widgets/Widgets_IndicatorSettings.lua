@@ -1152,7 +1152,7 @@ local function CreateSetting_HealthFormat(parent)
         widget.health1FormatDropdown:SetPoint("TOPLEFT", 5, -20)
         widget.health1FormatDropdown:SetItems(GetItems("health1", healthList))
 
-        local health1Text = widget:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+        local health1Text = widget:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
         health1Text:SetPoint("BOTTOMLEFT", widget.health1FormatDropdown, "TOPLEFT", 0, 1)
         health1Text:SetText(L["Health"] .. " 1")
 
@@ -1210,7 +1210,7 @@ local function CreateSetting_HealthFormat(parent)
             widget.func()
         end)
 
-        widget.health2DelimiterText = widget:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+        widget.health2DelimiterText = widget:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
         widget.health2DelimiterText:SetPoint("BOTTOMLEFT", widget.health2DelimiterEB, "TOPLEFT", 0, 1)
         widget.health2DelimiterText:SetText(L["Delimiter"])
 
@@ -1264,7 +1264,7 @@ local function CreateSetting_HealthFormat(parent)
         widget.shieldFormatDropdown:SetPoint("TOPLEFT", widget.health2ColorDropdown, "BOTTOMLEFT", 0, -35)
         widget.shieldFormatDropdown:SetItems(GetItems("shields", shieldList))
 
-        local shieldText = widget:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+        local shieldText = widget:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
         shieldText:SetPoint("BOTTOMLEFT", widget.shieldFormatDropdown, "TOPLEFT", 0, 1)
         shieldText:SetText(L["Shields"])
 
@@ -1277,7 +1277,7 @@ local function CreateSetting_HealthFormat(parent)
             widget.func()
         end)
 
-        widget.shieldDelimiterText = widget:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+        widget.shieldDelimiterText = widget:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
         widget.shieldDelimiterText:SetPoint("BOTTOMLEFT", widget.shieldDelimiterEB, "TOPLEFT", 0, 1)
         widget.shieldDelimiterText:SetText(L["Delimiter"])
 
@@ -1326,7 +1326,7 @@ local function CreateSetting_HealthFormat(parent)
         widget.healAbsorbFormatDropdown:SetPoint("TOPLEFT", widget.shieldColorDropdown, "BOTTOMLEFT", 0, -35)
         widget.healAbsorbFormatDropdown:SetItems(GetItems("healAbsorbs", healAbsorbList))
 
-        local healAbsorbText = widget:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+        local healAbsorbText = widget:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
         healAbsorbText:SetPoint("BOTTOMLEFT", widget.healAbsorbFormatDropdown, "TOPLEFT", 0, 1)
         healAbsorbText:SetText(L["Heal Absorbs"])
 
@@ -1339,7 +1339,7 @@ local function CreateSetting_HealthFormat(parent)
             widget.func()
         end)
 
-        widget.healAbsorbDelimiterText = widget:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+        widget.healAbsorbDelimiterText = widget:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
         widget.healAbsorbDelimiterText:SetPoint("BOTTOMLEFT", widget.healAbsorbDelimiterEB, "TOPLEFT", 0, 1)
         widget.healAbsorbDelimiterText:SetText(L["Delimiter"])
 
@@ -3152,7 +3152,7 @@ local function CreateSetting_ClassColor(parent)
             },
         })
 
-        local text = widget:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+        local text = widget:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
         text:SetPoint("BOTTOMLEFT", widget.colorDropdown, "TOPLEFT", 0, 1)
         text:SetText(L["Color"])
 
@@ -3220,7 +3220,7 @@ local function CreateSetting_PowerColor(parent)
             },
         })
 
-        local text = widget:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+        local text = widget:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
         text:SetPoint("BOTTOMLEFT", widget.colorDropdown, "TOPLEFT", 0, 1)
         text:SetText(L["Color"])
 
@@ -3560,11 +3560,11 @@ local function CreateSetting_Duration(parent)
         widget.durationRoundUpCB:SetPoint("TOPLEFT", widget.durationCB, "BOTTOMLEFT", 0, -8)
 
         -- duration decimal
-        widget.durationDecimalText1 = widget:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+        widget.durationDecimalText1 = widget:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
         widget.durationDecimalText1:SetPoint("TOPLEFT", widget.durationRoundUpCB, "BOTTOMLEFT", 1, -10)
         widget.durationDecimalText1:SetText(L["Display One Decimal Place When"])
 
-        widget.durationDecimalText2 = widget:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+        widget.durationDecimalText2 = widget:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
         widget.durationDecimalText2:SetPoint("TOPLEFT", widget.durationDecimalText1, "BOTTOMLEFT", 0, -5)
         widget.durationDecimalText2:SetText(L["Remaining Time"].." <")
 
@@ -4602,7 +4602,7 @@ local function CreateSetting_Auras(parent, index)
         auraImportExportFrame.info = auraImportExportFrame:CreateFontString(nil, "OVERLAY", font_name)
         auraImportExportFrame.info:SetPoint("BOTTOMLEFT", auraImportExportFrame.textArea, "TOPLEFT", 0, 3)
 
-        auraImportExportFrame.closeBtn = Cell.CreateButton(auraImportExportFrame, "X", "red", {18, 18}, false, false, "CELL_WRATH_FONT_WIDGET_TITLE", "CELL_WRATH_FONT_WIDGET_TITLE_DISABLE")
+        auraImportExportFrame.closeBtn = Cell.CreateButton(auraImportExportFrame, "X", "red", {18, 18}, false, false, "CELL_FONT_WIDGET_TITLE", "CELL_FONT_WIDGET_TITLE_DISABLE")
         auraImportExportFrame.closeBtn:SetPoint("BOTTOMRIGHT", auraImportExportFrame.textArea, "TOPRIGHT", 0, 1)
         auraImportExportFrame.closeBtn:SetScript("OnClick", function() auraImportExportFrame:Hide() end)
 
@@ -4759,7 +4759,7 @@ local function CreateCleuAuraButtons(parent, auraTable, updateHeightFunc)
 
         local spellEB = Cell.CreateEditBox(inputs, 20, 20, false, false, true)
         spellEB:SetAutoFocus(true)
-        spellEB.tip = spellEB:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+        spellEB.tip = spellEB:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
         spellEB.tip:SetTextColor(0.4, 0.4, 0.4, 1)
         spellEB.tip:SetText("ID")
         spellEB.tip:SetPoint("RIGHT", -5, 0)
@@ -4796,7 +4796,7 @@ local function CreateCleuAuraButtons(parent, auraTable, updateHeightFunc)
         local durationEB = Cell.CreateEditBox(inputs, 20, 20, false, false, true)
         durationEB:SetAutoFocus(true)
         durationEB:SetMaxLetters(2)
-        durationEB.tip = durationEB:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+        durationEB.tip = durationEB:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
         durationEB.tip:SetTextColor(0.4, 0.4, 0.4, 1)
         durationEB.tip:SetText(_G.AUCTION_DURATION)
         durationEB.tip:SetPoint("RIGHT", -5, 0)
@@ -5164,7 +5164,7 @@ local function CreateClassFrames(parent, builtIns, disableds)
     for _, class in pairs(classOrder) do
         if not classFrames[class] then
             classFrames[class] = Cell.CreateFrame("CellIndicatorSettings_BuiltIns_"..class, parent, nil, nil, true)
-            classFrames[class].text = classFrames[class]:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+            classFrames[class].text = classFrames[class]:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
             classFrames[class].text:SetPoint("TOPLEFT", 5, -5)
         end
 
@@ -5252,7 +5252,7 @@ local function CreateActionPreview(parent, style)
     f:SetBackdropColor(0.2, 0.2, 0.2, 1)
     f:SetBackdropBorderColor(0, 0, 0, 1)
 
-    local text = f:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local text = f:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     text:SetPoint("CENTER")
     text:SetText("Type "..style)
 
@@ -6559,7 +6559,7 @@ local function CreateRoleFilter(parent, class, roles)
     Cell.StylizeFrame(filter)
     P.Size(filter, 170, 20)
 
-    filter.text = filter:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    filter.text = filter:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     filter.text:SetPoint("LEFT", 5, 0)
     if class == "VEHICLE" or class == "PET" or class == "NPC" then
         filter.text:SetText("|cff00ff33"..L[class])

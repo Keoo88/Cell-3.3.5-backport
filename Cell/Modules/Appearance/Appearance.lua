@@ -86,7 +86,7 @@ local function CreateCellPane()
     })
     F.ApplyCombatProtectionToWidget(strataDropdown)
 
-    local scaleSliderText =  cellPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local scaleSliderText =  cellPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     scaleSliderText:SetPoint("BOTTOMLEFT", strataDropdown, "TOPLEFT", 0, 1)
     scaleSliderText:SetText(L["Strata"])
     hooksecurefunc(strataDropdown, "SetEnabled", function(self, enabled)
@@ -131,7 +131,7 @@ local function CreateCellPane()
         },
     })
 
-    local accentColorText = cellPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local accentColorText = cellPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     accentColorText:SetPoint("BOTTOMLEFT", accentColorDropdown, "TOPLEFT", 0, 1)
     accentColorText:SetText(L["Options UI Accent Color"])
 
@@ -220,7 +220,7 @@ local function CreatePreviewIcons()
     Cell.StylizeFrame(previewIconsBG, {0.1, 0.1, 0.1, 0.77}, {0, 0, 0, 0})
     previewIconsBG:Show()
 
-    local previewText = previewIconsBG:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET_TITLE")
+    local previewText = previewIconsBG:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET_TITLE")
     previewText:SetPoint("TOP", 0, -3)
     previewText:SetText(Cell.GetAccentColorString()..L["Preview"].." 1")
 
@@ -323,7 +323,7 @@ local function CreatePreviewButtons()
     previewButton:SetScript("OnUpdate", nil)
     previewButton:Show()
 
-    previewButton.previewHealthText = previewButton.widgets.indicatorFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    previewButton.previewHealthText = previewButton.widgets.indicatorFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     previewButton.previewHealthText:SetPoint("CENTER")
 
     previewButton.widgets.healthBar:SetMinMaxSmoothedValue(0, 100)
@@ -338,7 +338,7 @@ local function CreatePreviewButtons()
     Cell.StylizeFrame(previewButtonBG, {0.1, 0.1, 0.1, 0.77}, {0, 0, 0, 0})
     previewButtonBG:Show()
 
-    local previewText = previewButtonBG:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET_TITLE")
+    local previewText = previewButtonBG:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET_TITLE")
     previewText:SetPoint("TOP", 0, -3)
     previewText:SetText(Cell.GetAccentColorString()..L["Preview"].." 2")
 
@@ -365,7 +365,7 @@ local function CreatePreviewButtons()
     Cell.StylizeFrame(previewButtonBG2, {0.1, 0.1, 0.1, 0.77}, {0, 0, 0, 0})
     previewButtonBG2:Show()
 
-    local previewText2 = previewButtonBG2:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET_TITLE")
+    local previewText2 = previewButtonBG2:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET_TITLE")
     previewText2:SetPoint("TOP", 0, -3)
     previewText2:SetText(Cell.GetAccentColorString()..L["Preview"].." 3")
 
@@ -662,7 +662,7 @@ local function CreateIconOptionsFrame()
         },
     })
 
-    local iconAnimationText = iconOptionsFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local iconAnimationText = iconOptionsFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     iconAnimationText:SetPoint("BOTTOMLEFT", iconAnimationDropdown, "TOPLEFT", 0, 1)
     iconAnimationText:SetText(L["Play Icon Animation When"])
 
@@ -678,11 +678,11 @@ local function CreateIconOptionsFrame()
     durationRoundUpCB:SetPoint("TOPLEFT", iconAnimationDropdown, "BOTTOMLEFT", 0, -22)
 
     -- duration decimal
-    durationDecimalText1 = iconOptionsFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    durationDecimalText1 = iconOptionsFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     durationDecimalText1:SetPoint("TOPLEFT", durationRoundUpCB, "BOTTOMLEFT", 0, -10)
     durationDecimalText1:SetText(L["Display One Decimal Place When"])
 
-    durationDecimalText2 = iconOptionsFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    durationDecimalText2 = iconOptionsFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     durationDecimalText2:SetPoint("TOPLEFT", durationDecimalText1, "BOTTOMLEFT", 0, -5)
     durationDecimalText2:SetText(L["Remaining Time"].." <")
 
@@ -817,7 +817,7 @@ local function CreateIconOptionsFrame()
         end
     end)
 
-    durationSecondText = iconOptionsFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    durationSecondText = iconOptionsFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     durationSecondText:SetPoint("LEFT", durationSecondEB, "RIGHT", 5, 0)
     durationSecondText:SetText(L["sec"])
 end
@@ -924,7 +924,7 @@ local function CreateUnitButtonStylePane()
     textureDropdown = Cell.CreateDropdown(unitButtonPane, 160, "texture")
     textureDropdown:SetPoint("TOPLEFT", unitButtonPane, "TOPLEFT", 5, -42)
 
-    local textureText = unitButtonPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local textureText = unitButtonPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     textureText:SetPoint("BOTTOMLEFT", textureDropdown, "TOPLEFT", 0, 1)
     textureText:SetText(L["Texture"])
 
@@ -1000,7 +1000,7 @@ local function CreateUnitButtonStylePane()
         CellTooltip:Hide()
     end)
 
-    local barColorText = unitButtonPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local barColorText = unitButtonPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     barColorText:SetPoint("BOTTOMLEFT", barColorDropdown, "TOPLEFT", 0, 1)
     barColorText:SetText(L["Health Bar Color"])
 
@@ -1172,7 +1172,7 @@ local function CreateUnitButtonStylePane()
         CellTooltip:Hide()
     end)
 
-    local lossColorText = unitButtonPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local lossColorText = unitButtonPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     lossColorText:SetPoint("BOTTOMLEFT", lossColorDropdown, "TOPLEFT", 0, 1)
     lossColorText:SetText(L["Health Loss Color"])
 
@@ -1314,7 +1314,7 @@ local function CreateUnitButtonStylePane()
         },
     })
 
-    local powerColorText = unitButtonPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local powerColorText = unitButtonPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     powerColorText:SetPoint("BOTTOMLEFT", powerColorDropdown, "TOPLEFT", 0, 1)
     powerColorText:SetText(L["Power Color"])
 
@@ -1355,7 +1355,7 @@ local function CreateUnitButtonStylePane()
         },
     })
 
-    local barAnimationText = unitButtonPane:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local barAnimationText = unitButtonPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     barAnimationText:SetPoint("BOTTOMLEFT", barAnimationDropdown, "TOPLEFT", 0, 1)
     barAnimationText:SetText(L["Bar Animation"])
 

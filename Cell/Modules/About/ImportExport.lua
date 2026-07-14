@@ -231,21 +231,21 @@ local function CreateImportConfirmationFrame()
     end)
 
     -- message
-    local text1 = confirmationFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET_TITLE")
+    local text1 = confirmationFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET_TITLE")
     text1:SetPoint("LEFT", 10, 0)
     text1:SetPoint("RIGHT", -10, 0)
     text1:SetPoint("TOP", 0, -10)
     text1:SetSpacing(5)
     text1:SetText("|cFFFF7070"..L["Cell settings will be overwritten!"])
 
-    local text2 = confirmationFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local text2 = confirmationFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     text2:SetPoint("LEFT", 10, 0)
     text2:SetPoint("RIGHT", -10, 0)
     text2:SetPoint("TOP", text1, "BOTTOM", 0, -5)
     text2:SetSpacing(5)
     text2:SetText( "|cFFB7B7B7"..L["Unselected settings will remain"])
 
-    local text3 = confirmationFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_WIDGET")
+    local text3 = confirmationFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     text3:SetPoint("BOTTOMLEFT", 5, 5)
     text3:SetPoint("RIGHT", button1, "LEFT", -10, 0)
     text3:SetJustifyH("LEFT")
@@ -360,7 +360,7 @@ local function CreateImportExportFrame()
     end
 
     -- close
-    local closeBtn = Cell.CreateButton(importExportFrame, "X", "red", {18, 18}, false, false, "CELL_WRATH_FONT_WIDGET_TITLE", "CELL_WRATH_FONT_WIDGET_TITLE_DISABLE")
+    local closeBtn = Cell.CreateButton(importExportFrame, "X", "red", {18, 18}, false, false, "CELL_FONT_WIDGET_TITLE", "CELL_FONT_WIDGET_TITLE_DISABLE")
     closeBtn:SetPoint("TOPRIGHT", P.Scale(-5), P.Scale(-1))
     closeBtn:SetScript("OnClick", function() importExportFrame:Hide() end)
 
@@ -388,7 +388,7 @@ local function CreateImportExportFrame()
     end)
 
     -- title
-    title = importExportFrame:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_CLASS")
+    title = importExportFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_CLASS")
     title:SetPoint("TOPLEFT", 5, -5)
 
     -- export include nickname settings

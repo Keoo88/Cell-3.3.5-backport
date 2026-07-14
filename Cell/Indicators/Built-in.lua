@@ -1047,14 +1047,14 @@ end
 -------------------------------------------------
 -- name text
 -------------------------------------------------
-local font_name = CreateFont("CELL_WRATH_FONT_NAME")
+local font_name = CreateFont("CELL_FONT_NAME")
 font_name:SetFont(GameFontNormal:GetFont(), 13, "")
 --! NOTE: VERY IMPORTANT, if not set, shadows will DISAPPER when wow window size changed
 font_name:SetTextColor(1, 1, 1, 1)
 font_name:SetShadowColor(0, 0, 0)
 font_name:SetShadowOffset(1, -1)
 
-local font_status = CreateFont("CELL_WRATH_FONT_STATUS")
+local font_status = CreateFont("CELL_FONT_STATUS")
 font_status:SetFont(GameFontNormal:GetFont(), 11, "")
 --! NOTE: VERY IMPORTANT, if not set, shadows will DISAPPER when wow window size changed
 font_status:SetTextColor(1, 1, 1, 1)
@@ -1066,9 +1066,9 @@ function I.CreateNameText(parent)
     parent.indicators.nameText = nameText
     nameText:Hide()
 
-    nameText.name = nameText:CreateFontString(parent:GetName().."NameText_Name", "OVERLAY", "CELL_WRATH_FONT_NAME")
+    nameText.name = nameText:CreateFontString(parent:GetName().."NameText_Name", "OVERLAY", "CELL_FONT_NAME")
 
-    nameText.vehicle = nameText:CreateFontString(parent:GetName().."NameText_Vehicle", "OVERLAY", "CELL_WRATH_FONT_STATUS")
+    nameText.vehicle = nameText:CreateFontString(parent:GetName().."NameText_Vehicle", "OVERLAY", "CELL_FONT_STATUS")
     nameText.vehicle:SetTextColor(0.8, 0.8, 0.8, 1)
     nameText.vehicle:Hide()
 
@@ -1412,10 +1412,10 @@ function I.CreateStatusText(parent)
     -- statusText.bg:SetGradient("HORIZONTAL", CreateColor(0, 0, 0, 0.777), CreateColor(0, 0, 0, 0))
     statusText.bg:SetAllPoints(statusText)
 
-    local text = statusText:CreateFontString(nil, "ARTWORK", "CELL_WRATH_FONT_STATUS")
+    local text = statusText:CreateFontString(nil, "ARTWORK", "CELL_FONT_STATUS")
     statusText.text = text
 
-    local timer = statusText:CreateFontString(nil, "ARTWORK", "CELL_WRATH_FONT_STATUS")
+    local timer = statusText:CreateFontString(nil, "ARTWORK", "CELL_FONT_STATUS")
     statusText.timer = timer
 
     statusText.GetStatus = StatusText_GetStatus
@@ -1613,7 +1613,7 @@ function I.CreateHealthText(parent)
     parent.indicators.healthText = healthText
     healthText:Hide()
 
-    local text = healthText:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_STATUS")
+    local text = healthText:CreateFontString(nil, "OVERLAY", "CELL_FONT_STATUS")
     healthText.text = text
 
     healthText.GetHealth1 = formatter.none
@@ -1735,7 +1735,7 @@ function I.CreatePowerText(parent)
     parent.indicators.powerText = powerText
     powerText:Hide()
 
-    local text = powerText:CreateFontString(nil, "OVERLAY", "CELL_WRATH_FONT_STATUS")
+    local text = powerText:CreateFontString(nil, "OVERLAY", "CELL_FONT_STATUS")
     powerText.text = text
 
     powerText.SetFont = PowerText_SetFont
