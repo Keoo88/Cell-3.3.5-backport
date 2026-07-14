@@ -372,7 +372,8 @@ function eventFrame:ADDON_LOADED(arg1)
         -- click-casting --------------------------------------------------------------------------
         local _, classFile, classID = UnitClass("player")
         Cell.vars.playerClass = classFile
-        Cell.vars.playerClassID = classID
+        -- NOTE: on 3.3.5a UnitClass may not return classID (3rd return added in 4.0), derive from classFile
+        Cell.vars.playerClassID = classID or F.GetClassID(classFile)
 
         if type(CellCharacterDB["clickCastings"]) ~= "table" then
             CellCharacterDB["clickCastings"] = {

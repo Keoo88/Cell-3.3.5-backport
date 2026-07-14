@@ -393,9 +393,10 @@ function I.CanDispel(dispelType)
 
     local classID = Cell.vars.playerClassID
     if not classID then
-        local _, _, cid = UnitClass("player")
-        classID = cid
-        Cell.vars.playerClassID = cid
+        -- NOTE: on 3.3.5a UnitClass may not return classID (3rd return added in 4.0), derive from classFile
+        local _, classFile, cid = UnitClass("player")
+        classID = cid or F.GetClassID(classFile)
+        Cell.vars.playerClassID = classID
     end
 
     if dispellable[classID] then
