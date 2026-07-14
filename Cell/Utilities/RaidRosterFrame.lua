@@ -415,8 +415,10 @@ local function CreateRaidRosterGrid(parent, index)
 
         roleIcon:Show()
         roleIconBg:Show()
-        if role == "NONE" then
-            roleIcon:SetTexture(134400)
+        -- NOTE: fileID textures (134400) are not supported on 3.3.5a, use the path;
+        -- also this checked an undefined local "role" instead of grid.role (upstream typo)
+        if not grid.role or grid.role == "NONE" then
+            roleIcon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
         else
             roleIcon:SetTexture(F.GetDefaultRoleIcon(grid.role))
         end
@@ -451,7 +453,9 @@ local function CreateRaidRosterGrid(parent, index)
     end
 
     function grid:Set(raidIndex)
-        local name, _, subgroup, _, _, classFileName, _, _, _, _, _, combatRole = GetRaidRosterInfo(raidIndex)
+        -- NOTE: on 3.3.5a GetRaidRosterInfo has only 11 returns (combatRole was added in 4.x),
+        -- resolve the role via the UnitGroupRolesAssigned polyfill instead
+        local name, _, subgroup, _, _, classFileName = GetRaidRosterInfo(raidIndex)
 
         if not name then
             -- unknown target, retry
@@ -478,7 +482,7 @@ local function CreateRaidRosterGrid(parent, index)
         grid.raidIndex = raidIndex
         grid.unit = "raid"..raidIndex
         grid.name = name
-        grid.role = combatRole
+        grid.role = UnitGroupRolesAssigned("raid"..raidIndex)
         grid.color[1], grid.color[2], grid.color[3] = F.GetClassColor(classFileName)
         grid.isLeader = UnitIsGroupLeader(grid.unit)
         grid.isAssistant = UnitIsGroupAssistant(grid.unit)
