@@ -3661,7 +3661,7 @@ local function CreateSetting_RoleTexture(parent)
         widget.texture = Cell.CreateDropdown(widget, 260)
         widget.texture:SetPoint("TOPLEFT", 5, -20)
 
-        local blizzard = F.UpperFirst(SLASH_TEXTTOSPEECH_BLIZZARD)
+        local blizzard = F.UpperFirst(SLASH_TEXTTOSPEECH_BLIZZARD or "blizzard")
         local indices = {"default", "default2", "blizzard", "blizzard2", "blizzard3", "blizzard4", "ffxiv", "miirgui", "mattui", "custom"}
         local ICON_PATH = " |TInterface\\AddOns\\Cell\\Media\\Roles\\Preview_%s:0:4|t"
         local options = {
