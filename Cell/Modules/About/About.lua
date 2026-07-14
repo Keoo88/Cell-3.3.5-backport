@@ -17,8 +17,7 @@ local UpdateFont
 -------------------------------------------------
 local descriptionPane
 local function CreateDescriptionPane()
-    -- taller pane to avoid cutting text
-    descriptionPane = Cell.CreateTitledPane(aboutTab, "Cell", 422, 320)
+    descriptionPane = Cell.CreateTitledPane(aboutTab, "Cell", 422, 130)
     descriptionPane:SetPoint("TOPLEFT", aboutTab, "TOPLEFT", 5, -5)
 
     -- Code Snippets button
@@ -32,12 +31,12 @@ local function CreateDescriptionPane()
     descText:SetPoint("TOPLEFT", 5, -27)
     descText:SetPoint("BOTTOMRIGHT", -10, 5)
     descText:SetJustifyH("LEFT")
+    descText:SetJustifyV("TOP")
     descText:SetSpacing(7)
     descText:SetText(
         "|cfffabd2fCell|r\n"..
         "|cffffffffFast, compact raid and party frames with crisp debuff tracking, healer-friendly indicators, and a no-fuss setup tuned for Ascension WoW.|r\n\n"..
-        "|cff78d5ff3.3.5a backport by|r |cffffffffKeoo|r\n"..
-        "|cffa6e22ePort date|r |cffffffff2025-12-03|r"
+        "|cff78d5ff3.3.5a backport by|r |cffffffffKeoo|r"
     )
 end
 
@@ -48,7 +47,7 @@ end
 -------------------------------------------------
 local function CreateAuthorPane()
     local authorPane = Cell.CreateTitledPane(aboutTab, L["Author"], 205, 50)
-    authorPane:SetPoint("TOPLEFT", aboutTab, "TOPLEFT", 5, -330)
+    authorPane:SetPoint("TOPLEFT", aboutTab, "TOPLEFT", 5, -150)
 
     authorText = authorPane:CreateFontString(nil, "OVERLAY")
     authorText:SetPoint("TOPLEFT", 5, -27)
@@ -64,7 +63,7 @@ end
 -------------------------------------------------
 local function CreateSlashPane()
     local slashPane = Cell.CreateTitledPane(aboutTab, L["Slash Commands"], 205, 50)
-    slashPane:SetPoint("TOPLEFT", aboutTab, "TOPLEFT", 222, -330)
+    slashPane:SetPoint("TOPLEFT", aboutTab, "TOPLEFT", 222, -150)
 
     local commandText = slashPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     commandText:SetPoint("TOPLEFT", 5, -27)
@@ -425,7 +424,7 @@ end
 
 local function CreateLinksPane()
     local linksPane = Cell.CreateTitledPane(aboutTab, L["Links"], 422, 100)
-    linksPane:SetPoint("TOPLEFT", aboutTab, "TOPLEFT", 5, -390)
+    linksPane:SetPoint("TOPLEFT", aboutTab, "TOPLEFT", 5, -210)
 
     local current
 
@@ -461,7 +460,7 @@ end
 -------------------------------------------------
 local function CreateImportExportPane()
     local iePane = Cell.CreateTitledPane(aboutTab, L["Import & Export All Settings"], 422, 50)
-    iePane:SetPoint("TOPLEFT", 5, -500)
+    iePane:SetPoint("TOPLEFT", 5, -320)
 
     local importBtn = Cell.CreateButton(iePane, L["Import"], "accent-hover", {134, 20})
     importBtn:SetPoint("TOPLEFT", 5, -27)
@@ -484,7 +483,7 @@ end
 -------------------------------------------------
 local function CreateLanguagePane()
     local langPane = Cell.CreateTitledPane(aboutTab, L["Language"] or "Language", 422, 50)
-    langPane:SetPoint("TOPLEFT", 5, -555)
+    langPane:SetPoint("TOPLEFT", 5, -375)
 
     -- Build dropdown items from available locales
     local items = {}
