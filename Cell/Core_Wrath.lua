@@ -494,7 +494,8 @@ function eventFrame:ADDON_LOADED(arg1)
         Cell.versionNum = tonumber(string.match(Cell.version, "%d+"))
         if not CellDB["revise"] then CellDB["firstRun"] = true end
         F.Revise()
-        F.CheckWhatsNew()
+        -- changelogs auto-popup disabled (empty on the backport); still available via About tab
+        CellDB["changelogsViewed"] = Cell.version
         F.RunSnippets()
 
         -- validation -----------------------------------------------------------------------------
