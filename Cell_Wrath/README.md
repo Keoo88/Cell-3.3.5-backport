@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/enderneko/Cell/master/Media/icon.png" alt="Cell" width="120">
+  <img src=".github/icon.png" alt="Cell" width="120">
 </p>
 
 <p align="center">
