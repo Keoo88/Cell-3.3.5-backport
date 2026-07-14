@@ -155,7 +155,22 @@ local function CooldownCaptureProgress(Swipe, Progress)
 
 	local Angle = (Reverse) and Degree or (90 - Degree)
 	Wedge.Rotation:SetDegrees(-Angle)
-	CooldownCaptureTransform(Wedge.Texture, Angle, Swipe.Aspect)
+
+	-- NOTE: re-validate the cached aspect; if the frame was 0x0 on OnShow, retry
+	-- now that it may have been sized (NaN/inf/0 all fail the "> 0 and < huge" test)
+	local Aspect = Swipe.Aspect
+	if ( not (Aspect > 0 and Aspect < math.huge) ) then
+		local Width, Height = Swipe:GetSize()
+		if ( Width > 0 and Height > 0 ) then
+			Aspect = Width/Height
+			Swipe[5].Texture:SetSize(Width, Height)
+		else
+			Aspect = 1
+		end
+		Swipe.Aspect = Aspect
+	end
+
+	CooldownCaptureTransform(Wedge.Texture, Angle, Aspect)
 
 	if ( Swipe.DrawEdge ) then
 		Swipe[6].Rotation:SetDegrees(Reverse and -Degree or Degree)
@@ -207,9 +222,15 @@ local function CooldownCaptureShow(Self)
 			CooldownCaptureEdge(Swipe, Edge)
 		end
 
+		-- NOTE: the frame may not be laid out yet (0x0), which makes Width/Height
+		-- produce NaN (0/0) or inf (W/0) and poisons SetTexCoord with invalid values.
 		local Width, Height = Swipe:GetSize()
-		Swipe.Aspect = Width/Height
-		Swipe[5].Texture:SetSize(Width, Height) -- Wedge
+		if ( Width > 0 and Height > 0 ) then
+			Swipe.Aspect = Width/Height
+			Swipe[5].Texture:SetSize(Width, Height) -- Wedge
+		else
+			Swipe.Aspect = 1
+		end
 
 		SetCooldownAlpha(Self, 0)
 		Swipe:Show()
