@@ -35,7 +35,7 @@ local function CreateDescriptionPane()
     descText:SetSpacing(7)
     descText:SetText(
         "|cfffabd2fCell|r\n"..
-        "|cffffffffFast, compact raid and party frames with crisp debuff tracking, healer-friendly indicators, and a no-fuss setup tuned for Ascension WoW.|r\n\n"..
+        "|cffffffffFast, compact raid and party frames with crisp debuff tracking, healer-friendly indicators, and a no-fuss setup.|r\n\n"..
         "|cff78d5ff3.3.5a backport by|r |cffffffffKeoo|r"
     )
 end
