@@ -29,7 +29,6 @@
 	<Script file="Util\C_SpellBook.lua" />
 	<Script file="Util\C_Spell.lua" />
 	<Script file="Util\C_Item.lua" />
-	<Script file="Util\C_Container.lua" />
 	<Script file="Util\C_AddOns.lua" />
 
 	<Script file="Util\Mixin.lua" />
@@ -48,12 +47,6 @@
 	<Script file="Util\NineSlice.lua" />
 	<Script file="Util\TextureUtil.lua" />
 	<Script file="Util\SmoothStatusBar.lua" />
-	<Script file="Util\CallbackRegistry.lua" />
-	<Script file="Util\GlobalCallbackRegistry.lua" />
-	<Script file="Util\Spell.lua" />
-	<Script file="Util\ItemLocation.lua" />
-	<Script file="Util\Item.lua" />
-
 	<Script file="Util\Compatibility.lua" />
 
 	<!-- Templates -->

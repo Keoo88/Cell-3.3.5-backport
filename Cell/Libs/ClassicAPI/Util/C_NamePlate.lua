@@ -1,1 +1,0 @@
---if ( C_NamePlate ) then return end -- (https://github.com/FrostAtom/awesome_wotlk)
