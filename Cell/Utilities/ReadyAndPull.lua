@@ -154,7 +154,8 @@ readyBtn:RegisterForClicks("LeftButtonDown", "RightButtonDown")
 readyBtn:SetScript("OnClick", function(self, button)
     if button == "LeftButton" then
         DoReadyCheck()
-    else
+    elseif InitiateRolePoll then
+        -- NOTE: InitiateRolePoll does not exist on 3.3.5a (role polls were added in 4.0.6)
         InitiateRolePoll()
     end
 end)
