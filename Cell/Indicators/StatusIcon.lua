@@ -8,10 +8,13 @@ local P = Cell.pixelPerfectFuncs
 
 CELL_SUMMON_ICONS_ENABLED = false
 
--- Retail has CombatLogGetCurrentEventInfo; Wrath passes args directly
+-- Retail has CombatLogGetCurrentEventInfo; Wrath passes args directly.
+-- NOTE: pass varargs through — the ClassicAPI shim of CombatLogGetCurrentEventInfo
+-- is a passthrough that normalizes the 3.3.5a payload and returns nothing without args.
+-- Retail ignores extra args, so this is safe everywhere.
 local function GetCLEUInfo(...)
     if CombatLogGetCurrentEventInfo then
-        return CombatLogGetCurrentEventInfo()
+        return CombatLogGetCurrentEventInfo(...)
     end
     return ...
 end
