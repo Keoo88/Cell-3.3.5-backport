@@ -3,15 +3,9 @@
 </p>
 
 <p align="center">
-  <b><span style="color:red">⚠ WARNING: This addon is in BETA — may contain bugs and incomplete features ⚠</span></b>
-</p>
-
-<br>
-
-<p align="center">
   <img src="https://img.shields.io/badge/Cell-r277-ff8800?style=for-the-badge&logo=appveyor">
   <img src="https://img.shields.io/badge/WotLK-3.3.5a-blue?style=for-the-badge">
-  <img src="https://img.shields.io/badge/status-beta-red?style=for-the-badge">
+  <img src="https://img.shields.io/badge/status-stable-brightgreen?style=for-the-badge">
 </p>
 
 <h1 align="center">Cell — WotLK 3.3.5a backport</h1>
@@ -114,7 +108,7 @@ Use `/cell` for more information.
 
 1. Download the latest release (or clone this repository).
 2. Extract the archive.
-3. Move the **Cell_Wrath** folder into:
+3. Move the **Cell** folder into:
    ```
    \Interface\AddOns\
    ```
@@ -221,7 +215,7 @@ Blizzard.
 
 1. Скачайте последний релиз (или клонируйте репозиторий).
 2. Распакуйте архив.
-3. Переместите папку **Cell_Wrath** в:
+3. Переместите папку **Cell** в:
    ```
    \Interface\AddOns\
    ```
