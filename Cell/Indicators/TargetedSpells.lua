@@ -13,6 +13,29 @@ local UnitIsUnit = UnitIsUnit
 local UnitIsEnemy = UnitIsEnemy
 local UnitCastingInfo = UnitCastingInfo
 local UnitChannelInfo = UnitChannelInfo
+local GetSpellInfo = GetSpellInfo
+
+-- NOTE: on 3.3.5a UnitCastingInfo/UnitChannelInfo return an extra "rank" as the 2nd value
+-- and do NOT return spellId (it was added in 8.0). Resolve spellId by spell name instead.
+-- Cell.vars.targetedSpellsList is recreated via F.ConvertTable on every change,
+-- so the table reference is a reliable cache invalidation key.
+local spellNameToId = {}
+local cachedListRef
+
+local function ResolveSpellId(name)
+    local list = Cell.vars.targetedSpellsList
+    if list ~= cachedListRef then
+        cachedListRef = list
+        wipe(spellNameToId)
+        if list then
+            for id in pairs(list) do
+                local n = GetSpellInfo(id)
+                if n then spellNameToId[n] = id end
+            end
+        end
+    end
+    return spellNameToId[name]
+end
 
 local casts = {}
 local castsOnUnit, sortedCastsOnUnit = {}, {}
@@ -155,12 +178,18 @@ local function CheckUnitCast(sourceUnit, isRecheck)
         end
     end
 
-    -- name, text, texture, startTimeMS, endTimeMS, isTradeSkill, castID, notInterruptible, spellId
-    local name, _, texture, startTimeMS, endTimeMS, _, _, notInterruptible, spellId = UnitCastingInfo(sourceUnit)
+    -- NOTE: 3.3.5a returns: name, rank, text, texture, startTimeMS, endTimeMS, isTradeSkill, castID, notInterruptible (no spellId)
+    local name, _, _, texture, startTimeMS, endTimeMS = UnitCastingInfo(sourceUnit)
     if not name then
-        -- name, text, texture, startTimeMS, endTimeMS, isTradeSkill, notInterruptible, spellId
-        name, _, texture, startTimeMS, endTimeMS, _, notInterruptible, spellId = UnitChannelInfo(sourceUnit)
+        -- NOTE: 3.3.5a returns: name, rank, text, texture, startTimeMS, endTimeMS, isTradeSkill, notInterruptible (no spellId)
+        name, _, _, texture, startTimeMS, endTimeMS = UnitChannelInfo(sourceUnit)
         isChanneling = true
+    end
+
+    -- resolve spellId by name; for "show all spells" fall back to the name itself as the table key
+    local spellId
+    if name then
+        spellId = ResolveSpellId(name) or (showAllSpells and name) or nil
     end
 
     -- print(sourceUnit, name, spellId)
