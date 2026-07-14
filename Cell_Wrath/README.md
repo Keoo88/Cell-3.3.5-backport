@@ -44,10 +44,14 @@ Aptechka, and VuhDo: solo/party/raid frames, aura indicators, click-castings,
 raid debuffs tracking, spell request utilities, and more. This repository is a
 **backport of Cell r269** to the **WoW 3.3.5a (WotLK)** client.
 
+<img width="178" height="299" alt="party" src="https://github.com/user-attachments/assets/396180df-9d33-483b-8eae-41d09efab515" />
+
 <a name="features"></a>
 ### Features
 
 #### Layouts
+
+<img width="470" height="441" alt="layout" src="https://github.com/user-attachments/assets/507fd502-ef18-4d37-9c0e-b1dd5d5a1575" />
 
 Fully customizable party and raid frames — size, position, orientation, group
 arrangement, and power bars. Auto-switch layouts by spec/role with independent
@@ -55,11 +59,15 @@ settings for solo, party, raid, arena, and battleground.
 
 #### Appearance
 
+<img width="470" height="491" alt="appearance" src="https://github.com/user-attachments/assets/1a662292-ca2c-48a9-9e56-a2315507b3d3" />
+
 Textures, colors, alphas, and fonts are all in your hands. Health color by
 class or by percentage, customizable background, out-of-range dimming, and full
 control over the look of every frame.
 
 #### Indicators
+
+<img width="480" height="441" alt="indicators" src="https://github.com/user-attachments/assets/9c1273be-dc68-40f8-ae17-b53245a5509a" />
 
 Dozens of built-in indicators (health text, aggro bar, shield bar, heal
 prediction, dispels, raid icons, and more) plus unlimited custom indicators for
@@ -67,11 +75,15 @@ any buff or debuff — icons, bars, rects, texts, colors, and glows.
 
 #### Click-Castings
 
+<img width="399" height="441" alt="click-castings" src="https://github.com/user-attachments/assets/4d7b33d5-f2f2-4666-a5c7-388cef15a672" />
+
 Bind spells, macros, and items directly to mouse clicks on unit frames —
 mouseover healing without target switching. Supports keyboard and multi-button
 mice, with per-class and per-spec binding profiles.
 
 #### Raid Debuffs
+
+<img width="470" height="441" alt="raiddebuffs" src="https://github.com/user-attachments/assets/dea8a922-1be3-4ddb-890b-03eeba76d6c8" />
 
 Track boss abilities and dangerous debuffs in dungeons and raids with
 prioritized, per-instance debuff lists and glow effects. Ships with data for
@@ -96,26 +108,6 @@ Use `/cell` for more information.
 | --- | --- |
 | `/cell` | Show all available commands |
 | `/cell opt` | Open the options frame |
-
-### Screenshots
-
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/396180df-9d33-483b-8eae-41d09efab515" alt="Party frames" width="200">
-</p>
-
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/507fd502-ef18-4d37-9c0e-b1dd5d5a1575" alt="Layouts tab" width="400">
-  <img src="https://github.com/user-attachments/assets/1a662292-ca2c-48a9-9e56-a2315507b3d3" alt="Appearance tab" width="400">
-</p>
-
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/9c1273be-dc68-40f8-ae17-b53245a5509a" alt="Indicators tab" width="400">
-  <img src="https://github.com/user-attachments/assets/4d7b33d5-f2f2-4666-a5c7-388cef15a672" alt="Click-Castings tab" width="400">
-</p>
-
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/dea8a922-1be3-4ddb-890b-03eeba76d6c8" alt="Raid Debuffs tab" width="400">
-</p>
 
 <a name="installation"></a>
 ### Installation
@@ -157,10 +149,14 @@ CompactRaid, Grid2, Aptechka и VuhDo: рамки соло/группы/рейд
 клик-касты, отслеживание рейдовых дебаффов, запросы заклинаний и многое другое.
 Этот репозиторий — **бэкпорт Cell r269** под клиент **WoW 3.3.5a (WotLK)**.
 
+<img width="178" height="299" alt="party" src="https://github.com/user-attachments/assets/396180df-9d33-483b-8eae-41d09efab515" />
+
 <a name="возможности"></a>
 ### Возможности
 
 #### Макеты (Layouts)
+
+<img width="470" height="441" alt="layout" src="https://github.com/user-attachments/assets/507fd502-ef18-4d37-9c0e-b1dd5d5a1575" />
 
 Полностью настраиваемые рамки группы и рейда — размер, позиция, ориентация,
 расположение групп и полосы ресурсов. Автопереключение макетов по спеку/роли с
@@ -168,11 +164,15 @@ CompactRaid, Grid2, Aptechka и VuhDo: рамки соло/группы/рейд
 
 #### Внешний вид (Appearance)
 
+<img width="470" height="491" alt="appearance" src="https://github.com/user-attachments/assets/1a662292-ca2c-48a9-9e56-a2315507b3d3" />
+
 Текстуры, цвета, прозрачность и шрифты — всё в ваших руках. Цвет здоровья по
 классу или по проценту, настраиваемый фон, затемнение вне дистанции и полный
 контроль над видом каждой рамки.
 
 #### Индикаторы (Indicators)
+
+<img width="480" height="441" alt="indicators" src="https://github.com/user-attachments/assets/9c1273be-dc68-40f8-ae17-b53245a5509a" />
 
 Десятки встроенных индикаторов (текст здоровья, полоса агро, полоса щита,
 предсказание лечения, диспелы, рейдовые метки и др.) плюс неограниченные
@@ -181,11 +181,15 @@ CompactRaid, Grid2, Aptechka и VuhDo: рамки соло/группы/рейд
 
 #### Клик-касты (Click-Castings)
 
+<img width="399" height="441" alt="click-castings" src="https://github.com/user-attachments/assets/4d7b33d5-f2f2-4666-a5c7-388cef15a672" />
+
 Привязывайте заклинания, макросы и предметы напрямую к кликам мыши по рамкам —
 лечение по наведению без смены цели. Поддержка клавиатуры и многокнопочных
 мышей, профили привязок для каждого класса и спека.
 
 #### Рейдовые дебаффы (Raid Debuffs)
+
+<img width="470" height="441" alt="raiddebuffs" src="https://github.com/user-attachments/assets/dea8a922-1be3-4ddb-890b-03eeba76d6c8" />
 
 Отслеживайте способности боссов и опасные дебаффы в подземель��х и рейдах с
 приоритетными списками по каждой локации и эффектами свечения. В комплекте
@@ -194,7 +198,7 @@ CompactRaid, Grid2, Aptechka и VuhDo: рамки соло/группы/рейд
 #### Утилиты (Utilities)
 
 Полезные рейдовые инструменты: пр��верка готовности, отсчёт, запросы
-заклинаний/диспела, отчёт о смерти, панель меток и скрытие стандартных рамок
+заклинаний/диспела, отчёт о см��рти, панель меток и скрытие стандартных рамок
 Blizzard.
 
 #### Рамка Spotlight
@@ -211,26 +215,6 @@ Blizzard.
 | --- | --- |
 | `/cell` | Показать все доступные команды |
 | `/cell opt` | Открыть окно настроек |
-
-### Скриншоты
-
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/396180df-9d33-483b-8eae-41d09efab515" alt="Рамки группы" width="200">
-</p>
-
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/507fd502-ef18-4d37-9c0e-b1dd5d5a1575" alt="Вкладка макетов" width="400">
-  <img src="https://github.com/user-attachments/assets/1a662292-ca2c-48a9-9e56-a2315507b3d3" alt="Вкладка внешнего вида" width="400">
-</p>
-
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/9c1273be-dc68-40f8-ae17-b53245a5509a" alt="Вкладка индикаторов" width="400">
-  <img src="https://github.com/user-attachments/assets/4d7b33d5-f2f2-4666-a5c7-388cef15a672" alt="Вкладка клик-кастов" width="400">
-</p>
-
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/dea8a922-1be3-4ddb-890b-03eeba76d6c8" alt="Вкладка рейдовых дебаффов" width="400">
-</p>
 
 <a name="установка"></a>
 ### Установка
