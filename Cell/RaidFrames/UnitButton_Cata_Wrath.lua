@@ -2839,7 +2839,7 @@ end
 local function UnitButton_OnEvent(self, event, unit, ...)
     -- print(event, self:GetName(), unit, self.states.displayedUnit, self.states.unit)
     -- if UnitExists(unit) and (UnitIsUnit(unit, self.states.displayedUnit) or UnitIsUnit(unit, self.states.unit)) then
-    if unit and (self.states.displayedUnit == unit or self.states.unit == unit or UnitIsUnit(unit, self.states.displayedUnit)) then
+    if unit and type(unit) == "string" and (self.states.displayedUnit == unit or self.states.unit == unit or (self.states.displayedUnit and UnitIsUnit(unit, self.states.displayedUnit))) then
         if  event == "UNIT_ENTERED_VEHICLE" or event == "UNIT_EXITED_VEHICLE" or event == "UNIT_CONNECTION" then
             self._updateRequired = 1
             self._powerUpdateRequired = 1
