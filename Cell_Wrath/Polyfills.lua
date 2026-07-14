@@ -2241,10 +2241,29 @@ if not UnitGetIncomingHeals then
         return math.floor(amount * (comm:GetHealModifier(guid) or 1) + 0.5)
     end
 
-    -- Absorbs do not exist as an API on 3.3.5; return 0 like ClassicAPI does
+    -- UnitGetTotalAbsorbs (4.0+ API): backed by AbsorbsMonitor-1.0
+    -- (CLEU + tooltip + comm based absorb tracking, from CRF_HealEx).
+    -- Falls back to 0 without the lib. Note: Cell's own CLEU tracker in
+    -- UnitButton_Cata_Wrath.lua maintains its richer per-spell absorbInfos
+    -- independently; this polyfill serves generic UnitGetTotalAbsorbs callers.
     if not UnitGetTotalAbsorbs then
-        function UnitGetTotalAbsorbs() return 0 end
+        local absorbComm
+        local function GetAbsorbComm()
+            if absorbComm == nil then
+                absorbComm = (LibStub and LibStub:GetLibrary("AbsorbsMonitor-1.0", true)) or false
+            end
+            return absorbComm or nil
+        end
+
+        function UnitGetTotalAbsorbs(unit)
+            local comm = GetAbsorbComm()
+            if not comm then return 0 end
+            local guid = unit and UnitGUID(unit)
+            if not guid then return 0 end
+            return comm.Unit_Total(guid) or 0
+        end
     end
+    -- Heal absorbs (healing-reduction shields) genuinely don't exist on 3.3.5
     if not UnitGetTotalHealAbsorbs then
         function UnitGetTotalHealAbsorbs() return 0 end
     end

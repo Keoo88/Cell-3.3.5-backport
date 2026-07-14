@@ -20,5 +20,9 @@
     <Include file="LibHealComm-4.0\LibHealComm-4.0.xml"/>
     <!-- LibResComm-1.0: incoming resurrections on 3.3.5 (backs the UnitHasIncomingResurrection polyfill) -->
     <Script file="LibResComm-1.0\LibResComm-1.0.lua"/>
+    <!-- AbsorbsMonitor-1.0: CLEU+comm absorb tracking on 3.3.5 (backs the UnitGetTotalAbsorbs polyfill); needs AceTimer/AceSerializer -->
+    <Script file="AceTimer-3.0\AceTimer-3.0.lua"/>
+    <Script file="AceSerializer-3.0\AceSerializer-3.0.lua"/>
+    <Script file="AbsorbsMonitor-1.0\AbsorbsMonitor-1.0.lua"/>
     <!-- <Script file="LibRangeCheck-2.0\LibRangeCheck-2.0.lua"/> -->
 </Ui>
