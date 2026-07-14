@@ -1,7 +1,8 @@
 <Ui xmlns="http://www.blizzard.com/wow/ui/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.blizzard.com/wow/ui/
 ..\FrameXML\UI.xsd">
 	<!-- ClassicAPI by Tsoukie, embedded as a library for Cell (no standalone !!!ClassicAPI addon required) -->
-	<Include file="Lib\Load.xml" />
+	<!-- Trimmed to the modules used by Cell; load order matches the original !!!ClassicAPI.toc -->
+	<Script file="Lib\ChatThrottleLib.lua" />
 
 	<Script file="Util\ErrorUtil.lua" />
 	<Script file="Util\Constants.lua" />
@@ -9,7 +10,6 @@
 	<Script file="Util\TooltipSupport.lua" />
 	<Script file="Util\TableUtil.lua" />
 	<Script file="Util\Enum.lua" />
-	<Script file="Util\SoundKit.lua" />
 	<Script file="Util\C_Timer.lua" />
 
 	<Script file="Util\EventHandler.lua" />
@@ -20,26 +20,17 @@
 	<Script file="Util\Group.lua" />
 	<Script file="Util\HealPrediction.lua" />
 	<Script file="Util\Specialization.lua" />
-	<Script file="Util\PlayerInteractionFrameManager.lua" />
-	<Script file="Util\ActionButton.lua" />
 
-	<Script file="Util\C_CVar.lua" />
 	<Script file="Util\C_CreatureInfo.lua" />
-	<Script file="Util\C_FriendList.lua" />
 	<Script file="Util\C_Map.lua" />
 	<Script file="Util\C_PvP.lua" />
 	<Script file="Util\C_Texture.lua" />
-	<Script file="Util\C_GossipInfo.lua" />
 	<Script file="Util\C_ChatInfo.lua" />
 	<Script file="Util\C_SpellBook.lua" />
 	<Script file="Util\C_Spell.lua" />
 	<Script file="Util\C_Item.lua" />
-	<Script file="Util\C_UI.lua" />
-	<Script file="Util\C_NewItems.lua" />
 	<Script file="Util\C_Container.lua" />
-	<Script file="Util\C_QuestLog.lua" />
 	<Script file="Util\C_AddOns.lua" />
-	<Script file="Util\C_AuctionHouse.lua" />
 
 	<Script file="Util\Mixin.lua" />
 	<Script file="Util\Pools.lua" />
@@ -62,7 +53,6 @@
 	<Script file="Util\Spell.lua" />
 	<Script file="Util\ItemLocation.lua" />
 	<Script file="Util\Item.lua" />
-	<Script file="Util\AccountUtil.lua" />
 
 	<Script file="Util\Compatibility.lua" />
 

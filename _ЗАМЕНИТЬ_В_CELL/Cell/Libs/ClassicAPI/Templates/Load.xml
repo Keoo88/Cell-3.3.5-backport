@@ -2,9 +2,4 @@
 ..\FrameXML\UI.xsd">
 	<Include file="XML_Helper.lua" />
 	<Include file="Backdrop.xml" />
-	<Include file="UIPanelTemplates.xml" />
-	<Include file="C_UIDropDownMenu.xml" />
-	<Include file="ActionBarFrame.xml" />
-
-	<Script file="InterfaceOptions.lua" />
 </Ui>
