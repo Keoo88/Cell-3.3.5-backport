@@ -16,6 +16,15 @@ local A = Cell.animations
 
 CELL_FADE_OUT_HEALTH_PERCENT = nil
 
+-- GetStatusBarTexture can return nil on some 3.3.5 clients (e.g. with
+-- Ascension's Classic API disabled), so guard the SetDrawLayer call
+local function SetBarTextureDrawLayer(bar, layer, subLayer)
+    local tex = bar:GetStatusBarTexture()
+    if tex then
+        tex:SetDrawLayer(layer, subLayer)
+    end
+end
+
 local UnitGUID = UnitGUID
 local UnitName = UnitName
 local GetUnitName = GetUnitName
@@ -3209,10 +3218,10 @@ end
 
 function B.SetTexture(button, tex)
     button.widgets.healthBar:SetStatusBarTexture(tex)
-    button.widgets.healthBar:GetStatusBarTexture():SetDrawLayer("ARTWORK", -7)
+    SetBarTextureDrawLayer(button.widgets.healthBar, "ARTWORK", -7)
     button.widgets.healthBarLoss:SetTexture(tex)
     button.widgets.powerBar:SetStatusBarTexture(tex)
-    button.widgets.powerBar:GetStatusBarTexture():SetDrawLayer("ARTWORK", -7)
+    SetBarTextureDrawLayer(button.widgets.powerBar, "ARTWORK", -7)
     button.widgets.powerBarLoss:SetTexture(tex)
     button.widgets.incomingHeal:SetTexture(tex)
     button.widgets.damageFlashTex:SetTexture(tex)
@@ -3905,7 +3914,7 @@ function CellUnitButton_OnLoad(button)
     button.widgets.healthBar = healthBar
     healthBar.SetBarValue = healthBar.SetValue
     healthBar:SetStatusBarTexture(Cell.vars.texture)
-    healthBar:GetStatusBarTexture():SetDrawLayer("ARTWORK", -7)
+    SetBarTextureDrawLayer(healthBar, "ARTWORK", -7)
     healthBar:SetFrameLevel(button:GetFrameLevel()+1)
 
     -- hp loss
@@ -3920,7 +3929,7 @@ function CellUnitButton_OnLoad(button)
     button.widgets.powerBar = powerBar
     powerBar.SetBarValue = powerBar.SetValue
     powerBar:SetStatusBarTexture(Cell.vars.texture)
-    powerBar:GetStatusBarTexture():SetDrawLayer("ARTWORK", -7)
+    SetBarTextureDrawLayer(powerBar, "ARTWORK", -7)
     powerBar:SetFrameLevel(button:GetFrameLevel()+2)
 
     local gapTexture = button:CreateTexture(nil, "BORDER")
