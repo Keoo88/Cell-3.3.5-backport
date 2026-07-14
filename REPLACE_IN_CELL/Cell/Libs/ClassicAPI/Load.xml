@@ -7,8 +7,6 @@
 	<Script file="Util\ErrorUtil.lua" />
 	<Script file="Util\Constants.lua" />
 	<Script file="Util\ClassicAPI.lua" />
-	<Script file="Util\TooltipSupport.lua" />
-	<Script file="Util\TableUtil.lua" />
 	<Script file="Util\Enum.lua" />
 	<Script file="Util\C_Timer.lua" />
 
@@ -38,7 +36,6 @@
 	<Script file="Util\API.lua" />
 	<Script file="Util\AsyncCallbackSystem.lua"/>
 	<Script file="Util\MathUtil.lua" />
-	<Script file="Util\EnumUtil.lua" />
 	<Script file="Util\AtlasInfo.lua" />
 	<Script file="Util\PartyUtil.lua" />
 	<Script file="Util\PixelUtil.lua" />
