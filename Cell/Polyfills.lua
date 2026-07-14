@@ -484,20 +484,55 @@ do
         -- Wrap SetStatusBarTexture to cache the texture path
         if origSetStatusBarTexture then
             function mt.__index:SetStatusBarTexture(texture, layer, sublayer)
-                self._cellCachedTexturePath = texture
+                if type(texture) == "string" then
+                    self._cellCachedTexturePath = texture
+                    -- keep our fallback texture in sync instead of dropping it
+                    if self._cellStatusBarTexture then
+                        self._cellStatusBarTexture:SetTexture(texture)
+                    end
+                end
                 return origSetStatusBarTexture(self, texture, layer, sublayer)
             end
         end
 
-        -- Wrap GetStatusBarTexture to ensure it returns a texture
+        -- Wrap GetStatusBarTexture to ensure it returns a texture.
+        -- With Ascension's "Classic API" disabled, the native call can return
+        -- nil permanently, so fall back to scanning the bar's regions for the
+        -- internal texture, and as a last resort create one ourselves.
         if origGetStatusBarTexture then
             function mt.__index:GetStatusBarTexture()
                 local tex = origGetStatusBarTexture(self)
+                if tex then return tex end
+
                 -- If texture is nil but we have a cached path, try setting it again
-                if not tex and self._cellCachedTexturePath then
+                if self._cellCachedTexturePath then
                     origSetStatusBarTexture(self, self._cellCachedTexturePath)
                     tex = origGetStatusBarTexture(self)
+                    if tex then return tex end
                 end
+
+                -- cached result from a previous region scan
+                if self._cellStatusBarTexture then
+                    return self._cellStatusBarTexture
+                end
+
+                -- scan regions for the bar's internal texture
+                for i = 1, select("#", self:GetRegions()) do
+                    local region = select(i, self:GetRegions())
+                    if region and region.IsObjectType and region:IsObjectType("Texture") then
+                        self._cellStatusBarTexture = region
+                        return region
+                    end
+                end
+
+                -- last resort: create a texture and assign it as the bar texture
+                -- (3.3.5 SetStatusBarTexture accepts a Texture object)
+                tex = self:CreateTexture(nil, "ARTWORK")
+                if self._cellCachedTexturePath then
+                    tex:SetTexture(self._cellCachedTexturePath)
+                end
+                origSetStatusBarTexture(self, tex)
+                self._cellStatusBarTexture = tex
                 return tex
             end
         end
