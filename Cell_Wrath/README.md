@@ -100,21 +100,21 @@ Use `/cell` for more information.
 ### Screenshots
 
 <p align="center">
-  <img src="https://hebbkx1anhila5yf.public.blob.vercel-storage.com/party-kMhsgILMCB8jIQnWmEwe0A9sO8T765.png" alt="Party frames" width="200">
+  <img src="https://github.com/user-attachments/assets/396180df-9d33-483b-8eae-41d09efab515" alt="Party frames" width="200">
 </p>
 
 <p align="center">
-  <img src="https://hebbkx1anhila5yf.public.blob.vercel-storage.com/layout-ldJesPbXyLlG6e8t86uJzH0N2wDm86.png" alt="Layouts tab" width="400">
-  <img src="https://hebbkx1anhila5yf.public.blob.vercel-storage.com/appearance-izGBqbCUtdHrHs1Rj006raehI3rDIw.png" alt="Appearance tab" width="400">
+  <img src="https://github.com/user-attachments/assets/507fd502-ef18-4d37-9c0e-b1dd5d5a1575" alt="Layouts tab" width="400">
+  <img src="https://github.com/user-attachments/assets/1a662292-ca2c-48a9-9e56-a2315507b3d3" alt="Appearance tab" width="400">
 </p>
 
 <p align="center">
-  <img src="https://hebbkx1anhila5yf.public.blob.vercel-storage.com/indicators-OoHzZIclkPawZGc0w5CyfdUdI9PQGj.png" alt="Indicators tab" width="400">
-  <img src="https://hebbkx1anhila5yf.public.blob.vercel-storage.com/click-castings-EqaliuFdKZlQZG1a017gPGbQG05UH9.png" alt="Click-Castings tab" width="400">
+  <img src="https://github.com/user-attachments/assets/9c1273be-dc68-40f8-ae17-b53245a5509a" alt="Indicators tab" width="400">
+  <img src="https://github.com/user-attachments/assets/4d7b33d5-f2f2-4666-a5c7-388cef15a672" alt="Click-Castings tab" width="400">
 </p>
 
 <p align="center">
-  <img src="https://hebbkx1anhila5yf.public.blob.vercel-storage.com/raiddebuffs-sh0XlRmuY1B9bM25nuMQBRHFopL16W.png" alt="Raid Debuffs tab" width="400">
+  <img src="https://github.com/user-attachments/assets/dea8a922-1be3-4ddb-890b-03eeba76d6c8" alt="Raid Debuffs tab" width="400">
 </p>
 
 <a name="installation"></a>
@@ -187,13 +187,13 @@ CompactRaid, Grid2, Aptechka и VuhDo: рамки соло/группы/рейд
 
 #### Рейдовые дебаффы (Raid Debuffs)
 
-Отслеживайте способности боссов и опасные дебаффы в подземельях и рейдах с
+Отслеживайте способности боссов и опасные дебаффы в подземель��х и рейдах с
 приоритетными списками по каждой локации и эффектами свечения. В комплекте
 данные для Classic, TBC и WotLK, полностью редактируемые прямо в игре.
 
 #### Утилиты (Utilities)
 
-Полезные рейдовые инструменты: проверка готовности, отсчёт, запросы
+Полезные рейдовые инструменты: пр��верка готовности, отсчёт, запросы
 заклинаний/диспела, отчёт о смерти, панель меток и скрытие стандартных рамок
 Blizzard.
 
@@ -215,21 +215,21 @@ Blizzard.
 ### Скриншоты
 
 <p align="center">
-  <img src="https://hebbkx1anhila5yf.public.blob.vercel-storage.com/party-kMhsgILMCB8jIQnWmEwe0A9sO8T765.png" alt="Рамки группы" width="200">
+  <img src="https://github.com/user-attachments/assets/396180df-9d33-483b-8eae-41d09efab515" alt="Рамки группы" width="200">
 </p>
 
 <p align="center">
-  <img src="https://hebbkx1anhila5yf.public.blob.vercel-storage.com/layout-ldJesPbXyLlG6e8t86uJzH0N2wDm86.png" alt="Вкладка макетов" width="400">
-  <img src="https://hebbkx1anhila5yf.public.blob.vercel-storage.com/appearance-izGBqbCUtdHrHs1Rj006raehI3rDIw.png" alt="Вкладка внешнего вида" width="400">
+  <img src="https://github.com/user-attachments/assets/507fd502-ef18-4d37-9c0e-b1dd5d5a1575" alt="Вкладка макетов" width="400">
+  <img src="https://github.com/user-attachments/assets/1a662292-ca2c-48a9-9e56-a2315507b3d3" alt="Вкладка внешнего вида" width="400">
 </p>
 
 <p align="center">
-  <img src="https://hebbkx1anhila5yf.public.blob.vercel-storage.com/indicators-OoHzZIclkPawZGc0w5CyfdUdI9PQGj.png" alt="Вкладка индикаторов" width="400">
-  <img src="https://hebbkx1anhila5yf.public.blob.vercel-storage.com/click-castings-EqaliuFdKZlQZG1a017gPGbQG05UH9.png" alt="Вкладка клик-кастов" width="400">
+  <img src="https://github.com/user-attachments/assets/9c1273be-dc68-40f8-ae17-b53245a5509a" alt="Вкладка индикаторов" width="400">
+  <img src="https://github.com/user-attachments/assets/4d7b33d5-f2f2-4666-a5c7-388cef15a672" alt="Вкладка клик-кастов" width="400">
 </p>
 
 <p align="center">
-  <img src="https://hebbkx1anhila5yf.public.blob.vercel-storage.com/raiddebuffs-sh0XlRmuY1B9bM25nuMQBRHFopL16W.png" alt="Вкладка рейдовых дебаффов" width="400">
+  <img src="https://github.com/user-attachments/assets/dea8a922-1be3-4ddb-890b-03eeba76d6c8" alt="Вкладка рейдовых дебаффов" width="400">
 </p>
 
 <a name="установка"></a>
