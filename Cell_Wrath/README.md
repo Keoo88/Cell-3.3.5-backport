@@ -1,60 +1,195 @@
-# Installation
+<p align="center">
+  <img src="https://raw.githubusercontent.com/enderneko/Cell/master/Media/icon.png" alt="Cell" width="120">
+</p>
 
-Make sure to rename the folder into Cell_Wrath for the addon to work.
+<p align="center">
+  <b><span style="color:red">⚠ WARNING: This addon is in BETA — may contain bugs and incomplete features ⚠</span></b>
+</p>
 
-# Cell
+<br>
 
-Clean, responsive raid and party frames designed to surface the information you need without the clutter.
+<p align="center">
+  <img src="https://img.shields.io/badge/Cell-r269-ff8800?style=for-the-badge&logo=appveyor">
+  <img src="https://img.shields.io/badge/WotLK-3.3.5a-blue?style=for-the-badge">
+  <img src="https://img.shields.io/badge/status-beta-red?style=for-the-badge">
+</p>
 
-**Highlights**
+<h1 align="center">Cell — WotLK 3.3.5a backport</h1>
 
-- Inspired by CompactRaid, Grid2, Aptechka, and VuhDo, refined into a friendlier, faster package.
-- Built for clarity: sharp debuff tracking, healer-friendly indicators, and quick setup.
-- Works great on Ascension and Wrath-era clients.
+<p align="center">
+  <b>Clean raid frame addon with customizable frames for World of Warcraft 3.3.5a (WotLK).</b><br>
+  <i>Backport of Cell r269 to the WoW 3.3.5a client.</i>
+</p>
 
-**Ascension Wrath port**
+<p align="center">
+  <a href="#english">English</a> ·
+  <a href="#russian">Русский</a>
+</p>
 
-- 3.3.5a backport by Keoo.
-- Improvements & bugs: Discord Username `08374` or in-game on Bronzebeard (`Zeruto` / `Zeruta` / `Reana`).
-- Port date: 2025-12-03.
+---
 
-*
+<a name="english"></a>
+## English
 
-## Features
+<p align="center">
+  <a href="#features">Features</a> ·
+  <a href="#installation">Installation</a> ·
+  <a href="#credits">Credits</a>
+</p>
 
-- **Layouts:** auto switch layout by spec/role, supports party, raid, arena, and battleground.
-- **Customizable Appearance:** textures, colors and alphas.
-- **Built-in Click-Castings:** supports keyboard and multi-button mouse.
-- **Indicators:** dozens of built-in indicators and unlimited custom indicators (icon, bar, rect, text, icons).
-- **Raid Debuffs:** debuffs priority and glow.
-- **Useful Raid Tools:** ready check, countdown, rebuff, death report, marks, battleres.
-- **Nice Options UI:** I mean yes it's pretty darn good!
-- **Spotlight Frame:** extra 15 unit buttons, can be set to Target, Focus, Unit, Tank, etc.
+### About
 
-## Code Snippets
+**Cell** is a clean, powerful raid frame addon inspired by CompactRaid, Grid2,
+Aptechka, and VuhDo: solo/party/raid frames, aura indicators, click-castings,
+raid debuffs tracking, spell request utilities, and more. This repository is a
+**backport of Cell r269** to the **WoW 3.3.5a (WotLK)** client.
 
-**Try disabling all snippets if there are any issues.**
+<a name="features"></a>
+### Features
 
-Check <https://github.com/enderneko/Cell/tree/master/.snippets> for more snippets.
+#### Layouts
 
-### Usage
+Fully customizable party and raid frames — size, position, orientation, group
+arrangement, and power bars. Auto-switch layouts by spec/role with independent
+settings for solo, party, raid, arena, and battleground.
 
-1. Cell Options -> About -> Code Snippets
-2. New -> Paste -> Save -> Tick the AutoRun box
-3. Reload
+#### Appearance
 
-&nbsp;
+Textures, colors, alphas, and fonts are all in your hands. Health color by
+class or by percentage, customizable background, out-of-range dimming, and full
+control over the look of every frame.
 
-## Slash Commands
+#### Indicators
 
-Use **/cell** for more information.
+Dozens of built-in indicators (health text, aggro bar, shield bar, heal
+prediction, dispels, raid icons, and more) plus unlimited custom indicators for
+any buff or debuff — icons, bars, rects, texts, colors, and glows.
 
-&nbsp;
+#### Click-Castings
 
-## Guides & Sharing
+Bind spells, macros, and items directly to mouse clicks on unit frames —
+mouseover healing without target switching. Supports keyboard and multi-button
+mice, with per-class and per-spec binding profiles.
 
-- [ULTIMATE Cell Raid Frames AddOn Setup GUIDE for HEALERS (Reat TV)](https://www.youtube.com/watch?v=ntXko7htO2I)
-- [Healer UI & Addon Guide for Dragonflight Season 4 (yumytv)](https://www.youtube.com/watch?v=XcXvXxFipOE)
+#### Raid Debuffs
 
-&nbsp;
+Track boss abilities and dangerous debuffs in dungeons and raids with
+prioritized, per-instance debuff lists and glow effects. Ships with data for
+Classic, TBC, and WotLK instances, fully editable in-game.
 
+#### Utilities
+
+Useful raid tools: ready check, countdown, spell/dispel requests, death report,
+marks bar, and hiding of default Blizzard party/raid frames.
+
+#### Spotlight Frame
+
+Extra 15 unit buttons that can be set to Target, Focus, Unit, Tank, and more —
+keep the most important units always in sight.
+
+<a name="installation"></a>
+### Installation
+
+1. Download the latest release (or clone this repository).
+2. Extract the archive.
+3. Move the **Cell_Wrath** folder into:
+   ```
+   \Interface\AddOns\
+   ```
+4. Enable it on the character-select AddOns screen and launch the game. Type `/cell` to open options.
+
+### Compatibility
+
+- Built and tested on **Warmane** (WoW 3.3.5a, Interface `30300`).
+- Developed exclusively for **Warmane**. I am not responsible for functionality on other servers.
+
+<a name="credits"></a>
+### Credits
+
+- Original addon: [enderneko/Cell](https://github.com/enderneko/Cell) — A World of Warcraft raid frame addon
+- WotLK 3.3.5a backport: **Keoo**
+
+---
+
+<a name="russian"></a>
+## Русский
+
+<p align="center">
+  <a href="#возможности">Возможности</a> ·
+  <a href="#установка">Установка</a> ·
+  <a href="#благодарности">Благодарности</a>
+</p>
+
+### Об аддоне
+
+**Cell** — это аккуратный и мощный аддон рейдовых рамок, вдохновлённый
+CompactRaid, Grid2, Aptechka и VuhDo: рамки соло/группы/рейда, индикаторы аур,
+клик-касты, отслеживание рейдовых дебаффов, запросы заклинаний и многое другое.
+Этот репозиторий — **бэкпорт Cell r269** под клиент **WoW 3.3.5a (WotLK)**.
+
+<a name="возможности"></a>
+### Возможности
+
+#### Макеты (Layouts)
+
+Полностью настраиваемые рамки группы и рейда — размер, позиция, ориентация,
+расположение групп и полосы ресурсов. Автопереключение макетов по спеку/роли с
+независимыми настройками для соло, группы, рейда, арены и поля боя.
+
+#### Внешний вид (Appearance)
+
+Текстуры, цвета, прозрачность и шрифты — всё в ваших руках. Цвет здоровья по
+классу или по проценту, настраиваемый фон, затемнение вне дистанции и полный
+контроль над видом каждой рамки.
+
+#### Индикаторы (Indicators)
+
+Десятки встроенных индикаторов (текст здоровья, полоса агро, полоса щита,
+предсказание лечения, диспелы, рейдовые метки и др.) плюс неограниченные
+пользовательские индикаторы для любых баффов и дебаффов — иконки, полосы,
+прямоугольники, тексты, цвета и свечения.
+
+#### Клик-касты (Click-Castings)
+
+Привязывайте заклинания, макросы и предметы напрямую к кликам мыши по рамкам —
+лечение по наведению без смены цели. Поддержка клавиатуры и многокнопочных
+мышей, профили привязок для каждого класса и спека.
+
+#### Рейдовые дебаффы (Raid Debuffs)
+
+Отслеживайте способности боссов и опасные дебаффы в подземельях и рейдах с
+приоритетными списками по каждой локации и эффектами свечения. В комплекте
+данные для Classic, TBC и WotLK, полностью редактируемые прямо в игре.
+
+#### Утилиты (Utilities)
+
+Полезные рейдовые инструменты: проверка готовности, отсчёт, запросы
+заклинаний/диспела, отчёт о смерти, панель меток и скрытие стандартных рамок
+Blizzard.
+
+#### Рамка Spotlight
+
+Дополнительные 15 кнопок юнитов, которые можно настроить на Цель, Фокус, Юнита,
+Танка и другое — держите самых важных юнитов всегда на виду.
+
+<a name="установка"></a>
+### Установка
+
+1. Скачайте последний релиз (или клонируйте репозиторий).
+2. Распакуйте архив.
+3. Переместите папку **Cell_Wrath** в:
+   ```
+   \Interface\AddOns\
+   ```
+4. Включите аддон на экране выбора персонажа и запустите игру. Введите `/cell`, чтобы открыть настройки.
+
+### Совместимость
+
+- Собрано и протестировано на **Warmane** (WoW 3.3.5a, Interface `30300`).
+- Разрабатывалось исключительно для **Warmane**. За работоспособность на других серверах ответственности не несу.
+
+<a name="благодарности"></a>
+### Благодарности
+
+- Оригинальный аддон: [enderneko/Cell](https://github.com/enderneko/Cell) — A World of Warcraft raid frame addon
+- Бэкпорт под WotLK 3.3.5a: **Keoo**
