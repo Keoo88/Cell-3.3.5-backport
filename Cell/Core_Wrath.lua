@@ -123,15 +123,13 @@ local bgMaxPlayers = {
 local instanceType
 local function PreUpdateLayout()
     if instanceType == "pvp" then
-        local name, _, _, _, _, _, _, id = GetInstanceInfo()
-        if bgMaxPlayers[id] then
-            if bgMaxPlayers[id] <= 15 then
-                Cell.vars.inBattleground = 15
-                F.UpdateLayout("battleground15", true)
-            else
-                Cell.vars.inBattleground = 40
-                F.UpdateLayout("battleground40", true)
-            end
+        -- NOTE: on 3.3.5a GetInstanceInfo has no 8th return (instanceMapID),
+        -- so fall back to the native 5th return (maxPlayers) for AV/IoC (40-man)
+        local name, _, _, _, maxPlayers, _, _, id = GetInstanceInfo()
+        local size = bgMaxPlayers[id] or maxPlayers
+        if size and size > 15 then
+            Cell.vars.inBattleground = 40
+            F.UpdateLayout("battleground40", true)
         else
             Cell.vars.inBattleground = 15
             F.UpdateLayout("battleground15", true)
