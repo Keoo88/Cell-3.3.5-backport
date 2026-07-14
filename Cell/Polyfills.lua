@@ -23,18 +23,34 @@ end
 -- PROJECT / FLAVOR SHIM FOR 3.3.5a
 -------------------------------------------------
 -- On real Retail/Classic, WOW_PROJECT_ID is a number.
--- On 3.3.5a private clients, it's usually nil, which breaks addons
--- that rely on it. So we fake the constants and pretend to be Wrath Classic.
-if type(WOW_PROJECT_ID) ~= "number" then
-    -- Fake Blizzard project constants
-    WOW_PROJECT_MAINLINE          = 1
-    WOW_PROJECT_CLASSIC           = 2
-    WOW_PROJECT_WRATH_CLASSIC     = 11
-    WOW_PROJECT_CATACLYSM_CLASSIC = 12
-    WOW_PROJECT_MISTS_CLASSIC     = 13
+-- On 3.3.5a private clients it's usually nil — but some (e.g. Ascension with
+-- "Classic API" disabled) define it as MAINLINE, which makes the addon take
+-- retail code paths (C_Spell, C_AddOns, ...) and crash. Never trust the
+-- client's claim: detect the real build via GetBuildInfo and force Wrath
+-- whenever the interface version is pre-4.0.
+local _cellBuild = tonumber(select(4, GetBuildInfo())) or 0
+if type(WOW_PROJECT_ID) ~= "number" or _cellBuild < 40000 then
+    -- Fake Blizzard project constants (define if missing)
+    WOW_PROJECT_MAINLINE          = WOW_PROJECT_MAINLINE or 1
+    WOW_PROJECT_CLASSIC           = WOW_PROJECT_CLASSIC or 2
+    WOW_PROJECT_WRATH_CLASSIC     = WOW_PROJECT_WRATH_CLASSIC or 11
+    WOW_PROJECT_CATACLYSM_CLASSIC = WOW_PROJECT_CATACLYSM_CLASSIC or 12
+    WOW_PROJECT_MISTS_CLASSIC     = WOW_PROJECT_MISTS_CLASSIC or 13
 
     -- Tell the addon we're Wrath Classic
     WOW_PROJECT_ID = WOW_PROJECT_WRATH_CLASSIC
+
+    -- Guard against WOW_PROJECT_MAINLINE colliding with the forced ID
+    if WOW_PROJECT_MAINLINE == WOW_PROJECT_ID then
+        WOW_PROJECT_MAINLINE = 1
+        WOW_PROJECT_ID = 11
+        WOW_PROJECT_WRATH_CLASSIC = 11
+    end
+
+    -- Expansion level constants: nil == nil comparisons elsewhere
+    -- (e.g. Cell.isTWW) must not accidentally become true
+    LE_EXPANSION_LEVEL_CURRENT = LE_EXPANSION_LEVEL_CURRENT or 2
+    LE_EXPANSION_WAR_WITHIN    = LE_EXPANSION_WAR_WITHIN or 10
 end
 
 -- Initialize flavor + flags once based on WOW_PROJECT_ID
