@@ -9,7 +9,7 @@
 <br>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Cell-r269-ff8800?style=for-the-badge&logo=appveyor">
+  <img src="https://img.shields.io/badge/Cell-r277-ff8800?style=for-the-badge&logo=appveyor">
   <img src="https://img.shields.io/badge/WotLK-3.3.5a-blue?style=for-the-badge">
   <img src="https://img.shields.io/badge/status-beta-red?style=for-the-badge">
 </p>
@@ -18,7 +18,7 @@
 
 <p align="center">
   <b>Clean raid frame addon with customizable frames for World of Warcraft 3.3.5a (WotLK).</b><br>
-  <i>Backport of Cell r269 to the WoW 3.3.5a client.</i>
+  <i>Backport of Cell r277 to the WoW 3.3.5a client.</i>
 </p>
 
 <p align="center">
@@ -42,7 +42,7 @@
 **Cell** is a clean, powerful raid frame addon inspired by CompactRaid, Grid2,
 Aptechka, and VuhDo: solo/party/raid frames, aura indicators, click-castings,
 raid debuffs tracking, spell request utilities, and more. This repository is a
-**backport of Cell r269** to the **WoW 3.3.5a (WotLK)** client.
+**backport of Cell r277** to the **WoW 3.3.5a (WotLK)** client.
 
 <img width="178" height="299" alt="party" src="https://github.com/user-attachments/assets/396180df-9d33-483b-8eae-41d09efab515" />
 
@@ -147,7 +147,7 @@ Use `/cell` for more information.
 **Cell** — это аккуратный и мощный аддон рейдовых рамок, вдохновлённый
 CompactRaid, Grid2, Aptechka и VuhDo: рамки соло/группы/рейда, индикаторы аур,
 клик-касты, отслеживание рейдовых дебаффов, запросы заклинаний и многое другое.
-Этот репозиторий — **бэкпорт Cell r269** под клиент **WoW 3.3.5a (WotLK)**.
+Этот репозиторий — **бэкпорт Cell r277** под клиент **WoW 3.3.5a (WotLK)**.
 
 <img width="178" height="299" alt="party" src="https://github.com/user-attachments/assets/396180df-9d33-483b-8eae-41d09efab515" />
 
@@ -191,14 +191,14 @@ CompactRaid, Grid2, Aptechka и VuhDo: рамки соло/группы/рейд
 
 <img width="470" height="441" alt="raiddebuffs" src="https://github.com/user-attachments/assets/dea8a922-1be3-4ddb-890b-03eeba76d6c8" />
 
-Отслеживайте способности боссов и опасные дебаффы в подземель��х и рейдах с
+Отслеживайте способности боссов и опасные дебаффы в подземельях и рейдах с
 приоритетными списками по каждой локации и эффектами свечения. В комплекте
 данные для Classic, TBC и WotLK, полностью редактируемые прямо в игре.
 
 #### Утилиты (Utilities)
 
-Полезные рейдовые инструменты: пр��верка готовности, отсчёт, запросы
-заклинаний/диспела, отчёт о см��рти, панель меток и скрытие стандартных рамок
+Полезные рейдовые инструменты: проверка готовности, отсчёт, запросы
+заклинаний/диспела, отчёт о смерти, панель меток и скрытие стандартных рамок
 Blizzard.
 
 #### Рамка Spotlight
