@@ -37,11 +37,7 @@ local function CreateDescriptionPane()
         "|cfffabd2fCell|r\n"..
         "|cffffffffFast, compact raid and party frames with crisp debuff tracking, healer-friendly indicators, and a no-fuss setup tuned for Ascension WoW.|r\n\n"..
         "|cff78d5ff3.3.5a backport by|r |cffffffffKeoo|r\n"..
-        "|cffa6e22ePort date|r |cffffffff2025-12-03|r\n\n"..
-        "|cff66ff99Reach me|r\n"..
-        " • |cffffffffDiscord|r: |cff9aedffZB#08374|r\n"..
-        " • |cffffffffBronzebeard|r: |cff9aedffZeruto|r / |cff9aedffZeruta|r / |cff9aedffReana|r\n"..
-        " • |cffffffffImprovements & bugs|r: ping me on Discord or in-game and I’ll take a look."
+        "|cffa6e22ePort date|r |cffffffff2025-12-03|r"
     )
 end
 
@@ -60,7 +56,7 @@ local function CreateAuthorPane()
     authorText.size = 12
     UpdateFont(authorText)
 
-    authorText:SetText("篠崎-影之哀伤 (CN)")
+    authorText:SetText("enderneko")
 end
 
 -------------------------------------------------
@@ -435,7 +431,7 @@ local function CreateLinksPane()
 
     local linksEB = Cell.CreateEditBox(linksPane, 412, 20)
     linksEB:SetPoint("TOPLEFT", 5, -27)
-    linksEB:SetText("https://github.com/enderneko/Cell")
+    linksEB:SetText("https://discord.gg/sKpJbUrsvR")
     linksEB:SetScript("OnTextChanged", function(self, userChanged)
         if userChanged then
             linksEB:SetText(current)
@@ -447,73 +443,17 @@ local function CreateLinksPane()
         linksEB:HighlightText()
     end)
 
-    --! github
-    local github = CreateLink(linksPane, "github", "Interface\\AddOns\\Cell\\Media\\Links\\github.tga", function()
-        current = "https://github.com/enderneko/Cell"
-        linksEB:SetText(current)
-        linksEB:ClearFocus()
-    end)
-    github:SetPoint("TOPLEFT", linksEB, "BOTTOMLEFT", 0, -7)
-
-    linksEB:SetScript("OnShow", function()
-        github:GetScript("OnEnter")()
-    end)
-
-    --! curseforge
-    local curseforge = CreateLink(linksPane, "curseforge", "Interface\\AddOns\\Cell\\Media\\Links\\curseforge.tga", function()
-        current = "https://www.curseforge.com/wow/addons/cell"
-        linksEB:SetText(current)
-        linksEB:ClearFocus()
-    end)
-    curseforge:SetPoint("TOPLEFT", github, "TOPRIGHT", 7, 0)
-
-    --! wago
-    local wago = CreateLink(linksPane, "wago", "Interface\\AddOns\\Cell\\Media\\Links\\wago.tga", function()
-        current = "https://addons.wago.io/addons/cell"
-        linksEB:SetText(current)
-        linksEB:ClearFocus()
-    end)
-    wago:SetPoint("TOPLEFT", curseforge, "TOPRIGHT", 7, 0)
-
     --! discord
     local discord = CreateLink(linksPane, "discord", "Interface\\AddOns\\Cell\\Media\\Links\\discord.tga", function()
-        current = "https://discord.gg/9PSe3fKQGJ"
+        current = "https://discord.gg/sKpJbUrsvR"
         linksEB:SetText(current)
         linksEB:ClearFocus()
     end)
-    discord:SetPoint("TOPLEFT", wago, "TOPRIGHT", 7, 0)
+    discord:SetPoint("TOPLEFT", linksEB, "BOTTOMLEFT", 0, -7)
 
-    --! kook
-    local kook = CreateLink(linksPane, "kook", "Interface\\AddOns\\Cell\\Media\\Links\\kook.tga", function()
-        current = "https://kook.top/q4T7yp"
-        linksEB:SetText(current)
-        linksEB:ClearFocus()
+    linksEB:SetScript("OnShow", function()
+        discord:GetScript("OnEnter")()
     end)
-    kook:SetPoint("TOPLEFT", discord, "TOPRIGHT", 7, 0)
-
-    --! nga
-    local nga = CreateLink(linksPane, "nga", "Interface\\AddOns\\Cell\\Media\\Links\\nga.tga", function()
-        current = "https://bbs.nga.cn/read.php?tid=23488341"
-        linksEB:SetText(current)
-        linksEB:ClearFocus()
-    end)
-    nga:SetPoint("TOPLEFT", kook, "TOPRIGHT", 7, 0)
-
-    --! afdian
-    local afdian = CreateLink(linksPane, "afdian", "Interface\\AddOns\\Cell\\Media\\Links\\afdian.tga", function()
-        current = "https://afdian.com/a/enderneko"
-        linksEB:SetText(current)
-        linksEB:ClearFocus()
-    end)
-    afdian:SetPoint("TOPRIGHT", linksEB, "BOTTOMRIGHT", 0, -7)
-
-    --! ko-fi
-    local kofi = CreateLink(linksPane, "kofi", "Interface\\AddOns\\Cell\\Media\\Links\\ko-fi.tga", function()
-        current = "https://ko-fi.com/enderneko"
-        linksEB:SetText(current)
-        linksEB:ClearFocus()
-    end)
-    kofi:SetPoint("TOPRIGHT", afdian, "TOPLEFT", -7, 0)
 end
 
 -------------------------------------------------
