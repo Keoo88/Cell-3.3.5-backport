@@ -438,11 +438,45 @@ if not Cell.isRetail then
             if not f:GetName() and f:IsEventRegistered("UPDATE_BINDINGS") then
                 local handler = f:GetScript("OnEvent")
                 if handler then
-                    pcall(handler, f, "UPDATE_BINDINGS")
+                    --! surface errors instead of swallowing them: if the addon's
+                    --! rebuild errors midway it may disable itself permanently,
+                    --! and that MUST be visible for diagnosis
+                    xpcall(function() handler(f, "UPDATE_BINDINGS") end, geterrorhandler())
                 end
             end
             f = EnumerateFrames(f)
         end
+    end
+
+    --! /cellskp - diagnostic for the SnowfallKeyPress conflict: shows whether SKP's
+    --! key interception (override bindings pointing at SnowfallKeyPress_Button_N)
+    --! is alive, per configured key. Run right after /reload and again after
+    --! hovering a Cell frame to see exactly where the chain breaks.
+    SLASH_CELLSKP1 = "/cellskp"
+    SlashCmdList["CELLSKP"] = function()
+        print("|cffff7777[Cell]|r SnowfallKeyPress diagnostic:")
+        print("  loaded:", tostring(IsAddOnLoaded("SnowfallKeyPress")))
+        local sv = _G.SnowfallKeyPressSV
+        if not sv then
+            print("  SnowfallKeyPressSV: |cffff7777nil|r (SKP not initialized)")
+            return
+        end
+        print("  enable:", tostring(sv.enable), " animation:", tostring(sv.animation), " keys:", sv.keys and #sv.keys or 0)
+        if not sv.keys then return end
+        local intercepted, lost, shown = 0, 0, 0
+        for _, key in ipairs(sv.keys) do
+            local override = GetBindingAction(key, 1) or ""
+            if strfind(override, "SnowfallKeyPress_Button") then
+                intercepted = intercepted + 1
+            else
+                lost = lost + 1
+                if shown < 8 then
+                    shown = shown + 1
+                    print(format("  |cffff7777lost:|r %s -> %q", key, override))
+                end
+            end
+        end
+        print(format("  intercepted by SKP: |cff77ff77%d|r, lost: |cffff7777%d|r", intercepted, lost))
     end
 
     syncFrame:RegisterEvent("PLAYER_LOGIN")
