@@ -448,35 +448,68 @@ if not Cell.isRetail then
         end
     end
 
-    --! /cellskp - diagnostic for the SnowfallKeyPress conflict: shows whether SKP's
-    --! key interception (override bindings pointing at SnowfallKeyPress_Button_N)
-    --! is alive, per configured key. Run right after /reload and again after
-    --! hovering a Cell frame to see exactly where the chain breaks.
+    --! /cellskp - diagnostic for the SnowfallKeyPress conflict. Only keys with a
+    --! REAL base binding matter: SKP never intercepts unbound keys, so they must
+    --! not be counted as "lost".
+    --! /cellskp probe - additionally hooks PreClick/PostClick on every
+    --! SnowfallKeyPress_Button_N, printing a line whenever one is actually
+    --! clicked by a key press. This pinpoints whether the key press reaches
+    --! SKP's button at all, and whether the animation dispatcher gets a valid
+    --! clickButtonName afterwards.
     SLASH_CELLSKP1 = "/cellskp"
-    SlashCmdList["CELLSKP"] = function()
+    SlashCmdList["CELLSKP"] = function(arg)
         print("|cffff7777[Cell]|r SnowfallKeyPress diagnostic:")
-        print("  loaded:", tostring(IsAddOnLoaded("SnowfallKeyPress")))
+        local skp = _G.SnowfallKeyPress
         local sv = _G.SnowfallKeyPressSV
         if not sv then
             print("  SnowfallKeyPressSV: |cffff7777nil|r (SKP not initialized)")
             return
         end
-        print("  enable:", tostring(sv.enable), " animation:", tostring(sv.animation), " keys:", sv.keys and #sv.keys or 0)
-        if not sv.keys then return end
-        local intercepted, lost, shown = 0, 0, 0
-        for _, key in ipairs(sv.keys) do
-            local override = GetBindingAction(key, 1) or ""
-            if strfind(override, "SnowfallKeyPress_Button") then
-                intercepted = intercepted + 1
-            else
-                lost = lost + 1
-                if shown < 8 then
-                    shown = shown + 1
-                    print(format("  |cffff7777lost:|r %s -> %q", key, override))
+        print("  enable:", tostring(sv.enable), " animation flag:", tostring(sv.animation))
+        --! the animation only shows if a handler or defaultHandler exists
+        local anim = skp and skp.animation
+        print("  animation module: handlers =", anim and anim.handlers and #anim.handlers or "nil",
+            " defaultHandler =", tostring(anim and anim.defaultHandler ~= nil))
+
+        if arg == "probe" then
+            local i, hooked = 1, 0
+            while _G["SnowfallKeyPress_Button_"..i] do
+                local b = _G["SnowfallKeyPress_Button_"..i]
+                if not b._cellProbe then
+                    b._cellProbe = true
+                    local idx = i
+                    b:HookScript("PostClick", function(self)
+                        print(format("|cff77ff77[Cell]|r SKP button %d PostClick: clickButtonName=%s, target exists=%s",
+                            idx, tostring(self.clickButtonName), tostring(self.clickButtonName and _G[self.clickButtonName] ~= nil)))
+                    end)
+                end
+                hooked = hooked + 1
+                i = i + 1
+            end
+            print(format("  probe: hooked %d SKP buttons - press your keybinds now, each press must print a green line", hooked))
+            return
+        end
+
+        --! count only keys that actually have a base binding
+        local boundTotal, intercepted, shown = 0, 0, 0
+        if sv.keys then
+            for _, key in ipairs(sv.keys) do
+                local base = GetBindingAction(key) or ""
+                if base ~= "" and not strfind(base, "SnowfallKeyPress_Button") then
+                    boundTotal = boundTotal + 1
+                    local override = GetBindingAction(key, 1) or ""
+                    if strfind(override, "SnowfallKeyPress_Button") then
+                        intercepted = intercepted + 1
+                    elseif shown < 15 then
+                        shown = shown + 1
+                        print(format("  |cffff7777not intercepted:|r %s -> base=%q override=%q", key, base, override))
+                    end
                 end
             end
         end
-        print(format("  intercepted by SKP: |cff77ff77%d|r, lost: |cffff7777%d|r", intercepted, lost))
+        print(format("  keys with real bindings: %d, intercepted by SKP: |cff77ff77%d|r, not intercepted: |cffff7777%d|r",
+            boundTotal, intercepted, boundTotal - intercepted))
+        print("  run '/cellskp probe' then press your keybinds to trace clicks")
     end
 
     syncFrame:RegisterEvent("PLAYER_LOGIN")
@@ -596,7 +629,7 @@ end
 
 --! store attribute keys, update them in _onenter
 --! NOTE: 尝试用于修复距离过远目标的点击施法问题，但没有卵用，确认是游戏问题。
---! NOTE: 当目标为敌对时，@范围内/距离稍微超出一点儿的 > 自动自我施法的优先级 > @距离过远的
+--! NOTE: 当目标为敌对时，@范围内/��离稍微超出一点儿的 > 自动自我施法的优先级 > @距离过远的
 local function UpdatePlaceholder(b, attr)
     if not b:GetAttribute("cell") then
         b:SetAttribute("cell", attr)
