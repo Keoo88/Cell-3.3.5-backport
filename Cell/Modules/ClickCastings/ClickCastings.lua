@@ -390,6 +390,24 @@ else
     end
 end
 
+if not Cell.isRetail then
+    --! WotLK compat fix: Cell's mouseover click-castings set/clear override bindings
+    --! in combat, firing UPDATE_BINDINGS while other addons (e.g. SnowfallKeyPress)
+    --! cannot rebuild their own override bindings due to InCombatLockdown(). They
+    --! defer the rebuild and wait for the next out-of-combat binding change, which
+    --! may never come, leaving them broken until /reload.
+    --! After leaving combat, perform a harmless override binding set+clear on a
+    --! dummy frame. This fires UPDATE_BINDINGS (and hooksecurefunc hooks on
+    --! SetOverrideBindingClick/ClearOverrideBindings) out of combat, letting such
+    --! addons process their deferred rebuilds.
+    local bindingSyncFrame = CreateFrame("Frame", "CellBindingSyncFrame")
+    bindingSyncFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+    bindingSyncFrame:SetScript("OnEvent", function(self)
+        SetOverrideBindingClick(self, false, "ALT-CTRL-SHIFT-F12", "CellBindingSyncFrame")
+        ClearOverrideBindings(self)
+    end)
+end
+
 -- FIXME: hope BLZ fix this bug
 local function GetMouseWheelBindKey(fullKey, noTypePrefix)
     local modifier, key = strmatch(fullKey, "^(.*)type%-(.+)$")
