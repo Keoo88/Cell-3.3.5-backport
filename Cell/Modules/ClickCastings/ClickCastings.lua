@@ -479,14 +479,27 @@ if not Cell.isRetail then
                     b._cellProbe = true
                     local idx = i
                     b:HookScript("PostClick", function(self)
-                        print(format("|cff77ff77[Cell]|r SKP button %d PostClick: clickButtonName=%s, target exists=%s",
-                            idx, tostring(self.clickButtonName), tostring(self.clickButtonName and _G[self.clickButtonName] ~= nil)))
+                        local target = self.clickButtonName and _G[self.clickButtonName]
+                        --! bisect the last link of the chain:
+                        --! visible=false  -> animate() bails out silently, nothing to draw
+                        --! manual=true + no star on screen -> AnimationGroup:Play is broken
+                        --! manual=true + star appears      -> SKP's own dispatch never ran
+                        local manual = "n/a"
+                        if target and _G.SnowfallKeyPress and _G.SnowfallKeyPress.animation
+                           and _G.SnowfallKeyPress.animation.defaultHandler then
+                            local ok, ret = pcall(_G.SnowfallKeyPress.animation.defaultHandler, target)
+                            manual = ok and tostring(ret) or ("ERR: " .. tostring(ret))
+                        end
+                        print(format("|cff77ff77[Cell]|r SKP button %d PostClick: target=%s, visible=%s, manual defaultHandler=%s",
+                            idx, tostring(self.clickButtonName),
+                            tostring(target and target:IsVisible()), manual))
                     end)
                 end
                 hooked = hooked + 1
                 i = i + 1
             end
             print(format("  probe: hooked %d SKP buttons - press your keybinds now, each press must print a green line", hooked))
+            print("  also try: /run SnowfallKeyPress.animation.defaultHandler(Minimap) - star must flash over the minimap")
             return
         end
 
