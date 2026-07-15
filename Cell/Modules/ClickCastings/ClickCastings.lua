@@ -401,12 +401,27 @@ if not Cell.isRetail then
     --! UPDATE_BINDINGS, and override binding changes do NOT fire that event, so its
     --! animation stays dead until the next real binding update (often never).
     --! Fix: whenever a Cell unit button clears its override bindings (mouse leaves a
-    --! frame) or combat ends, fire a REAL (but harmless) UPDATE_BINDINGS via a no-op
-    --! SetBinding toggle on an unused key combo, so such addons rebuild their state.
-    --! Nothing is saved (no SaveBindings call). Only active when SnowfallKeyPress is loaded.
+    --! frame) or combat ends, deliver a synthetic UPDATE_BINDINGS directly to the
+    --! OnEvent handlers of UNNAMED frames registered for it (SKP's event frame is
+    --! unnamed; Blizzard's UPDATE_BINDINGS listeners like ActionButton1 are named,
+    --! so they are skipped and no Blizzard code is tainted). This does not depend
+    --! on SetBinding firing UPDATE_BINDINGS and mutates no bindings at all.
+    --! Same synthetic-dispatch pattern Cell's polyfills already use.
+    --! Only active when SnowfallKeyPress is loaded.
     local syncFrame = CreateFrame("Frame", "CellBindingSyncFrame")
-    local DUMMY_KEY = "ALT-CTRL-SHIFT-F12"
     local pending = false
+    local listeners = nil
+
+    local function CollectListeners()
+        listeners = {}
+        local f = EnumerateFrames()
+        while f do
+            if not f:GetName() and f:IsEventRegistered("UPDATE_BINDINGS") then
+                tinsert(listeners, f)
+            end
+            f = EnumerateFrames(f)
+        end
+    end
 
     local function FireBindingsUpdate()
         pending = false
@@ -414,11 +429,15 @@ if not Cell.isRetail then
             syncFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
             return
         end
-        -- only touch the dummy key if the user has nothing bound to it
-        local action = GetBindingAction(DUMMY_KEY)
-        if not action or action == "" then
-            SetBinding(DUMMY_KEY, "CELL_BINDING_SYNC") -- unknown command: does nothing when pressed
-            SetBinding(DUMMY_KEY) -- unbind again; both calls fire UPDATE_BINDINGS
+        if not listeners then CollectListeners() end
+        for _, f in ipairs(listeners) do
+            -- re-check: the addon may have unregistered since the scan
+            if f:IsEventRegistered("UPDATE_BINDINGS") then
+                local handler = f:GetScript("OnEvent")
+                if handler then
+                    pcall(handler, f, "UPDATE_BINDINGS")
+                end
+            end
         end
     end
 
