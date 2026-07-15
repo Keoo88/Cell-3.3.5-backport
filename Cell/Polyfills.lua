@@ -3001,6 +3001,14 @@ do
                     self:_UpdateAlpha()
                 end
                 anim._UpdateAlpha = function(self)
+                    --! Only translate from/to into SetChange if the retail-style
+                    --! setters were actually used. Animations configured natively
+                    --! via SetChange (e.g. SnowfallKeyPress) must NOT be touched:
+                    --! defaulting from/to to 1 here used to overwrite their change
+                    --! with SetChange(0) on every OnPlay, silently killing them.
+                    if self._fromAlpha == nil and self._toAlpha == nil then
+                        return
+                    end
                     local from = self._fromAlpha or 1
                     local to = self._toAlpha or 1
                     -- Calculate change for WotLK
@@ -3035,6 +3043,14 @@ do
                     self:_UpdateScale()
                 end
                 anim._UpdateScale = function(self)
+                    --! Same guard as _UpdateAlpha: never touch animations that
+                    --! were configured natively via SetScale and never used the
+                    --! retail-style SetScaleFrom/SetScaleTo setters, otherwise
+                    --! their scale gets overwritten with 1,1 on every OnPlay.
+                    if self._fromX == nil and self._fromY == nil
+                        and self._toX == nil and self._toY == nil then
+                        return
+                    end
                     local fromX = self._fromX or 1
                     local fromY = self._fromY or 1
                     local toX = self._toX or 1
