@@ -2249,6 +2249,12 @@ if not UnitGetIncomingHeals then
 
     local function RebuildGuidMap()
         wipe(guidToUnit)
+        --! target/focus first so group tokens win for group members: group
+        --! tokens stay valid across target swaps, unlike "target"/"focus".
+        --! Needed for Spotlight frames showing non-group units (ClassicAPI's
+        --! UNIT_INDEX includes target/focus for the same reason).
+        AddUnit("target")
+        AddUnit("focus")
         AddUnit("player")
         AddUnit("pet")
         if GetNumRaidMembers() > 0 then
@@ -2279,13 +2285,16 @@ if not UnitGetIncomingHeals then
         local guid = UnitGUID(unit)
         if not guid then return 0 end
 
+        --! ALL_HEALS (direct + channel + HoT + bomb) to match CRF_HealEx and
+        --! ElvUI Zidras: CASTED_HEALS ignored HoTs entirely, making Cell's bar
+        --! visibly desync from what healers see in other addons
         local amount
         if healer then
             local healerGUID = UnitGUID(healer)
             if not healerGUID then return 0 end
-            amount = comm:GetHealAmount(guid, comm.CASTED_HEALS, GetTime() + HEAL_WINDOW, healerGUID)
+            amount = comm:GetHealAmount(guid, comm.ALL_HEALS, GetTime() + HEAL_WINDOW, healerGUID)
         else
-            amount = comm:GetHealAmount(guid, comm.CASTED_HEALS, GetTime() + HEAL_WINDOW)
+            amount = comm:GetHealAmount(guid, comm.ALL_HEALS, GetTime() + HEAL_WINDOW)
         end
 
         if not amount or amount == 0 then return 0 end
@@ -2381,6 +2390,8 @@ if not UnitGetIncomingHeals then
     initFrame:RegisterEvent("PARTY_MEMBERS_CHANGED")
     initFrame:RegisterEvent("RAID_ROSTER_UPDATE")
     initFrame:RegisterEvent("UNIT_PET")
+    initFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
+    initFrame:RegisterEvent("PLAYER_FOCUS_CHANGED")
     initFrame:SetScript("OnEvent", function(self, event)
         if event == "PLAYER_LOGIN" then
             local comm = GetHealComm()
