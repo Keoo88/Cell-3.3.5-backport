@@ -234,6 +234,7 @@ wrapFrame:SetAttribute("_onstate-combatstate", [[
 ]])
 RegisterStateDriver(wrapFrame, "combatstate", "[combat] true; false")
 
+local ScheduleBindingSync -- forward declaration, see SnowfallKeyPress compat fix below
 local SetBindingClicks
 if Cell.isRetail then
     SetBindingClicks = function (b)
@@ -387,6 +388,19 @@ else
                 self:SetAttribute("unit", oldUnit)
             end
         ]])
+
+        --! SnowfallKeyPress compat (see fix below): insecure post-hooks run reliably
+        --! alongside the secure handlers above, unlike hooksecurefunc which may not
+        --! see binding calls made from the restricted environment
+        if not b._bindingSyncHooked then
+            b._bindingSyncHooked = true
+            b:HookScript("OnLeave", function()
+                if ScheduleBindingSync then ScheduleBindingSync() end
+            end)
+            b:HookScript("OnHide", function()
+                if ScheduleBindingSync then ScheduleBindingSync() end
+            end)
+        end
     end
 end
 
@@ -400,28 +414,16 @@ if not Cell.isRetail then
     --! returns early WITHOUT restoring what it cleared. SKP only rebuilds on
     --! UPDATE_BINDINGS, and override binding changes do NOT fire that event, so its
     --! animation stays dead until the next real binding update (often never).
-    --! Fix: whenever a Cell unit button clears its override bindings (mouse leaves a
-    --! frame) or combat ends, deliver a synthetic UPDATE_BINDINGS directly to the
-    --! OnEvent handlers of UNNAMED frames registered for it (SKP's event frame is
-    --! unnamed; Blizzard's UPDATE_BINDINGS listeners like ActionButton1 are named,
-    --! so they are skipped and no Blizzard code is tainted). This does not depend
-    --! on SetBinding firing UPDATE_BINDINGS and mutates no bindings at all.
-    --! Same synthetic-dispatch pattern Cell's polyfills already use.
+    --! Fix: whenever the mouse leaves a Cell unit button (insecure OnLeave/OnHide
+    --! post-hooks installed in SetBindingClicks above - these run reliably even
+    --! though the binding calls themselves happen in the restricted environment)
+    --! or combat ends, deliver a synthetic UPDATE_BINDINGS directly to the OnEvent
+    --! handlers of UNNAMED frames registered for it (SKP's event frame is unnamed;
+    --! Blizzard's UPDATE_BINDINGS listeners like ActionButton1 are named, so they
+    --! are skipped and no Blizzard code is tainted). This mutates no bindings.
     --! Only active when SnowfallKeyPress is loaded.
     local syncFrame = CreateFrame("Frame", "CellBindingSyncFrame")
     local pending = false
-    local listeners = nil
-
-    local function CollectListeners()
-        listeners = {}
-        local f = EnumerateFrames()
-        while f do
-            if not f:GetName() and f:IsEventRegistered("UPDATE_BINDINGS") then
-                tinsert(listeners, f)
-            end
-            f = EnumerateFrames(f)
-        end
-    end
 
     local function FireBindingsUpdate()
         pending = false
@@ -429,22 +431,18 @@ if not Cell.isRetail then
             syncFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
             return
         end
-        if not listeners then CollectListeners() end
-        for _, f in ipairs(listeners) do
-            -- re-check: the addon may have unregistered since the scan
-            if f:IsEventRegistered("UPDATE_BINDINGS") then
+        --! enumerate fresh every time: addons may create/replace their event
+        --! frames at any point, a cached list goes stale
+        local f = EnumerateFrames()
+        while f do
+            if not f:GetName() and f:IsEventRegistered("UPDATE_BINDINGS") then
                 local handler = f:GetScript("OnEvent")
                 if handler then
                     pcall(handler, f, "UPDATE_BINDINGS")
                 end
             end
+            f = EnumerateFrames(f)
         end
-    end
-
-    local function ScheduleSync()
-        if pending then return end
-        pending = true
-        C_Timer.After(0.2, FireBindingsUpdate)
     end
 
     syncFrame:RegisterEvent("PLAYER_LOGIN")
@@ -452,13 +450,19 @@ if not Cell.isRetail then
         if event == "PLAYER_LOGIN" then
             self:UnregisterEvent("PLAYER_LOGIN")
             if not IsAddOnLoaded("SnowfallKeyPress") then return end
-            --! ClearBindings() in Cell's secure _onleave/_onhide snippets calls the
-            --! global ClearOverrideBindings, so this hook fires exactly when the
-            --! mouse leaves a unit button (hooksecurefunc fires for secure calls too)
+            --! activate: unit button OnLeave/OnHide hooks are no-ops until this is set
+            ScheduleBindingSync = function()
+                if pending then return end
+                pending = true
+                C_Timer.After(0.2, FireBindingsUpdate)
+            end
+            --! belt and braces: also catch clears triggered without OnLeave/OnHide
+            --! (hooksecurefunc fires for insecure calls; restricted-environment
+            --! calls may or may not reach it depending on the client)
             hooksecurefunc("ClearOverrideBindings", function(owner)
                 local name = owner and owner.GetName and owner:GetName()
                 if name and strfind(name, "^Cell") then
-                    ScheduleSync()
+                    ScheduleBindingSync()
                 end
             end)
         elseif event == "PLAYER_REGEN_ENABLED" then
@@ -655,7 +659,7 @@ local function ApplyClickCastings(b)
                 b:SetAttribute(attr, "/tar ["..unit.."]\n/cast ["..unit..condition.."] "..spellName..sMaRt..fix)
                 if not Cell.isRetail then UpdatePlaceholder(b, attr) end
             else
-                -- NOTE: "spell" is not ideal, 在无效/过远的目标上会处于“等待选中目标”的状态，即鼠标指针有一圈灰/蓝色材质
+                -- NOTE: "spell" is not ideal, ��无效/过远的目标上会处于“等待选中目标”的状态，即鼠标指针有一圈灰/蓝色材质
                 -- local attr = string.gsub(bindKey, "type", "spell")
                 -- b:SetAttribute(attr, spellName)
                 b:SetAttribute(bindKey, "macro")
