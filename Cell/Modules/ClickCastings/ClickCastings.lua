@@ -391,20 +391,61 @@ else
 end
 
 if not Cell.isRetail then
-    --! WotLK compat fix: Cell's mouseover click-castings set/clear override bindings
-    --! in combat, firing UPDATE_BINDINGS while other addons (e.g. SnowfallKeyPress)
-    --! cannot rebuild their own override bindings due to InCombatLockdown(). They
-    --! defer the rebuild and wait for the next out-of-combat binding change, which
-    --! may never come, leaving them broken until /reload.
-    --! After leaving combat, perform a harmless override binding set+clear on a
-    --! dummy frame. This fires UPDATE_BINDINGS (and hooksecurefunc hooks on
-    --! SetOverrideBindingClick/ClearOverrideBindings) out of combat, letting such
-    --! addons process their deferred rebuilds.
-    local bindingSyncFrame = CreateFrame("Frame", "CellBindingSyncFrame")
-    bindingSyncFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-    bindingSyncFrame:SetScript("OnEvent", function(self)
-        SetOverrideBindingClick(self, false, "ALT-CTRL-SHIFT-F12", "CellBindingSyncFrame")
-        ClearOverrideBindings(self)
+    --! WotLK compat fix for SnowfallKeyPress (and similar UPDATE_BINDINGS-driven addons):
+    --! SKP hooks SetOverrideBinding*/ClearOverrideBindings. When the mouse enters a
+    --! Cell unit button, Cell's secure snippet calls SetOverrideBindingClick for each
+    --! keyboard click-casting; SKP's hook then CLEARS its own keypress-animation
+    --! override for that key first and tries to take over Cell's binding, which fails
+    --! validation (Cell uses virtual buttons / non-whitelisted attribute types) and
+    --! returns early WITHOUT restoring what it cleared. SKP only rebuilds on
+    --! UPDATE_BINDINGS, and override binding changes do NOT fire that event, so its
+    --! animation stays dead until the next real binding update (often never).
+    --! Fix: whenever a Cell unit button clears its override bindings (mouse leaves a
+    --! frame) or combat ends, fire a REAL (but harmless) UPDATE_BINDINGS via a no-op
+    --! SetBinding toggle on an unused key combo, so such addons rebuild their state.
+    --! Nothing is saved (no SaveBindings call). Only active when SnowfallKeyPress is loaded.
+    local syncFrame = CreateFrame("Frame", "CellBindingSyncFrame")
+    local DUMMY_KEY = "ALT-CTRL-SHIFT-F12"
+    local pending = false
+
+    local function FireBindingsUpdate()
+        pending = false
+        if InCombatLockdown() then
+            syncFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+            return
+        end
+        -- only touch the dummy key if the user has nothing bound to it
+        local action = GetBindingAction(DUMMY_KEY)
+        if not action or action == "" then
+            SetBinding(DUMMY_KEY, "CELL_BINDING_SYNC") -- unknown command: does nothing when pressed
+            SetBinding(DUMMY_KEY) -- unbind again; both calls fire UPDATE_BINDINGS
+        end
+    end
+
+    local function ScheduleSync()
+        if pending then return end
+        pending = true
+        C_Timer.After(0.2, FireBindingsUpdate)
+    end
+
+    syncFrame:RegisterEvent("PLAYER_LOGIN")
+    syncFrame:SetScript("OnEvent", function(self, event)
+        if event == "PLAYER_LOGIN" then
+            self:UnregisterEvent("PLAYER_LOGIN")
+            if not IsAddOnLoaded("SnowfallKeyPress") then return end
+            --! ClearBindings() in Cell's secure _onleave/_onhide snippets calls the
+            --! global ClearOverrideBindings, so this hook fires exactly when the
+            --! mouse leaves a unit button (hooksecurefunc fires for secure calls too)
+            hooksecurefunc("ClearOverrideBindings", function(owner)
+                local name = owner and owner.GetName and owner:GetName()
+                if name and strfind(name, "^Cell") then
+                    ScheduleSync()
+                end
+            end)
+        elseif event == "PLAYER_REGEN_ENABLED" then
+            self:UnregisterEvent("PLAYER_REGEN_ENABLED")
+            FireBindingsUpdate()
+        end
     end)
 end
 
