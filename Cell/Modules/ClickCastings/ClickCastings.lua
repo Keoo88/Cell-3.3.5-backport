@@ -296,8 +296,14 @@ else
         b:SetAttribute("_onenter", [[
             -- print("_onenter")
             self:ClearBindings()
-            -- WotLK Fix: :Run() doesn't exist in WotLK's restricted execution
-            -- self:Run(self:GetAttribute("snippet"))
+            --! WotLK Fix: frame handles have no :Run() in 3.3.5's restricted environment.
+            --! Use the 'control' handle (available inside secure handler snippets since 3.1)
+            --! to execute the binding snippet, otherwise mouse wheel / keyboard
+            --! click-castings (SetBindingClick) are never applied on mouseover.
+            local snippet = self:GetAttribute("snippet")
+            if snippet and snippet ~= "" then
+                control:RunFor(self, snippet)
+            end
 
             -- self:SetBindingClick(true, "SHIFT-MOUSEWHEELUP", self, "shiftSCROLLUP")
             -- FIXME: --! 如果游戏按键设置（比如“视角”“载具控制”）中绑定了滚轮，那么 self:SetBindingClick(true, "MOUSEWHEELUP", self, "SCROLLUP") 会失效
