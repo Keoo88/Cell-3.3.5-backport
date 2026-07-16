@@ -1059,6 +1059,19 @@ end
 
 
 -- Alpha animation SetFromAlpha / SetToAlpha polyfill for 3.3.5a
+-- WotLK Alpha animations only have SetChange(delta), and the delta is
+-- applied RELATIVE to the region's current alpha - not absolute from->to.
+-- E.g. a fade-in 0->1 on a region whose base alpha is 1 shows nothing
+-- (1 + 1 clamps at 1). Instead of approximating with SetChange, drive the
+-- region's alpha manually from the animation's OnUpdate using the stored
+-- absolute from/to values:
+--   * Animation:GetSmoothProgress() - respects SetSmoothing("IN"/"OUT"),
+--     ignores start/end delays (exists on 3.3.5)
+--   * Animation:GetRegionParent() - the region the AnimationGroup was
+--     created on (exists on 3.3.5)
+-- OnFinished snaps to the exact endpoint (the last OnUpdate can land
+-- slightly short); for BOUNCE loops the reverse leg ends near progress 0,
+-- so the closer endpoint is chosen.
 do
     -- create a sample alpha animation to grab its metatable
     local f  = CreateFrame("Frame")
@@ -1067,25 +1080,80 @@ do
     local mt = getmetatable(a)
 
     if mt and mt.__index and not mt.__index.SetFromAlpha then
-        -- weak tables to remember from/to per animation
+        -- weak tables to remember per-animation state
         local alphaFrom = setmetatable({}, { __mode = "k" })
         local alphaTo   = setmetatable({}, { __mode = "k" })
+        local installed = setmetatable({}, { __mode = "k" })
+
+        local function AlphaDriver_OnUpdate(self)
+            local from, to = alphaFrom[self], alphaTo[self]
+            if from == nil or to == nil then return end
+            local region = self.GetRegionParent and self:GetRegionParent()
+            if region and region.SetAlpha then
+                -- On reverse (BOUNCE) legs progress runs 1 -> 0, which
+                -- plays the fade backwards automatically.
+                region:SetAlpha(from + (to - from) * self:GetSmoothProgress())
+            end
+        end
+
+        local function AlphaDriver_OnFinished(self)
+            local from, to = alphaFrom[self], alphaTo[self]
+            if from == nil or to == nil then return end
+            local region = self.GetRegionParent and self:GetRegionParent()
+            if not (region and region.SetAlpha) then return end
+            local p = self:GetSmoothProgress() or 1
+            if p >= 0.5 then
+                region:SetAlpha(to)
+            else
+                region:SetAlpha(from)
+            end
+        end
+
+        local function InstallDriver(anim)
+            if installed[anim] then return end
+            installed[anim] = true
+            -- we drive alpha ourselves: neutralize any native delta
+            if anim.SetChange then
+                anim:SetChange(0)
+            end
+            -- chain existing handlers instead of clobbering them
+            local prevUpdate = anim:GetScript("OnUpdate")
+            if prevUpdate then
+                anim:SetScript("OnUpdate", function(self, ...)
+                    prevUpdate(self, ...)
+                    AlphaDriver_OnUpdate(self)
+                end)
+            else
+                anim:SetScript("OnUpdate", AlphaDriver_OnUpdate)
+            end
+            local prevFinished = anim:GetScript("OnFinished")
+            if prevFinished then
+                anim:SetScript("OnFinished", function(self, ...)
+                    AlphaDriver_OnFinished(self)
+                    prevFinished(self, ...)
+                end)
+            else
+                anim:SetScript("OnFinished", AlphaDriver_OnFinished)
+            end
+        end
 
         function mt.__index:SetFromAlpha(value)
             alphaFrom[self] = value
-            local to = alphaTo[self]
-            -- On WotLK, Alpha uses SetChange; approximate from/to with delta
-            if to ~= nil and self.SetChange then
-                self:SetChange(to - value)
-            end
+            InstallDriver(self)
         end
 
         function mt.__index:SetToAlpha(value)
             alphaTo[self] = value
-            local from = alphaFrom[self]
-            if from ~= nil and self.SetChange then
-                self:SetChange(value - from)
-            end
+            InstallDriver(self)
+        end
+
+        -- retail parity getters
+        function mt.__index:GetFromAlpha()
+            return alphaFrom[self] or 0
+        end
+
+        function mt.__index:GetToAlpha()
+            return alphaTo[self] or 0
         end
     end
 end
