@@ -329,18 +329,31 @@ do
         end
     end
 
-    local probeFrame = CreateFrame("Frame")
+    -- All probe frames must be hidden: a freshly created frame is shown by
+    -- default, and a shown EditBox with default autoFocus grabs keyboard
+    -- focus and silently eats ALL key presses (broke keybindings).
+    local function Probe(frameType)
+        local f = CreateFrame(frameType, nil, UIParent)
+        if f.SetAutoFocus then
+            f:SetAutoFocus(false) -- EditBox: never steal keyboard focus
+            f:ClearFocus()
+        end
+        f:Hide()
+        return f
+    end
+
+    local probeFrame = Probe("Frame")
     InstallSetShown(probeFrame)              -- Frame (+ Button/StatusBar etc. if shared)
     InstallSetShown(probeFrame:CreateTexture())     -- Texture
     InstallSetShown(probeFrame:CreateFontString())  -- FontString
     -- widget types with distinct metatables on 3.3.5
-    InstallSetShown(CreateFrame("Button"))
-    InstallSetShown(CreateFrame("StatusBar"))
-    InstallSetShown(CreateFrame("Cooldown"))
-    InstallSetShown(CreateFrame("EditBox"))
-    InstallSetShown(CreateFrame("Slider"))
-    InstallSetShown(CreateFrame("CheckButton"))
-    InstallSetShown(CreateFrame("ScrollFrame"))
+    InstallSetShown(Probe("Button"))
+    InstallSetShown(Probe("StatusBar"))
+    InstallSetShown(Probe("Cooldown"))
+    InstallSetShown(Probe("EditBox"))
+    InstallSetShown(Probe("Slider"))
+    InstallSetShown(Probe("CheckButton"))
+    InstallSetShown(Probe("ScrollFrame"))
 end
 
 -- FontString IsTruncated polyfill for WotLK
