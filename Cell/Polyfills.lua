@@ -309,6 +309,40 @@ end
 
 
 
+-- SetShown polyfill for WotLK (method added in 5.0.4; missing on 3.3.5).
+-- Pure additive polyfill on the shared widget metatables: only installed
+-- when the method does not exist, never overwrites anything (safe for
+-- other addons, same pattern as IsTruncated below).
+-- Covers Frame, Texture and FontString - the three region types Cell
+-- calls :SetShown() on (Base.lua stack/duration, UnitButton gapTexture).
+do
+    local function InstallSetShown(object)
+        local mt = getmetatable(object)
+        if mt and mt.__index and not mt.__index.SetShown then
+            function mt.__index:SetShown(show)
+                if show then
+                    self:Show()
+                else
+                    self:Hide()
+                end
+            end
+        end
+    end
+
+    local probeFrame = CreateFrame("Frame")
+    InstallSetShown(probeFrame)              -- Frame (+ Button/StatusBar etc. if shared)
+    InstallSetShown(probeFrame:CreateTexture())     -- Texture
+    InstallSetShown(probeFrame:CreateFontString())  -- FontString
+    -- widget types with distinct metatables on 3.3.5
+    InstallSetShown(CreateFrame("Button"))
+    InstallSetShown(CreateFrame("StatusBar"))
+    InstallSetShown(CreateFrame("Cooldown"))
+    InstallSetShown(CreateFrame("EditBox"))
+    InstallSetShown(CreateFrame("Slider"))
+    InstallSetShown(CreateFrame("CheckButton"))
+    InstallSetShown(CreateFrame("ScrollFrame"))
+end
+
 -- FontString IsTruncated polyfill for WotLK
 do
     local fs = UIParent:CreateFontString()
