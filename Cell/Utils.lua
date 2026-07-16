@@ -2123,7 +2123,8 @@ else
     function F.FindDebuffByIds(unit, spellIds)
         local debuffs = {}
         for i = 1, 40 do
-            local name, icon, count, debuffType, duration, expirationTime, source, isStealable, nameplateShowPersonal, spellId = Cell.UnitDebuff(unit, i)
+            --! WotLK perf: native UnitDebuff (rank at position 2, spellId at 11)
+            local name, _, _, _, debuffType, _, _, _, _, _, spellId = UnitDebuff(unit, i)
             if not name then
                 break
             end
@@ -2138,13 +2139,16 @@ else
     function F.FindAuraByDebuffTypes(unit, types)
         local debuffs = {}
         for i = 1, 40 do
-            local name, icon, count, debuffType, duration, expirationTime, source, isStealable, nameplateShowPersonal, spellId = Cell.UnitDebuff(unit, i)
+            --! WotLK perf: native UnitDebuff (rank at position 2, spellId at 11)
+            local name, _, _, _, debuffType, _, _, _, _, _, spellId = UnitDebuff(unit, i)
             if not name then
                 break
             end
 
             if types == "all" or types[debuffType] then
-                debuffs[spellId] = I.CheckDebuffType(s, spellId)
+                --! WotLK fix: was CheckDebuffType(s, spellId) with undefined
+                --! global `s` (always nil) - pass the actual debuffType
+                debuffs[spellId] = I.CheckDebuffType(debuffType, spellId)
             end
         end
         return debuffs

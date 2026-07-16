@@ -255,15 +255,21 @@ do
 
         -- Wrap Texture:SetAtlas to handle missing atlases in WotLK 3.3.5
         -- WotLK has fewer atlases than retail, so we need to gracefully handle missing ones
+        --! NOTE: this wrapper lands on the SHARED Texture metatable, so it
+        --! affects EVERY addon's textures (it only exists when another addon,
+        --! e.g. an ElvUI backport, already defined SetAtlas).
         if mt.__index.SetAtlas and not mt.__index._CellSetAtlasWrapped then
             local originalSetAtlas = mt.__index.SetAtlas
             function mt.__index:SetAtlas(atlasName, useAtlasSize, filterMode)
                 -- Try to call the original SetAtlas
                 local success = pcall(originalSetAtlas, self, atlasName, useAtlasSize, filterMode)
                 if not success then
-                    -- Atlas doesn't exist in WotLK, use a fallback
-                    -- Set to a blank/transparent texture to avoid errors
-                    self:SetTexture(nil)
+                    --! WotLK fix: was SetTexture(nil), but on 3.3.5 that
+                    --! renders an OPAQUE WHITE rectangle instead of clearing
+                    --! (broke other addons' textures, e.g. the ElvUI castbar
+                    --! spark showed as a white block whenever Cell was
+                    --! enabled). Use a fully transparent solid color instead.
+                    self:SetTexture(0, 0, 0, 0)
                 end
             end
             mt.__index._CellSetAtlasWrapped = true
@@ -498,13 +504,27 @@ do
         local origSetStatusBarTexture = mt.__index.SetStatusBarTexture
 
         -- Wrap SetStatusBarTexture to cache the texture path
+        --! NOTE: this wrapper lands on the SHARED StatusBar metatable and
+        --! affects EVERY addon's bars. It must never touch textures it did
+        --! not create itself.
         if origSetStatusBarTexture then
             function mt.__index:SetStatusBarTexture(texture, layer, sublayer)
                 if type(texture) == "string" then
                     self._cellCachedTexturePath = texture
-                    -- keep our fallback texture in sync instead of dropping it
+                    --! WotLK fix: only sync the fallback if WE created it.
+                    --! A texture found by the region scan can be a foreign
+                    --! region (e.g. the ElvUI aurabar SPARK, created via
+                    --! statusBar:CreateTexture) - overwriting it with the
+                    --! flat bar texture rendered the spark as a solid white
+                    --! rectangle. Scanned caches are dropped instead: the
+                    --! native SetStatusBarTexture recreates the internal
+                    --! texture, so the next Get can re-resolve it properly.
                     if self._cellStatusBarTexture then
-                        self._cellStatusBarTexture:SetTexture(texture)
+                        if self._cellStatusBarTextureCreated then
+                            self._cellStatusBarTexture:SetTexture(texture)
+                        else
+                            self._cellStatusBarTexture = nil
+                        end
                     end
                 end
                 return origSetStatusBarTexture(self, texture, layer, sublayer)
@@ -532,11 +552,19 @@ do
                     return self._cellStatusBarTexture
                 end
 
-                -- scan regions for the bar's internal texture
+                --! WotLK fix: scan is restricted to ARTWORK-layer textures
+                --! (the statusbar's internal fill lives there) that match
+                --! the cached path when one is known. The old "first texture
+                --! wins" scan could capture foreign regions like the ElvUI
+                --! aurabar spark (OVERLAY) - see SetStatusBarTexture note.
                 for i = 1, select("#", self:GetRegions()) do
                     local region = select(i, self:GetRegions())
-                    if region and region.IsObjectType and region:IsObjectType("Texture") then
+                    if region and region.IsObjectType and region:IsObjectType("Texture")
+                        and region.GetDrawLayer and region:GetDrawLayer() == "ARTWORK"
+                        and (not self._cellCachedTexturePath or region:GetTexture() == self._cellCachedTexturePath)
+                    then
                         self._cellStatusBarTexture = region
+                        self._cellStatusBarTextureCreated = nil
                         return region
                     end
                 end
@@ -549,6 +577,7 @@ do
                 end
                 origSetStatusBarTexture(self, tex)
                 self._cellStatusBarTexture = tex
+                self._cellStatusBarTextureCreated = true
                 return tex
             end
         end
@@ -672,18 +701,32 @@ if not UnitInPhase then
 end
 
 -- UnitGroupRolesAssigned
-if not UnitGroupRolesAssigned then
+do
     -- RETAIL CONTRACT: returns ONE string - "TANK" / "HEALER" / "DAMAGER" / "NONE".
     -- Every consumer (UnitButton, SpotlightFrame, LibGroupInfo) relies on this.
-    -- Do NOT change this back to the 3.3.5 three-boolean convention: mixing the
-    -- two contracts silently breaks role comparisons like (role == "TANK").
+    --
+    --! WotLK fix: 3.3.5a HAS a native UnitGroupRolesAssigned (added with the
+    --! Dungeon Finder, 0x0060C810), but with the OLD contract - it returns
+    --! THREE BOOLEANS (isTank, isHealer, isDamage). The previous
+    --! `if not UnitGroupRolesAssigned` guard meant this wrapper never
+    --! installed on a real 3.3.5 client, so callers received a boolean in
+    --! states.role: LFD tanks got `true` (matches no string key), everyone
+    --! else got `false` -> GetRole fell back to "DAMAGER". Symptom: the DPS
+    --! power filter applied to everybody, TANK/HEALER filters never matched.
+    --! Now defined UNCONDITIONALLY: the native three-boolean result is
+    --! converted to the retail single-string contract, then the fallback
+    --! chain below runs when the native API knows nothing (non-LFD groups).
     --
     -- Sources, in priority order:
-    --   1. GetRaidRosterInfo role (LFG / raid assignments)
-    --   2. Party MAINTANK / MAINASSIST assignments
-    --   3. LibGroupInfo talent-based specRole ONLY (never assignedRole - that
+    --   1. Native 3.3.5 LFD role (converted from three booleans; also
+    --      passes through retail-style strings on custom cores)
+    --   2. GetRaidRosterInfo role (LFG / raid assignments)
+    --   3. Party MAINTANK / MAINASSIST assignments
+    --   4. LibGroupInfo talent-based specRole ONLY (never assignedRole - that
     --      field is written FROM this function, reading it back would create
     --      a circular dependency)
+
+    local orig_UnitGroupRolesAssigned = UnitGroupRolesAssigned
 
     -- Debug flag for role detection (toggle with /cell debug role)
     local roleDebugEnabled = false
@@ -694,8 +737,46 @@ if not UnitGroupRolesAssigned then
         local result = nil
         local roleSource = "none"
 
+        -- Native 3.3.5 LFD roles (three booleans), or a retail-style string
+        -- on custom cores that already backported the new contract
+        if orig_UnitGroupRolesAssigned then
+            local r1, r2, r3 = orig_UnitGroupRolesAssigned(unit)
+            if type(r1) == "string" then
+                if r1 == "TANK" or r1 == "HEALER" or r1 == "DAMAGER" then
+                    result = r1
+                    roleSource = "native (string contract)"
+                end
+                -- "NONE" or anything else: fall through to the chain below
+            elseif r1 then
+                result = "TANK"
+                roleSource = "native LFD (boolean contract)"
+            elseif r2 then
+                result = "HEALER"
+                roleSource = "native LFD (boolean contract)"
+            elseif r3 then
+                result = "DAMAGER"
+                roleSource = "native LFD (boolean contract)"
+            end
+        end
+
+        --! WotLK fix (chat spam regression): the fallback chain below may
+        --! only run for PLAYER units in OUR group. GetPartyAssignment is
+        --! server-validated on some cores - calling it for pets / NPCs
+        --! ("pet", "raidpetN", "bossN") spams the ERR_NOT_IN_YOUR_PARTY
+        --! system message ("X is not in your party.") twice per button on
+        --! every roster update / relog. Pets and NPCs can't have roles:
+        --! return "NONE" immediately (retail contract does the same).
+        if not result then
+            if not UnitIsPlayer(unit) then
+                return "NONE"
+            end
+            if not (UnitIsUnit(unit, "player") or UnitInParty(unit) or UnitInRaid(unit)) then
+                return "NONE"
+            end
+        end
+
         -- For raid members, get role from GetRaidRosterInfo
-        if UnitInRaid(unit) then
+        if not result and UnitInRaid(unit) then
             for i = 1, GetNumRaidMembers() do
                 -- GetRaidRosterInfo returns: name, rank, subgroup, level, class, fileName, zone, online, isDead, role, isML, combatRole
                 local name, _, _, _, _, _, _, _, _, role = GetRaidRosterInfo(i)
@@ -781,25 +862,86 @@ end
 -- UnitClassBase
 -- Retail API: returns the class filename - ALWAYS UPPERCASE (e.g. "HUNTER").
 -- WotLK: UnitClass returns (localizedName, fileName, classIndex).
---! Defined unconditionally with forced uppercase: on some 3.3.5 servers /
+--! Defined unconditionally with full normalization: on some 3.3.5 servers /
 --! with some addons the second UnitClass return (or a pre-existing
---! UnitClassBase global) yields mixed case ("Hunter"). Cell stores it in
---! states.class and uses it as a table key (powerFilters["HUNTER"],
---! RAID_CLASS_COLORS, click-casting spell lists) - a mixed-case value
---! silently misses every lookup (e.g. power bar filters had no effect).
+--! UnitClassBase global) yields mixed case ("Hunter") or even the display
+--! name with spaces ("Death Knight" -> upper -> "DEATH KNIGHT"). Cell stores
+--! it in states.class and uses it as a table key (powerFilters["HUNTER"],
+--! RAID_CLASS_COLORS, click-casting spell lists) - any non-canonical value
+--! silently misses every lookup or hard-errors on nested indexing
+--! (powerFilters["DEATH KNIGHT"][role] -> "attempt to index a nil value").
+--! Normalization: uppercase + strip spaces, validate against the canonical
+--! token set, and as a last resort reverse-map the localized class name
+--! (LOCALIZED_CLASS_NAMES_MALE/FEMALE - handles ruRU and other locales).
 do
     local orig_UnitClassBase = UnitClassBase
-    function UnitClassBase(unit)
-        local class
-        if orig_UnitClassBase then
-            class = orig_UnitClassBase(unit)
-        else
-            class = select(2, UnitClass(unit))
+
+    local VALID_TOKENS = {
+        WARRIOR = true, PALADIN = true, HUNTER = true, ROGUE = true,
+        PRIEST = true, DEATHKNIGHT = true, SHAMAN = true, MAGE = true,
+        WARLOCK = true, DRUID = true,
+    }
+
+    -- lazy-built reverse map: localized class name -> canonical token
+    local localizedToToken
+    local function BuildLocalizedMap()
+        localizedToToken = {}
+        for _, source in pairs({LOCALIZED_CLASS_NAMES_MALE, LOCALIZED_CLASS_NAMES_FEMALE}) do
+            if type(source) == "table" then
+                for token, localizedName in pairs(source) do
+                    if type(localizedName) == "string" and VALID_TOKENS[token] then
+                        localizedToToken[string.upper(localizedName)] = token
+                    end
+                end
+            end
+        end
+    end
+
+    local function NormalizeClassToken(class, localizedName)
+        --! perf fast-path: on 3.3.5 UnitClass() already returns a valid
+        --! uppercase token ("MAGE", "DEATHKNIGHT") for virtually every call,
+        --! so skip the upper/gsub allocations entirely (this runs on every
+        --! unit button update - see SESSION_NOTES perf audit)
+        if VALID_TOKENS[class] then
+            return class
         end
         if type(class) == "string" then
-            return string.upper(class)
+            -- uppercase + strip spaces: "Death Knight"/"DEATH KNIGHT" -> "DEATHKNIGHT"
+            local token = string.gsub(string.upper(class), "%s+", "")
+            if VALID_TOKENS[token] then
+                return token
+            end
+            -- non-English value (e.g. ruRU display name): try the reverse map
+            if not localizedToToken then BuildLocalizedMap() end
+            local mapped = localizedToToken[string.upper(class)]
+            if mapped then
+                return mapped
+            end
+        end
+        -- last resort: reverse-map the localized first return of UnitClass
+        if type(localizedName) == "string" then
+            if not localizedToToken then BuildLocalizedMap() end
+            local mapped = localizedToToken[string.upper(localizedName)]
+            if mapped then
+                return mapped
+            end
+        end
+        -- give back *something* uppercase rather than a guaranteed-miss value
+        if type(class) == "string" then
+            return (string.gsub(string.upper(class), "%s+", ""))
         end
         return class
+    end
+
+    function UnitClassBase(unit)
+        local localizedName, class
+        if orig_UnitClassBase then
+            class = orig_UnitClassBase(unit)
+            localizedName = UnitClass(unit)
+        else
+            localizedName, class = UnitClass(unit)
+        end
+        return NormalizeClassToken(class, localizedName)
     end
 end
 
@@ -1463,16 +1605,31 @@ if not C_Spell.IsSpellInRange then
         -- Retail uses spellID directly; 3.3.5 IsSpellInRange wants name
         local name = GetSpellInfo(spellId)
         if not name then return nil end
-        return IsSpellInRange(name, unit)
+        --! WotLK fix: retail contract returns a BOOLEAN, native 3.3.5
+        --! returns 1/0/nil. 0 (out of range) is truthy in Lua - callers
+        --! using the result as a boolean (Utils.lua UnitInSpellRange, the
+        --! range-check fade) treated out-of-range units as in-range.
+        local result = IsSpellInRange(name, unit)
+        if result == nil then return nil end
+        return result == 1
     end
 end
 
 if not C_Spell.GetSpellCooldown then
     function C_Spell.GetSpellCooldown(spellId)
-        -- Old API: start, duration, enabled
-        -- Retail C_Spell: start, duration, enabled, modRate
+        --! WotLK fix: retail C_Spell.GetSpellCooldown returns a TABLE
+        --! (SpellCooldownInfo: startTime, duration, isEnabled, modRate),
+        --! not a tuple. Utils.lua F.GetSpellCooldown takes the C_Spell
+        --! branch and does `info.startTime` - with the old tuple return
+        --! that indexed a number and hard-errored (broke F.IsSpellReady).
         local start, duration, enabled = GetSpellCooldown(spellId)
-        return start, duration, enabled, 1
+        if start == nil then return nil end
+        return {
+            startTime = start,
+            duration  = duration,
+            isEnabled = enabled,
+            modRate   = 1,
+        }
     end
 end
 
@@ -1493,7 +1650,13 @@ end
 if not C_Item then
     C_Item = {}
     function C_Item.IsItemInRange(itemId, unit)
-        return IsItemInRange(itemId, unit)
+        --! WotLK fix: retail contract returns a BOOLEAN, native 3.3.5
+        --! returns 1/0/nil - and 0 (out of range) is truthy in Lua, so
+        --! boolean callers (Utils.lua hostile range check) treated
+        --! out-of-range units as in-range.
+        local result = IsItemInRange(itemId, unit)
+        if result == nil then return nil end
+        return result == 1
     end
     function C_Item.IsUsableItem(itemId)
         return IsUsableItem(itemId)
@@ -1912,13 +2075,35 @@ end
 
 
 -- Wrath: alias RegisterAttributeDriver/UnregisterAttributeDriver to StateDriver versions
+--! WotLK fix: contracts differ by a prefix. In 4.0+,
+--! RegisterAttributeDriver(frame, attribute, cond) takes the FULL attribute
+--! name ("state-visibility"), while 3.3.5 RegisterStateDriver(frame, state,
+--! cond) PREPENDS "state-" itself. The old passthrough turned
+--! "state-visibility" into attribute "state-state-visibility", which the
+--! 3.3.5 SecureStateDriverManager has no special handling for - the pet
+--! frame visibility driver silently did nothing. Strip the "state-" prefix
+--! before delegating.
 if not RegisterAttributeDriver and RegisterStateDriver then
-    function RegisterAttributeDriver(frame, attribute, state)
-        return RegisterStateDriver(frame, attribute, state)
+    local function ToStateName(attribute)
+        if type(attribute) == "string" then
+            local stripped = string.match(attribute, "^state%-(.+)$")
+            if stripped then
+                return stripped
+            end
+        end
+        return attribute
     end
-end
 
-if not UnregisterAttributeDriver and UnregisterStateDriver then
+    function RegisterAttributeDriver(frame, attribute, state)
+        return RegisterStateDriver(frame, ToStateName(attribute), state)
+    end
+
+    if not UnregisterAttributeDriver and UnregisterStateDriver then
+        function UnregisterAttributeDriver(frame, attribute)
+            return UnregisterStateDriver(frame, ToStateName(attribute))
+        end
+    end
+elseif not UnregisterAttributeDriver and UnregisterStateDriver then
     function UnregisterAttributeDriver(frame, attribute)
         return UnregisterStateDriver(frame, attribute)
     end
@@ -2015,22 +2200,41 @@ if not Enum.UIMapType then
 end
 
 -- UnitIsGroupLeader (doesn't exist in WotLK 3.3.5a)
+--! WotLK fix: the old implementation returned false for every raid member
+--! except the player ("can't directly check in WotLK") - leader/assistant
+--! icons never showed on other units' frames. In fact 3.3.5 exposes this
+--! via GetRaidRosterInfo: rank 2 = leader, rank 1 = assistant. UnitInRaid
+--! returns the 0-based raid index in 3.3.5, so GetRaidRosterInfo takes
+--! index+1.
+local function GetUnitRaidRank(unit)
+    local raidIndex = UnitInRaid(unit)
+    if raidIndex then
+        local _, rank = GetRaidRosterInfo(raidIndex + 1)
+        return rank
+    end
+    return nil
+end
+
 if not UnitIsGroupLeader then
     function UnitIsGroupLeader(unit)
-        -- In WotLK, we need to check differently for party vs raid
         if UnitInRaid(unit) then
-            -- In raid, check if unit is the raid leader
-            if UnitIsUnit(unit, "player") then
-                return IsRaidLeader()
-            else
-                -- For other units in raid, we can't directly check in WotLK
-                -- This is a limitation of the WotLK API
-                return false
-            end
-        else
-            -- In party, check if unit is the party leader
-            return UnitIsPartyLeader(unit)
+            local rank = GetUnitRaidRank(unit)
+            return rank == 2
         end
+        --! WotLK fix: do NOT call UnitIsPartyLeader(unit) here - on some
+        --! cores it is server-validated and spams the ERR_NOT_IN_YOUR_PARTY
+        --! system message ("raidpetN is not in your party.") for every
+        --! non-party unit (pets!) on each roster update. Use purely
+        --! client-side checks instead: IsPartyLeader() for the player,
+        --! GetPartyLeaderIndex() + UnitIsUnit for party members.
+        if UnitIsUnit(unit, "player") then
+            return IsPartyLeader() and true or false
+        end
+        local leaderIndex = GetPartyLeaderIndex and GetPartyLeaderIndex()
+        if leaderIndex and leaderIndex > 0 then
+            return UnitIsUnit(unit, "party" .. leaderIndex) and true or false
+        end
+        return false
     end
 end
 
@@ -2039,13 +2243,8 @@ if not UnitIsGroupAssistant then
     function UnitIsGroupAssistant(unit)
         -- Only applies to raids in WotLK
         if UnitInRaid(unit) then
-            if UnitIsUnit(unit, "player") then
-                return IsRaidOfficer()
-            else
-                -- For other units in raid, we can't directly check in WotLK
-                -- This is a limitation of the WotLK API
-                return false
-            end
+            local rank = GetUnitRaidRank(unit)
+            return rank == 1
         end
         return false
     end
@@ -2104,7 +2303,9 @@ if not GetNumGroupMembers then
         elseif GetNumPartyMembers() > 0 then
             return GetNumPartyMembers() + 1 -- +1 for player
         else
-            return 1 -- Just player (solo)
+            --! Retail contract: 0 when not in a group (was 1, which would
+            --! break any `GetNumGroupMembers() == 0` solo check)
+            return 0
         end
     end
 end

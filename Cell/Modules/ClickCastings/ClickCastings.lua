@@ -227,7 +227,7 @@ wrapFrame:SetAttribute("_onstate-combatstate", [[
             if newstate == "true" then
                 mouseoverbutton:SetAttribute(menuKey, nil)
             else
-                mouseoverbutton:SetAttribute(menuKey, "togglemenu")
+                mouseoverbutton:SetAttribute(menuKey, "menu") --! WotLK: was "togglemenu" (4.x+ only)
             end
         end
     end
@@ -343,7 +343,7 @@ else
                 if PlayerInCombat() then
                     self:SetAttribute(menuKey, nil)
                 else
-                    self:SetAttribute(menuKey, "togglemenu")
+                    self:SetAttribute(menuKey, "menu") --! WotLK: was "togglemenu" (4.x+ only)
                 end
             end
         ]])
@@ -444,6 +444,58 @@ function F.GetBindingSnippet()
 end
 
 -------------------------------------------------
+-- unit dropdown menu (WotLK)
+-------------------------------------------------
+--! WotLK fix: the "togglemenu" secure type does not exist in 3.3.5
+--! SecureTemplates (added in 4.x) - the default right-click "Menu" binding
+--! silently did nothing. In 3.3.5 the secure type is "menu", which calls
+--! the button's Lua field `self.menu(self)`. We provide that function via
+--! a shared UIDropDownMenu + UnitPopup_ShowMenu (same approach as
+--! Clique/oUF on WotLK) and translate "togglemenu" -> "menu" when applying
+--! bindings (see ApplyClickCastings and the secure snippets).
+local ShowUnitMenu
+if not Cell.isRetail then
+    local dropdown = CreateFrame("Frame", "CellUnitButtonDropDown", UIParent, "UIDropDownMenuTemplate")
+    UIDropDownMenu_Initialize(dropdown, function(self)
+        local unit = self.unit
+        if not unit or not UnitExists(unit) then return end
+        local menu, name, id
+        if UnitIsUnit(unit, "player") then
+            menu = "SELF"
+        elseif UnitIsUnit(unit, "vehicle") then
+            menu = "VEHICLE"
+        elseif UnitIsUnit(unit, "pet") then
+            menu = "PET"
+        elseif UnitIsPlayer(unit) then
+            local raidIndex = UnitInRaid(unit)
+            if raidIndex then
+                menu = "RAID_PLAYER"
+                id = raidIndex + 1 -- UnitInRaid is 0-based on 3.3.5
+                name = GetRaidRosterInfo(id)
+            elseif UnitInParty(unit) then
+                menu = "PARTY"
+            else
+                menu = "PLAYER"
+            end
+        else
+            menu = "TARGET"
+            name = RAID_TARGET_ICON
+        end
+        if menu then
+            UnitPopup_ShowMenu(self, menu, unit, name, id)
+        end
+    end, "MENU")
+
+    ShowUnitMenu = function(self)
+        local unit = self:GetAttribute("unit")
+        if not unit then return end
+        HideDropDownMenu(1)
+        dropdown.unit = unit
+        ToggleDropDownMenu(1, nil, dropdown, "cursor", 0, 0)
+    end
+end
+
+-------------------------------------------------
 -- update click-castings
 -------------------------------------------------
 local previousClickCastings
@@ -521,8 +573,23 @@ local function ApplyClickCastings(b)
         --     b:SetAttribute(attr, "/tar [@cell]")
         --     UpdatePlaceholder(b, attr)
         ------------------------------------------------------------------
+        elseif t[2] == "togglemenu" and not Cell.isRetail then
+            --! WotLK: secure type is "menu" (calls self.menu), togglemenu is 4.x+
+            b:SetAttribute(bindKey, "menu")
         else
             b:SetAttribute(bindKey, t[2])
+        end
+    end
+
+    --! WotLK: provide the menu function the "menu" secure type calls
+    if ShowUnitMenu and not b.menu then
+        b.menu = ShowUnitMenu
+    end
+
+    for _, t in pairs(clickCastingTable) do
+        local bindKey = t[1]
+        if strfind(bindKey, "SCROLL") then
+            bindKey = GetMouseWheelBindKey(t[1])
         end
 
         if t[2] == "spell" then

@@ -3536,6 +3536,42 @@ local function CreateSetting_CheckButton4(parent)
     return widget
 end
 
+--! custom: fifth checkbutton slot, used for showJump (see SESSION_NOTES #20)
+local function CreateSetting_CheckButton5(parent)
+    local widget
+
+    if not settingWidgets["checkbutton5"] then
+        widget = Cell.CreateFrame("CellIndicatorSettings_CheckButton5", parent, 240, 30)
+        settingWidgets["checkbutton5"] = widget
+
+        widget.cb = Cell.CreateCheckButton(widget, "checkbutton5")
+        widget.cb:SetPoint("TOPLEFT", 5, -8)
+
+        -- callback
+        function widget:SetFunc(func)
+            widget.cb.onClick = function(checked)
+                func(checked)
+            end
+        end
+
+        -- show db value
+        function widget:SetDBValue(settingName, checked, tooltip)
+            widget.cb:SetChecked(checked)
+            widget.cb:SetText(L[settingName])
+            if tooltip then
+                Cell.SetTooltips(widget.cb, "ANCHOR_TOPLEFT", 0, 2, L[settingName], string.split("|", tooltip))
+            else
+                Cell.ClearTooltips(widget.cb)
+            end
+        end
+    else
+        widget = settingWidgets["checkbutton5"]
+    end
+
+    widget:Show()
+    return widget
+end
+
 local function CreateSetting_Duration(parent)
     local widget
 
@@ -6867,6 +6903,8 @@ function Cell.CreateIndicatorSettings(parent, settingsTable)
             tinsert(widgetsTable, CreateSetting_NumPerLine(parent))
         elseif string.find(setting, "^font") then
             tinsert(widgetsTable, CreateSetting_Font(parent, string.match(setting, "^(font%d?):?.*$")))
+        elseif string.find(setting, "^checkbutton5") then
+            tinsert(widgetsTable, CreateSetting_CheckButton5(parent))
         elseif string.find(setting, "^checkbutton4") then
             tinsert(widgetsTable, CreateSetting_CheckButton4(parent))
         elseif string.find(setting, "^checkbutton3") then

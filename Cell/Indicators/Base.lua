@@ -87,6 +87,11 @@ local function Shared_ShowDuration(frame, show)
     frame.duration:SetShown(show)
 end
 
+--! custom: toggle for the jump (refresh) animation, see SESSION_NOTES #20
+local function Shared_ShowJump(frame, show)
+    frame.showJump = show
+end
+
 -------------------------------------------------
 -- VerticalCooldown
 -------------------------------------------------
@@ -103,7 +108,40 @@ local function VerticalCooldown_OnUpdate(self, elapsed)
     if self.elapsed >= 0.1 then
         self:SetValue(self:GetValue() + self.elapsed)
         self.elapsed = 0
+        --! WotLK: manual overlay emulates the retail mask - darken the
+        --! elapsed (top) portion of the icon, growing downwards
+        if self.overlay then
+            local _, maxValue = self:GetMinMaxValues()
+            local height = self:GetHeight()
+            if maxValue and maxValue > 0 and height and height > 0 then
+                local fraction = self:GetValue() / maxValue
+                if fraction < 0 then fraction = 0 elseif fraction > 1 then fraction = 1 end
+                self.overlay:SetHeight(math.max(fraction * height, 0.001))
+            end
+        end
     end
+end
+
+--! WotLK fix: 3.3.5 has neither Texture masks (CreateMaskTexture, 8.0+) nor
+--! StatusBar:SetReverseFill (4.2+). The retail vertical cooldown is built
+--! on both: an invisible reverse-filled statusbar texture anchors a mask
+--! that crops the bright icon copy. Without them the bright copy simply
+--! covered the whole icon - toggling "Show animation" changed NOTHING
+--! visually. Emulate the effect with a plain black overlay whose height is
+--! driven from OnUpdate: the elapsed portion darkens from the top, the
+--! spark rides the overlay's bottom edge.
+local function VerticalCooldown_CreateOverlay(cooldown, anchor)
+    local overlay = cooldown:CreateTexture(nil, "OVERLAY")
+    cooldown.overlay = overlay
+    overlay:SetTexture(Cell.vars.whiteTexture)
+    overlay:SetVertexColor(0, 0, 0, 0.7)
+    overlay:SetPoint("TOPLEFT", anchor)
+    overlay:SetPoint("TOPRIGHT", anchor)
+    overlay:SetHeight(0.001)
+
+    cooldown.spark:ClearAllPoints()
+    cooldown.spark:SetPoint("TOPLEFT", overlay, "BOTTOMLEFT")
+    cooldown.spark:SetPoint("TOPRIGHT", overlay, "BOTTOMRIGHT")
 end
 
 -- for LCG.ButtonGlow_Start
@@ -171,6 +209,10 @@ local function Shared_CreateCooldown_Vertical(frame)
     if mask then
         icon:AddMaskTexture(mask)
     end
+
+    if Cell.isWrath then
+        VerticalCooldown_CreateOverlay(cooldown, frame.icon) --! WotLK: no mask API
+    end
 end
 
 local function Shared_CreateCooldown_Vertical_NoIcon(frame)
@@ -197,6 +239,14 @@ local function Shared_CreateCooldown_Vertical_NoIcon(frame)
     spark:SetBlendMode("ADD")
     spark:SetPoint("TOPLEFT", texture, "BOTTOMLEFT")
     spark:SetPoint("TOPRIGHT", texture, "BOTTOMRIGHT")
+
+    if Cell.isWrath then
+        --! WotLK: SetReverseFill is a no-op polyfill - the native bottom-up
+        --! fill would darken the WRONG (remaining) portion. Hide the bar
+        --! fill and use the manual top-down overlay instead.
+        texture:SetVertexColor(0, 0, 0, 0)
+        VerticalCooldown_CreateOverlay(cooldown, cooldown)
+    end
 end
 
 -------------------------------------------------
@@ -246,6 +296,51 @@ local function Shared_SetCooldownStyle(frame, style, noIcon)
             Shared_CreateCooldown_Vertical(frame)
         end
     end
+end
+
+--------------------------------------------------
+-- jump animation child sync (WotLK)
+--------------------------------------------------
+--! WotLK fix: in 3.3.5 an AnimationGroup only transforms the regions OWNED
+--! by its frame - child frames do NOT follow (retail changed this later).
+--! The "jump" refresh animation (frame.ag) is created on the indicator
+--! frame, but the visible pieces often live on child frames: the vertical
+--! cooldown StatusBar carries its own bright copy of the icon
+--! (cooldown.icon), and BorderIcon keeps icon/stack/duration on iconFrame.
+--! Symptom (tester): with "Show animation" ON only the background jumped;
+--! with it OFF (cooldown hidden -> frame.icon region visible) the icon
+--! jumped properly. Fix: lazily create identical Translation groups on the
+--! child frames and play them in sync via the parent group's OnPlay.
+local function CreateJumpAG(region)
+    local ag = region:CreateAnimationGroup()
+    local t1 = ag:CreateAnimation("Translation")
+    t1:SetOffset(0, 5)
+    t1:SetDuration(0.1)
+    t1:SetOrder(1)
+    t1:SetSmoothing("OUT")
+    local t2 = ag:CreateAnimation("Translation")
+    t2:SetOffset(0, -5)
+    t2:SetDuration(0.1)
+    t2:SetOrder(2)
+    t2:SetSmoothing("IN")
+    return ag
+end
+
+local function Shared_SyncJumpToChildren(frame)
+    frame.ag:SetScript("OnPlay", function()
+        -- frame.cooldown is recreated on style change, so resolve and
+        -- lazily attach the parallel animation group every play
+        local children = {frame.cooldown, frame.iconFrame}
+        for i = 1, #children do
+            local child = children[i]
+            if child and child:IsShown() then
+                if not child._jumpAG then
+                    child._jumpAG = CreateJumpAG(child)
+                end
+                child._jumpAG:Play()
+            end
+        end
+    end)
 end
 
 --------------------------------------------------
@@ -477,7 +572,9 @@ local function BorderIcon_SetCooldown(frame, start, duration, debuffType, textur
     frame.stack:SetText((count == 0 or count == 1) and "" or count)
     frame:Show()
 
-    if refreshing then
+    --! custom: jump (refresh) animation is now optional; nil = enabled
+    --! (upstream plays it unconditionally, see SESSION_NOTES #20)
+    if refreshing and frame.showJump ~= false then
         frame.ag:Play()
     end
 end
@@ -557,10 +654,13 @@ function I.CreateAura_BorderIcon(name, parent, borderSize)
     t2:SetOrder(2)
     t2:SetSmoothing("IN")
 
+    Shared_SyncJumpToChildren(frame) --! WotLK: children don't follow parent AG
+
     frame.SetFont = Shared_SetFont
     frame.SetBorder = BorderIcon_SetBorder
     frame.SetCooldown = BorderIcon_SetCooldown
     frame.ShowDuration = BorderIcon_ShowDuration
+    frame.ShowJump = Shared_ShowJump
     frame.UpdatePixelPerfect = BorderIcon_UpdatePixelPerfect
 
     return frame
@@ -622,7 +722,9 @@ local function BarIcon_SetCooldown(frame, start, duration, debuffType, texture, 
     frame.stack:SetText((count == 0 or count == 1) and "" or count)
     frame:Show()
 
-    if refreshing then
+    --! custom: jump (refresh) animation is now optional; nil = enabled
+    --! (upstream plays it unconditionally, see SESSION_NOTES #20)
+    if refreshing and frame.showJump ~= false then
         frame.ag:Play()
     end
 end
@@ -678,11 +780,14 @@ function I.CreateAura_BarIcon(name, parent)
     t2:SetOrder(2)
     t2:SetSmoothing("IN")
 
+    Shared_SyncJumpToChildren(frame) --! WotLK: children don't follow parent AG
+
     frame.SetFont = Shared_SetFont
     frame.SetCooldown = BarIcon_SetCooldown
     frame.ShowDuration = Shared_ShowDuration
     frame.ShowStack = Shared_ShowStack
     frame.ShowAnimation = BarIcon_ShowAnimation
+    frame.ShowJump = Shared_ShowJump
     frame.SetupGlow = Shared_SetupGlow
     frame.UpdatePixelPerfect = BarIcon_UpdatePixelPerfect
 
@@ -894,6 +999,15 @@ local function Icons_ShowAnimation(icons, show)
     end
 end
 
+--! custom: group version of ShowJump, see SESSION_NOTES #20
+local function Icons_ShowJump(icons, show)
+    for i = 1, icons.maxNum do
+        if icons[i].ShowJump then
+            icons[i]:ShowJump(show)
+        end
+    end
+end
+
 local function Icons_UpdatePixelPerfect(icons)
     P.Repoint(icons)
     P.Resize(icons)
@@ -924,6 +1038,7 @@ function I.CreateAura_Icons(name, parent, num)
     icons.ShowDuration = Icons_ShowDuration
     icons.ShowStack = Icons_ShowStack
     icons.ShowAnimation = Icons_ShowAnimation
+    icons.ShowJump = Icons_ShowJump
     icons.SetupGlow = I.Glow_SetupForChildren
     icons.UpdatePixelPerfect = Icons_UpdatePixelPerfect
 
@@ -2049,7 +2164,9 @@ local function Block_SetCooldown_Duration(frame, start, duration, debuffType, te
     frame.stack:SetText((count == 0 or count == 1) and "" or count)
     frame:Show()
 
-    if refreshing then
+    --! custom: jump (refresh) animation is now optional; nil = enabled
+    --! (upstream plays it unconditionally, see SESSION_NOTES #20)
+    if refreshing and frame.showJump ~= false then
         frame.ag:Play()
     end
 end
@@ -2123,7 +2240,9 @@ local function Block_SetCooldown_Stack(frame, start, duration, debuffType, textu
     frame.stack:SetText((count == 0 or count == 1) and "" or count)
     frame:Show()
 
-    if refreshing then
+    --! custom: jump (refresh) animation is now optional; nil = enabled
+    --! (upstream plays it unconditionally, see SESSION_NOTES #20)
+    if refreshing and frame.showJump ~= false then
         frame.ag:Play()
     end
 end
@@ -2167,6 +2286,7 @@ function I.CreateAura_Block(name, parent)
     frame.SetColors = Block_SetColors
     frame.ShowStack = Shared_ShowStack
     frame.ShowDuration = Shared_ShowDuration
+    frame.ShowJump = Shared_ShowJump
     frame.SetCooldown = Block_SetCooldown_Duration
     frame.SetupGlow = Shared_SetupGlow
     frame.UpdatePixelPerfect = Block_UpdatePixelPerfect
@@ -2183,6 +2303,8 @@ function I.CreateAura_Block(name, parent)
     t2:SetDuration(0.1)
     t2:SetOrder(2)
     t2:SetSmoothing("IN")
+
+    Shared_SyncJumpToChildren(frame) --! WotLK: children don't follow parent AG
 
     return frame
 end
@@ -2250,7 +2372,9 @@ local function Blocks_SetCooldown(frame, start, duration, debuffType, texture, c
     frame.stack:SetText((count == 0 or count == 1) and "" or count)
     frame:Show()
 
-    if refreshing then
+    --! custom: jump (refresh) animation is now optional; nil = enabled
+    --! (upstream plays it unconditionally, see SESSION_NOTES #20)
+    if refreshing and frame.showJump ~= false then
         frame.ag:Play()
     end
 end
@@ -2274,6 +2398,7 @@ function I.CreateAura_Blocks(name, parent, num)
     blocks.SetNumPerLine = Icons_SetNumPerLine
     blocks.ShowDuration = Icons_ShowDuration
     blocks.ShowStack = Icons_ShowStack
+    blocks.ShowJump = Icons_ShowJump
     blocks.SetupGlow = I.Glow_SetupForChildren
     blocks.UpdatePixelPerfect = Icons_UpdatePixelPerfect
 
@@ -2339,7 +2464,79 @@ local function Border_SetThickness(border, thickness)
     P.Point(border.mask2, "BOTTOMRIGHT", -thickness-CELL_BORDER_SIZE, thickness+CELL_BORDER_SIZE)
 end
 
+--! WotLK fix: the retail border is a full-size colored texture whose CENTER
+--! is cut away by two mask textures - on 3.3.5 masks are no-op polyfills,
+--! so the "border" custom indicator flooded the whole unit button with a
+--! solid color. Rebuild it from four edge textures (hollow frame), keeping
+--! the same API surface (tex:SetVertexColor, SetThickness, SetCooldown,
+--! UpdatePixelPerfect).
+local function WrathBorder_SetVertexColor(proxy, r, g, b, a)
+    local edges = proxy._edges
+    for i = 1, 4 do
+        edges[i]:SetVertexColor(r, g, b, a)
+    end
+end
+
+local function WrathBorder_SetThickness(border, thickness)
+    border._thickness = thickness
+    local top, bottom, left, right = border._top, border._bottom, border._left, border._right
+    P.ClearPoints(top)
+    P.Point(top, "TOPLEFT")
+    P.Point(top, "TOPRIGHT")
+    P.Height(top, thickness)
+    P.ClearPoints(bottom)
+    P.Point(bottom, "BOTTOMLEFT")
+    P.Point(bottom, "BOTTOMRIGHT")
+    P.Height(bottom, thickness)
+    P.ClearPoints(left)
+    P.Point(left, "TOPLEFT", 0, -thickness)
+    P.Point(left, "BOTTOMLEFT", 0, thickness)
+    P.Width(left, thickness)
+    P.ClearPoints(right)
+    P.Point(right, "TOPRIGHT", 0, -thickness)
+    P.Point(right, "BOTTOMRIGHT", 0, thickness)
+    P.Width(right, thickness)
+end
+
+local function WrathBorder_UpdatePixelPerfect(border)
+    P.Repoint(border)
+    WrathBorder_SetThickness(border, border._thickness or 1)
+end
+
+local function CreateAura_Border_Wrath(name, parent)
+    local border = CreateFrame("Frame", name, parent)
+    border:Hide()
+    border.indicatorType = "border"
+
+    P.Point(border, "TOPLEFT", CELL_BORDER_SIZE, -CELL_BORDER_SIZE)
+    P.Point(border, "BOTTOMRIGHT", -CELL_BORDER_SIZE, CELL_BORDER_SIZE)
+
+    local edges = {}
+    for i = 1, 4 do
+        local tex = border:CreateTexture(nil, "ARTWORK")
+        tex:SetTexture(Cell.vars.whiteTexture)
+        edges[i] = tex
+    end
+    border._top, border._bottom, border._left, border._right = edges[1], edges[2], edges[3], edges[4]
+
+    -- proxy keeps Border_SetCooldown's `border.tex:SetVertexColor(...)` working
+    border.tex = {_edges = edges, SetVertexColor = WrathBorder_SetVertexColor}
+
+    WrathBorder_SetThickness(border, 1)
+
+    border.SetCooldown = Border_SetCooldown
+    border.SetFadeOut = Border_SetFadeOut
+    border.SetThickness = WrathBorder_SetThickness
+    border.UpdatePixelPerfect = WrathBorder_UpdatePixelPerfect
+
+    return border
+end
+
 function I.CreateAura_Border(name, parent)
+    if Cell.isWrath then
+        return CreateAura_Border_Wrath(name, parent)
+    end
+
     local border = CreateFrame("Frame", name, parent)
     border:Hide()
     border.indicatorType = "border"

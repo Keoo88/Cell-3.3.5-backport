@@ -1,5 +1,17 @@
 local _, Cell = ...
 local L = Cell.L
+
+--! custom: label for the jump (refresh) animation toggle, see SESSION_NOTES #20
+--! (custom key - no upstream locale has it, so define it here)
+if not rawget(L, "showJump") then
+    if GetLocale() == "ruRU" then
+        L["showJump"] = "Анимация обновления (прыжок)"
+    elseif GetLocale() == "zhCN" then
+        L["showJump"] = "显示刷新跳动动画"
+    else
+        L["showJump"] = "Show refresh (jump) animation"
+    end
+end
 ---@type CellFuncs
 local F = Cell.funcs
 ---@type CellUnitButtonFuncs
@@ -738,6 +750,10 @@ local function UpdateIndicators(layout, indicatorName, setting, value, value2)
                 if type(t["showAnimation"]) == "boolean" then
                     indicator:ShowAnimation(t["showAnimation"])
                 end
+                --! custom: update jump animation (see SESSION_NOTES #20)
+                if type(t["showJump"]) == "boolean" and indicator.ShowJump then
+                    indicator:ShowJump(t["showJump"])
+                end
                 -- update duration
                 if type(t["showDuration"]) == "boolean" or type(t["showDuration"]) == "number" then
                     indicator:ShowDuration(t["showDuration"])
@@ -976,6 +992,11 @@ local function UpdateIndicators(layout, indicatorName, setting, value, value2)
                     indicator:Hide()
                     indicator:Show()
                 end
+            --! custom: jump animation toggle (see SESSION_NOTES #20)
+            elseif value == "showJump" then
+                if indicator.ShowJump then
+                    indicator:ShowJump(value2)
+                end
             elseif value == "showStack" then
                 indicator:ShowStack(value2)
             elseif value == "fadeOut" then
@@ -1056,6 +1077,10 @@ local function UpdateIndicators(layout, indicatorName, setting, value, value2)
             -- update animation
             if type(value["showAnimation"]) == "boolean" then
                 indicator:ShowAnimation(value["showAnimation"])
+            end
+            --! custom: update jump animation (see SESSION_NOTES #20)
+            if type(value["showJump"]) == "boolean" and indicator.ShowJump then
+                indicator:ShowJump(value["showJump"])
             end
             -- update stack
             if type(value["showStack"]) ~= "nil" then
@@ -1620,9 +1645,9 @@ local function ShowIndicatorSettings(id)
         -- end
     else
         if indicatorType == "icon" then
-            settingsTable = {"enabled", "auras", "checkbutton3:showStack", "durationVisibility", "checkbutton4:showAnimation", "glowOptions", CELL_RECTANGULAR_CUSTOM_INDICATOR_ICONS and "size" or "size-square", "position", "frameLevel", "font1:stackFont", "font2:durationFont"}
+            settingsTable = {"enabled", "auras", "checkbutton3:showStack", "durationVisibility", "checkbutton4:showAnimation", "checkbutton5:showJump", "glowOptions", CELL_RECTANGULAR_CUSTOM_INDICATOR_ICONS and "size" or "size-square", "position", "frameLevel", "font1:stackFont", "font2:durationFont"}
         elseif indicatorType == "icons" then
-            settingsTable = {"enabled", "auras", "checkbutton3:showStack", "durationVisibility", "checkbutton4:showAnimation", "glowOptions", CELL_RECTANGULAR_CUSTOM_INDICATOR_ICONS and "size" or "size-square", "num:10", "numPerLine:10", "spacing", "orientation", "position", "frameLevel", "font1:stackFont", "font2:durationFont"}
+            settingsTable = {"enabled", "auras", "checkbutton3:showStack", "durationVisibility", "checkbutton4:showAnimation", "checkbutton5:showJump", "glowOptions", CELL_RECTANGULAR_CUSTOM_INDICATOR_ICONS and "size" or "size-square", "num:10", "numPerLine:10", "spacing", "orientation", "position", "frameLevel", "font1:stackFont", "font2:durationFont"}
         elseif indicatorType == "text" then
             settingsTable = {"enabled", "auras", "duration", "stack", "colors", "position", "frameLevel", "font-noOffset"}
         elseif indicatorType == "bar" then
@@ -1705,7 +1730,15 @@ local function ShowIndicatorSettings(id)
         -- checkbutton
         elseif string.find(currentSetting, "^checkbutton") then
             local _, setting, tooltip = string.split(":", currentSetting)
-            w:SetDBValue(setting, indicatorTable[setting], tooltip)
+            local dbValue = indicatorTable[setting]
+            --! custom: showJump defaults to ENABLED when absent in old DBs
+            --! (upstream always played the jump; nil = legacy behavior).
+            --! Materialize the default so the checkbox and DB stay in sync.
+            if setting == "showJump" and type(dbValue) ~= "boolean" then
+                dbValue = true
+                indicatorTable[setting] = true
+            end
+            w:SetDBValue(setting, dbValue, tooltip)
             w:SetFunc(function(value)
                 indicatorTable[setting] = value
                 Cell.Fire("UpdateIndicators", notifiedLayout, indicatorName, "checkbutton", setting, value) -- indicatorName, setting, value, value2

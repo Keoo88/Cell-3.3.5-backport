@@ -338,6 +338,10 @@ local function HandleIndicators(b)
         if type(t["showAnimation"]) == "boolean" then
             indicator:ShowAnimation(t["showAnimation"])
         end
+        --! custom: update jump animation (see SESSION_NOTES #20)
+        if type(t["showJump"]) == "boolean" and indicator.ShowJump then
+            indicator:ShowJump(t["showJump"])
+        end
         -- update duration
         if type(t["showDuration"]) == "boolean" or type(t["showDuration"]) == "number" then
             indicator:ShowDuration(t["showDuration"])
@@ -933,6 +937,14 @@ local function UpdateIndicators(layout, indicatorName, setting, value, value2)
                     b.indicators[indicatorName]:ShowAnimation(value2)
                     UnitButton_UpdateAuras(b)
                 end, true)
+            --! custom: jump animation toggle (see SESSION_NOTES #20)
+            elseif value == "showJump" then
+                F.IterateAllUnitButtons(function(b)
+                    local indicator = b.indicators[indicatorName]
+                    if indicator and indicator.ShowJump then
+                        indicator:ShowJump(value2)
+                    end
+                end, true)
             elseif value == "trackByName" then
                 F.IterateAllUnitButtons(function(b)
                     UnitButton_UpdateAuras(b)
@@ -1029,6 +1041,10 @@ local function UpdateIndicators(layout, indicatorName, setting, value, value2)
                 if type(value["showAnimation"]) == "boolean" then
                     indicator:ShowAnimation(value["showAnimation"])
                 end
+                --! custom: update jump animation (see SESSION_NOTES #20)
+                if type(value["showJump"]) == "boolean" and indicator.ShowJump then
+                    indicator:ShowJump(value["showJump"])
+                end
                 -- update showDuration
                 if type(value["showDuration"]) ~= "nil" then
                     indicator:ShowDuration(value["showDuration"])
@@ -1099,8 +1115,12 @@ local function UnitButton_UpdateDebuffs(self)
     local refreshing = false
 
     for i = 1, 40 do
-        -- name, icon, count, debuffType, duration, expirationTime, source, isStealable, nameplateShowPersonal, spellId, canApplyAura, isBossDebuff, castByPlayer, nameplateShowAll, timeMod, ...
-        local name, icon, count, debuffType, duration, expirationTime, source, _, _, spellId = Cell.UnitDebuff(unit, i)
+        --! WotLK perf: direct native UnitDebuff (3.3.5 signature: name,
+        --! rank, icon, count, debuffType, duration, expirationTime, caster,
+        --! isStealable, shouldConsolidate, spellId) instead of the
+        --! Cell.UnitDebuff translation wrapper - this is the hottest loop
+        --! in the addon (40 iterations per UNIT_AURA per button).
+        local name, _, icon, count, debuffType, duration, expirationTime, source, _, _, spellId = UnitDebuff(unit, i)
         if not name then
             break
         end
@@ -1226,7 +1246,8 @@ local function UnitButton_UpdateDebuffs(self)
         for i = 1, indicatorNums["raidDebuffs"] do
             local index = self._debuffs_raid[i]
             if index then
-                local name, icon, count, debuffType, duration, expirationTime, source, isStealable, nameplateShowPersonal, spellId = Cell.UnitDebuff(unit, self._debuffs_raid[i])
+                --! WotLK perf: native UnitDebuff signature (see main scan loop)
+                local name, _, icon, count, debuffType, duration, expirationTime, source, isStealable, _, spellId = UnitDebuff(unit, self._debuffs_raid[i])
                 if name then
                     self.indicators.raidDebuffs[i]:SetCooldown(
                         expirationTime - duration,
@@ -1286,7 +1307,8 @@ local function UnitButton_UpdateDebuffs(self)
     if enabledIndicators["debuffs"] then
         -- bigDebuffs first
         for debuffIndex, refreshing in pairs(self._debuffs_big) do
-            local name, icon, count, debuffType, duration, expirationTime, _, _, _, spellId = Cell.UnitDebuff(unit, debuffIndex)
+            --! WotLK perf: native UnitDebuff signature (see main scan loop)
+            local name, _, icon, count, debuffType, duration, expirationTime, _, _, _, spellId = UnitDebuff(unit, debuffIndex)
             if name and startIndex <= indicatorNums["debuffs"] then
                 -- start, duration, debuffType, texture, count, refreshing
                 self.indicators.debuffs[startIndex]:SetCooldown(expirationTime - duration, duration, debuffType or "", icon, count, refreshing, true)
@@ -1297,7 +1319,8 @@ local function UnitButton_UpdateDebuffs(self)
         end
         -- then normal debuffs
         for debuffIndex, refreshing in pairs(self._debuffs_normal) do
-            local name, icon, count, debuffType, duration, expirationTime, _, _, _, spellId = Cell.UnitDebuff(unit, debuffIndex)
+            --! WotLK perf: native UnitDebuff signature (see main scan loop)
+            local name, _, icon, count, debuffType, duration, expirationTime, _, _, _, spellId = UnitDebuff(unit, debuffIndex)
             if name and startIndex <= indicatorNums["debuffs"] then
                 -- start, duration, debuffType, texture, count, refreshing
                 self.indicators.debuffs[startIndex]:SetCooldown(expirationTime - duration, duration, debuffType or "", icon, count, refreshing)
@@ -1364,8 +1387,13 @@ local function UnitButton_UpdateBuffs(self)
     local defensiveFound, externalFound, allFound, drinkingFound, pwsFound = 1, 1, 1, false, false
 
     for i = 1, 40 do
-        -- name, icon, count, debuffType, duration, expirationTime, source, isStealable, nameplateShowPersonal, spellId, canApplyAura, isBossDebuff, castByPlayer, nameplateShowAll, timeMod, ...
-        local name, icon, count, debuffType, duration, expirationTime, source, _, _, spellId, _, _, _, _, _, arg16 = Cell.UnitBuff(unit, i)
+        --! WotLK perf: direct native UnitBuff (3.3.5 signature: name, rank,
+        --! icon, count, debuffType, duration, expirationTime, caster,
+        --! isStealable, shouldConsolidate, spellId) instead of the
+        --! Cell.UnitBuff translation wrapper. arg16 (position 12+) does not
+        --! exist on 3.3.5 and stays nil - identical to the old wrapper,
+        --! which also always returned nil there.
+        local name, _, icon, count, debuffType, duration, expirationTime, source, _, _, spellId, arg16 = UnitBuff(unit, i)
         if not name then
             break
         end
@@ -1635,14 +1663,20 @@ ShouldShowPowerText = function(b)
     end
 
     if class then
-        if type(indicatorCustoms["powerText"][class]) == "boolean" then
-            return indicatorCustoms["powerText"][class]
-        else
-            if role then
-                return indicatorCustoms["powerText"][class][role]
+        --! WotLK fix: guard the [class] lookup - a non-canonical token (e.g.
+        --! "DEATH KNIGHT" from a server returning display names) yields nil
+        --! and the nested [role] index would hard-error. Default to "show".
+        local filter = indicatorCustoms["powerText"][class]
+        if type(filter) == "boolean" then
+            return filter
+        elseif type(filter) == "table" then
+            if role and type(filter[role]) == "boolean" then
+                return filter[role]
             else
                 return true -- show power if role not found
             end
+        else
+            return true -- unknown class: show power
         end
     end
 
@@ -1678,14 +1712,21 @@ ShouldShowPowerBar = function(b)
     end
 
     if class then
-        if type(Cell.vars.currentLayoutTable["powerFilters"][class]) == "boolean" then
-            return Cell.vars.currentLayoutTable["powerFilters"][class]
-        else
-            if role and type(Cell.vars.currentLayoutTable["powerFilters"][class][role]) == "boolean" then
-                return Cell.vars.currentLayoutTable["powerFilters"][class][role]
+        --! WotLK fix: guard the [class] lookup - a non-canonical token (e.g.
+        --! "DEATH KNIGHT" from a server returning display names) yields nil,
+        --! and the old code indexed powerFilters[class][role] inside type()
+        --! which hard-errored ("attempt to index field '?' (a nil value)").
+        local filter = Cell.vars.currentLayoutTable["powerFilters"][class]
+        if type(filter) == "boolean" then
+            return filter
+        elseif type(filter) == "table" then
+            if role and type(filter[role]) == "boolean" then
+                return filter[role]
             else
                 return true -- show power if role not found
             end
+        else
+            return true -- unknown class: show power
         end
     end
 
@@ -1700,7 +1741,16 @@ CheckPowerEventRegistration = function(b)
         b:RegisterEvent("UNIT_FOCUS")
         b:RegisterEvent("UNIT_ENERGY")
         b:RegisterEvent("UNIT_RUNIC_POWER")
+        --! WotLK fix: UNIT_MAXPOWER does not exist in 3.3.5 (added in 4.0);
+        --! the client fires per-power-type max events instead. Keep
+        --! UNIT_MAXPOWER for custom cores that backported the new event.
         b:RegisterEvent("UNIT_MAXPOWER")
+        b:RegisterEvent("UNIT_MAXMANA")
+        b:RegisterEvent("UNIT_MAXRAGE")
+        b:RegisterEvent("UNIT_MAXFOCUS")
+        b:RegisterEvent("UNIT_MAXENERGY")
+        b:RegisterEvent("UNIT_MAXRUNIC_POWER")
+        b:RegisterEvent("UNIT_MAXHAPPINESS")
         b:RegisterEvent("UNIT_DISPLAYPOWER")
         return true
     else
@@ -1711,6 +1761,12 @@ CheckPowerEventRegistration = function(b)
         b:UnregisterEvent("UNIT_ENERGY")
         b:UnregisterEvent("UNIT_RUNIC_POWER")
         b:UnregisterEvent("UNIT_MAXPOWER")
+        b:UnregisterEvent("UNIT_MAXMANA")
+        b:UnregisterEvent("UNIT_MAXRAGE")
+        b:UnregisterEvent("UNIT_MAXFOCUS")
+        b:UnregisterEvent("UNIT_MAXENERGY")
+        b:UnregisterEvent("UNIT_MAXRUNIC_POWER")
+        b:UnregisterEvent("UNIT_MAXHAPPINESS")
         b:UnregisterEvent("UNIT_DISPLAYPOWER")
         return false
     end
@@ -1801,7 +1857,11 @@ UnitButton_UpdateRole = function(self)
         roleIcon:SetRole(role)
 
         --! check vehicle root
-        if self.states.guid and strfind(self.states.guid, "^Vehicle") then
+        --! WotLK fix: was `strfind(guid, "^Vehicle")` - a retail GUID
+        --! pattern; 3.3.5 GUIDs are hex strings, so the check never
+        --! matched and the VEHICLE role icon never showed on vehicle
+        --! roots. F.IsVehicle parses both hex and retail formats.
+        if self.states.guid and F.IsVehicle(self.states.guid) then
             CheckVehicleRoot(self, unit)
         end
     else
@@ -2771,7 +2831,15 @@ local function UnitButton_RegisterEvents(self)
     self:RegisterEvent("UNIT_FOCUS")
     self:RegisterEvent("UNIT_ENERGY")
     self:RegisterEvent("UNIT_RUNIC_POWER")
+    --! WotLK fix: UNIT_MAXPOWER does not exist in 3.3.5 (added in 4.0);
+    --! the client fires per-power-type max events instead.
     self:RegisterEvent("UNIT_MAXPOWER")
+    self:RegisterEvent("UNIT_MAXMANA")
+    self:RegisterEvent("UNIT_MAXRAGE")
+    self:RegisterEvent("UNIT_MAXFOCUS")
+    self:RegisterEvent("UNIT_MAXENERGY")
+    self:RegisterEvent("UNIT_MAXRUNIC_POWER")
+    self:RegisterEvent("UNIT_MAXHAPPINESS")
     self:RegisterEvent("UNIT_DISPLAYPOWER")
 
     self:RegisterEvent("UNIT_AURA")
@@ -2878,7 +2946,8 @@ local function UnitButton_OnEvent(self, event, unit, ...)
         elseif event == "UNIT_HEAL_PREDICTION" or event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_STOP" or event == "UNIT_SPELLCAST_CHANNEL_START" or event == "UNIT_SPELLCAST_CHANNEL_STOP" or event == "UNIT_SPELLCAST_DELAYED" then
             UnitButton_UpdateHealPrediction(self)
 
-        elseif event == "UNIT_MAXPOWER" then
+        --! WotLK fix: 3.3.5 fires per-power-type max events, not UNIT_MAXPOWER
+        elseif event == "UNIT_MAXPOWER" or event == "UNIT_MAXMANA" or event == "UNIT_MAXRAGE" or event == "UNIT_MAXFOCUS" or event == "UNIT_MAXENERGY" or event == "UNIT_MAXRUNIC_POWER" or event == "UNIT_MAXHAPPINESS" then
             UnitButton_UpdatePowerStates(self)
             UnitButton_UpdatePowerMax(self)
             UnitButton_UpdatePower(self)
@@ -3106,6 +3175,22 @@ local function UnitButton_OnTick(self)
         e = 0
 
         if self.states.unit and self.states.displayedUnit then
+            --! WotLK fix: 3.3.5 does NOT reliably fire UNIT_HEALTH /
+            --! UNIT_MAXHEALTH for pet units (partypetN/raidpetN), so pet
+            --! frames stayed at full HP forever. Blizzard's own 3.3.5
+            --! PetFrame polls via frequentUpdates (UnitFrame.lua:48,199) -
+            --! do the same here on the 0.5s tick, pets only.
+            if strfind(self.states.displayedUnit, "pet") then
+                local health = UnitHealth(self.states.displayedUnit)
+                local healthMax = UnitHealthMax(self.states.displayedUnit)
+                if healthMax ~= self.states.healthMax then
+                    UnitButton_UpdateHealthMax(self)
+                    UnitButton_UpdateHealth(self)
+                elseif health ~= self.states.health then
+                    UnitButton_UpdateHealth(self)
+                end
+            end
+
             local displayedGuid = UnitGUID(self.states.displayedUnit)
             if displayedGuid ~= self.__displayedGuid then
                 -- NOTE: displayed unit entity changed
