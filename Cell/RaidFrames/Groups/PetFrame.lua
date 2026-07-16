@@ -134,6 +134,18 @@ end
 header:Show()
 header:SetAttribute("startingIndex", 1)
 
+--! WotLK fix: on 3.3.5 SecureGroupHeader children are stored ONLY as the
+--! "child1".."childN" attributes (header[i] array indexing is a later
+--! addition), so "ipairs(header)" iterated nothing: buttons were never
+--! sized (stayed 2x2 px - invisible), never got bar orientation/power size,
+--! and Cell.unitButtons.pet was left empty. Collect them into the array
+--! part of header once, restoring the upstream iteration contract.
+for i = 1, 25 do
+    local b = header:GetAttribute("child" .. i) or _G["CellPetFrameHeaderUnitButton" .. i]
+    if not b then break end
+    header[i] = b
+end
+
 for i, b in ipairs(header) do
     Cell.unitButtons.pet[i] = b
     -- b.type = "pet" -- layout setup
@@ -145,6 +157,20 @@ header:HookScript("OnShow", function()
 end)
 header:HookScript("OnHide", function()
     UpdateAnchor()
+end)
+
+--! WotLK fix: native SecureGroupPetHeader_OnLoad (SecureTemplates.lua 3.3.5)
+--! registers only PARTY_MEMBERS_CHANGED / UNIT_NAME_UPDATE / UNIT_PET.
+--! Raid composition changes fire RAID_ROSTER_UPDATE, so in raids/BGs the
+--! header could miss roster changes until some UNIT_PET happened to fire.
+--! Route the missing event into the SAME native update path (no parallel
+--! scanning) - the template's own OnEvent ignores unknown events, we hook
+--! after it and call the native updater directly.
+header:RegisterEvent("RAID_ROSTER_UPDATE")
+header:HookScript("OnEvent", function(self, event)
+    if event == "RAID_ROSTER_UPDATE" and self:IsVisible() and not InCombatLockdown() then
+        SecureGroupPetHeader_Update(self)
+    end
 end)
 
 -------------------------------------------------
@@ -221,16 +247,27 @@ end
 Cell.RegisterCallback("UpdateMenu", "PetFrame_UpdateMenu", UpdateMenu)
 
 local function PetFrame_UpdateLayout(layout, which)
+    -- update
+    layout = CellDB["layouts"][layout]
+
     -- visibility
-    if Cell.vars.groupType == "solo" or Cell.vars.isHidden then
+    --! WotLK fix: "[@raid1,exists]" is 4.0+ macro syntax - 3.3.5's
+    --! SecureCmdOptionParse only knows "target=unit", so the old driver
+    --! always evaluated "hide" and the detached pet frame NEVER showed
+    --! anywhere (5-man pets came from the attached party-frame path).
+    --! Also: solo was hard-hidden by an early return, so the "Show Solo
+    --! Pet" (soloEnabled) option had no effect - include a [target=pet]
+    --! clause instead when it's on.
+    if Cell.vars.isHidden then
         UnregisterAttributeDriver(petFrame, "state-visibility")
         petFrame:Hide()
         return
     end
-    RegisterAttributeDriver(petFrame, "state-visibility", "[@raid1,exists] show;[@party1,exists] show;hide")
-
-    -- update
-    layout = CellDB["layouts"][layout]
+    local driver = "[target=raid1,exists] show;[target=party1,exists] show;"
+    if layout["pet"]["soloEnabled"] then
+        driver = driver .. "[target=pet,exists] show;"
+    end
+    RegisterAttributeDriver(petFrame, "state-visibility", driver .. "hide")
 
     if not which or strfind(which, "size$") or strfind(which, "power$") or which == "barOrientation" then
         local width, height, powerSize
@@ -345,20 +382,39 @@ local function PetFrame_UpdateLayout(layout, which)
     end
 
     if not which or which == "pet" then
-        if Cell.vars.groupType == "party" and layout["pet"]["partyEnabled"] and layout["pet"]["partyDetached"] then
-            if Cell.vars.inBattleground == 5 then -- arena
-                header:SetAttribute("showParty", false)
-                header:SetAttribute("showRaid", true)
-            else
-                header:SetAttribute("showParty", true)
-                header:SetAttribute("showRaid", false)
-            end
+        if Cell.vars.groupType == "solo" and layout["pet"]["soloEnabled"] then
+            --! WotLK fix: solo was unconditionally hidden (fell into the else
+            --! branch), so the "Show Solo Pet" (soloEnabled) checkbox did
+            --! nothing. Native 3.3.5 GetGroupHeaderType supports type "SOLO"
+            --! via the showSolo attribute (implies showPlayer -> shows "pet"),
+            --! so the player's own pet displays without any group.
+            header:SetAttribute("showSolo", true)
+            header:SetAttribute("showParty", false)
+            header:SetAttribute("showRaid", false)
             petFrame:Show()
-        elseif Cell.vars.groupType == "raid" and layout["pet"]["raidEnabled"] and Cell.vars.inBattleground ~= 5 then
+        elseif Cell.vars.groupType == "party" and layout["pet"]["partyEnabled"] and layout["pet"]["partyDetached"] then
+            --! WotLK fix: on 3.3.5 an arena team is a PARTY (party1-4/partypet1-4),
+            --! never a raid. The retail/Cata branch set showRaid=true here, but
+            --! native GetGroupHeaderType (SecureTemplates.lua) requires
+            --! GetNumRaidMembers() > 0 for showRaid - always 0 in arena, so the
+            --! header resolved no type and showed nothing. Arena must use the
+            --! same party path as regular groups.
+            header:SetAttribute("showSolo", false)
+            header:SetAttribute("showParty", true)
+            header:SetAttribute("showRaid", false)
+            petFrame:Show()
+        elseif Cell.vars.groupType == "raid" and layout["pet"]["raidEnabled"] then
+            --! WotLK fix: removed the "inBattleground ~= 5" guard - on 3.3.5
+            --! arena is groupType "party" (never reaches this branch), while
+            --! the guard's Cata semantics wrongly excluded nothing but risked
+            --! hiding raid pets if inBattleground was ever 5 in a real raid.
+            --! BGs (inBattleground 15/40) are raids and use this same path.
+            header:SetAttribute("showSolo", false)
             header:SetAttribute("showParty", false)
             header:SetAttribute("showRaid", true)
             petFrame:Show()
         else
+            header:SetAttribute("showSolo", false)
             header:SetAttribute("showParty", false)
             header:SetAttribute("showRaid", false)
             petFrame:Hide()

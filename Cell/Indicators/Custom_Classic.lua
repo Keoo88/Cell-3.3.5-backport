@@ -210,28 +210,38 @@ end
 -------------------------------------------------
 -- update
 -------------------------------------------------
+--! WotLK fix: when an aura matches only via the wildcard entry ("0" = all
+--! auras), indicatorTable["auras"][spell] is nil - the old code then crashed
+--! on nil indexing/comparison ("auras[spell][1]", "auras[spell] < topOrder")
+--! on EVERY aura update, killing the whole aura pipeline and making custom
+--! indicators appear completely dead. Fall back to the wildcard entry's own
+--! data (auras[0]) for order/color, mirroring the nil-safe comparator above.
 local function Update(indicator, indicatorTable, unit, spell, start, duration, debuffType, icon, count, refreshing)
+    local auraData = indicatorTable["auras"][spell] or indicatorTable["auras"][0]
     if indicatorTable["num"] then
         if indicatorTable["hasColor"] then
-            tinsert(indicatorTable["found"][unit], {indicatorTable["auras"][spell][1], start, duration, debuffType, icon, count, refreshing, indicatorTable["auras"][spell][2]})
+            tinsert(indicatorTable["found"][unit], {auraData and auraData[1], start, duration, debuffType, icon, count, refreshing, auraData and auraData[2]})
         else
-            tinsert(indicatorTable["found"][unit], {indicatorTable["auras"][spell], start, duration, debuffType, icon, count, refreshing})
+            tinsert(indicatorTable["found"][unit], {auraData, start, duration, debuffType, icon, count, refreshing})
         end
     else
         if indicatorTable["hasColor"] then
-            if indicatorTable["auras"][spell][1] < indicatorTable["topOrder"][unit] then
-                indicatorTable["topOrder"][unit] = indicatorTable["auras"][spell][1]
+            local order = auraData and auraData[1] or 999
+            if order <= indicatorTable["topOrder"][unit] then
+                indicatorTable["topOrder"][unit] = order
                 indicatorTable["top"][unit]["start"] = start
                 indicatorTable["top"][unit]["duration"] = duration
                 indicatorTable["top"][unit]["debuffType"] = debuffType
                 indicatorTable["top"][unit]["texture"] = icon
                 indicatorTable["top"][unit]["count"] = count
                 indicatorTable["top"][unit]["refreshing"] = refreshing
-                indicatorTable["top"][unit]["color"] = indicatorTable["auras"][spell][2]
+                indicatorTable["top"][unit]["color"] = auraData and auraData[2]
             end
         else
-            if indicatorTable["auras"][spell] < indicatorTable["topOrder"][unit] then
-                indicatorTable["topOrder"][unit] = indicatorTable["auras"][spell]
+            local order = auraData or 999
+            if type(order) ~= "number" then order = 999 end
+            if order <= indicatorTable["topOrder"][unit] then
+                indicatorTable["topOrder"][unit] = order
                 indicatorTable["top"][unit]["start"] = start
                 indicatorTable["top"][unit]["duration"] = duration
                 indicatorTable["top"][unit]["debuffType"] = debuffType
@@ -273,8 +283,17 @@ end
 -- show
 -------------------------------------------------
 local sort = table.sort
+--! WotLK fix: entries for the wildcard aura ("0" / all auras) are inserted
+--! with a nil order (auras[spell] is nil for spells matched only by the
+--! wildcard), so "a[1] < b[1]" compared two nils and errored. Upstream Cell
+--! already guards this: fall back to comparing start time (a[2]) when
+--! either order is missing. Backported 1:1 from upstream Custom.lua.
 local function comparator(a, b)
-    return a[1] < b[1]
+    if a[1] and b[1] then
+        return a[1] < b[1]
+    else
+        return a[2] <= b[2]
+    end
 end
 
 function I.ShowCustomIndicators(unitButton, auraType)

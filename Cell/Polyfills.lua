@@ -779,11 +779,27 @@ if not UnitGroupRolesAssigned then
 end
 
 -- UnitClassBase
-if not UnitClassBase then
-    -- Retail API: returns the class filename (e.g. "WARRIOR")
-    -- WotLK: UnitClass returns (localizedName, fileName, classIndex)
+-- Retail API: returns the class filename - ALWAYS UPPERCASE (e.g. "HUNTER").
+-- WotLK: UnitClass returns (localizedName, fileName, classIndex).
+--! Defined unconditionally with forced uppercase: on some 3.3.5 servers /
+--! with some addons the second UnitClass return (or a pre-existing
+--! UnitClassBase global) yields mixed case ("Hunter"). Cell stores it in
+--! states.class and uses it as a table key (powerFilters["HUNTER"],
+--! RAID_CLASS_COLORS, click-casting spell lists) - a mixed-case value
+--! silently misses every lookup (e.g. power bar filters had no effect).
+do
+    local orig_UnitClassBase = UnitClassBase
     function UnitClassBase(unit)
-        return select(2, UnitClass(unit))
+        local class
+        if orig_UnitClassBase then
+            class = orig_UnitClassBase(unit)
+        else
+            class = select(2, UnitClass(unit))
+        end
+        if type(class) == "string" then
+            return string.upper(class)
+        end
+        return class
     end
 end
 
@@ -2216,16 +2232,30 @@ do
 end
 
 -------------------------------------------------
--- UnitGetIncomingHeals + UNIT_HEAL_PREDICTION via LibHealComm-4.0
--- (modeled after !!!ClassicAPI HealPrediction.lua and CRF_HealEx)
--- 3.3.5 has neither the API nor the event; LibHealComm provides both the
--- data (comm-based) and callbacks we translate into a synthetic
--- UNIT_HEAL_PREDICTION event for frames that registered it.
--- NOTE: Polyfills.lua loads BEFORE Libs, so LibHealComm is fetched lazily.
+-- Heal prediction: FIX ClassicAPI's broken LibHealComm-4.0 bridge
+--
+-- !!! ClassicAPI loads BEFORE this file (Cell.toc line 15 vs 17) and already
+-- defines UnitGetIncomingHeals + the UNIT_HEAL_PREDICTION EventHandler event,
+-- so any "if not UnitGetIncomingHeals" polyfill here is dead code. Its
+-- implementation (Libs/ClassicAPI/Util/HealPrediction.lua) is broken:
+--   1) UnitGetIncomingHeals only counts the PLAYER's CASTED_HEALS
+--      (other healers and all HoTs are invisible -> wrong/varying amounts)
+--   2) the event only fires when the player is the caster
+--      (heals from others repaint only on a coincidental UNIT_HEALTH
+--       -> the "random" delay)
+--   3) HealComm_ModifierChanged is defined but never registered
+--
+-- Fix (reference: ElvUI 3.3.5 oUF_HealComm4 - direct lib consumption, no
+-- extra layers): override the API function and register full HealComm
+-- callbacks that dispatch through ClassicAPI's own Private.EventHandler -
+-- the exact pipeline Cell buttons already receive events from (WidgetAPI
+-- posthooks frame:RegisterEvent into EventHandler.RegisterEvent).
 -------------------------------------------------
-if not UnitGetIncomingHeals then
-    local HEAL_WINDOW = 5 -- seconds ahead, same as ClassicAPI
+do
+    local _, Private = ...
+    local EventHandler = Private and Private.EventHandler
 
+    -- Libs load before this file, but keep the lookup lazy and safe
     local HealComm
     local function GetHealComm()
         if HealComm == nil then
@@ -2234,50 +2264,9 @@ if not UnitGetIncomingHeals then
         return HealComm or nil
     end
 
-    -- GUID -> unit token map, rebuilt lazily and invalidated on roster changes
-    local guidToUnit = {}
-    local guidMapDirty = true
-
-    local function AddUnit(unit)
-        if UnitExists(unit) then
-            local guid = UnitGUID(unit)
-            if guid then
-                guidToUnit[guid] = unit
-            end
-        end
-    end
-
-    local function RebuildGuidMap()
-        wipe(guidToUnit)
-        --! target/focus first so group tokens win for group members: group
-        --! tokens stay valid across target swaps, unlike "target"/"focus".
-        --! Needed for Spotlight frames showing non-group units (ClassicAPI's
-        --! UNIT_INDEX includes target/focus for the same reason).
-        AddUnit("target")
-        AddUnit("focus")
-        AddUnit("player")
-        AddUnit("pet")
-        if GetNumRaidMembers() > 0 then
-            for i = 1, GetNumRaidMembers() do
-                AddUnit("raid" .. i)
-                AddUnit("raidpet" .. i)
-            end
-        else
-            for i = 1, GetNumPartyMembers() do
-                AddUnit("party" .. i)
-                AddUnit("partypet" .. i)
-            end
-        end
-        guidMapDirty = false
-    end
-
-    local function GuidToUnit(guid)
-        if guidMapDirty then
-            RebuildGuidMap()
-        end
-        return guidToUnit[guid]
-    end
-
+    -- Native-like semantics (and oUF_HealComm4 parity): ALL heal types from
+    -- ALL casters, modifier applied. 3s lookahead caps far-future HoT ticks
+    -- (VuhDo's INC_*_SECS default) so amounts match what VuhDo displays.
     function UnitGetIncomingHeals(unit, healer)
         local comm = GetHealComm()
         if not comm then return 0 end
@@ -2285,28 +2274,130 @@ if not UnitGetIncomingHeals then
         local guid = UnitGUID(unit)
         if not guid then return 0 end
 
-        --! ALL_HEALS (direct + channel + HoT + bomb) to match CRF_HealEx and
-        --! ElvUI Zidras: CASTED_HEALS ignored HoTs entirely, making Cell's bar
-        --! visibly desync from what healers see in other addons
-        local amount
+        local healerGUID
         if healer then
-            local healerGUID = UnitGUID(healer)
+            healerGUID = UnitGUID(healer)
             if not healerGUID then return 0 end
-            amount = comm:GetHealAmount(guid, comm.ALL_HEALS, GetTime() + HEAL_WINDOW, healerGUID)
-        else
-            amount = comm:GetHealAmount(guid, comm.ALL_HEALS, GetTime() + HEAL_WINDOW)
         end
 
+        local amount = comm:GetHealAmount(guid, comm.ALL_HEALS, GetTime() + 3, healerGUID)
         if not amount or amount == 0 then return 0 end
-        return math.floor(amount * (comm:GetHealModifier(guid) or 1) + 0.5)
+        return math.floor(amount * (comm:GetHealModifier(guid) or 1))
     end
 
-    -- UnitGetTotalAbsorbs (4.0+ API): backed by AbsorbsMonitor-1.0
-    -- (CLEU + tooltip + comm based absorb tracking, from CRF_HealEx).
-    -- Falls back to 0 without the lib. Note: Cell's own CLEU tracker in
-    -- UnitButton_Cata_Wrath.lua maintains its richer per-spell absorbInfos
-    -- independently; this polyfill serves generic UnitGetTotalAbsorbs callers.
-    if not UnitGetTotalAbsorbs then
+    -- Same unit-token walk ClassicAPI uses, but fire for EVERY matching token
+    -- (no break): a unit can be visible as raid5 AND target/focus (Spotlight)
+    local UNIT_INDEX = {"player", "pet", "target", "focus"}
+    for i = 1, 4 do
+        UNIT_INDEX[#UNIT_INDEX + 1] = "party" .. i
+        UNIT_INDEX[#UNIT_INDEX + 1] = "partypet" .. i
+    end
+    for i = 1, 40 do
+        UNIT_INDEX[#UNIT_INDEX + 1] = "raid" .. i
+        UNIT_INDEX[#UNIT_INDEX + 1] = "raidpet" .. i
+    end
+
+    local function FireForGUIDs(...)
+        if not EventHandler then return end
+        local total = select("#", ...)
+        if total == 0 then return end
+
+        local raid = GetNumRaidMembers()
+        local limit = 4 + (raid > 0 and 8 + raid * 2 or GetNumPartyMembers() * 2)
+
+        for t = 1, limit do
+            local unit = UNIT_INDEX[t]
+            local unitGUID = unit and UnitGUID(unit)
+            if unitGUID then
+                for i = 1, total do
+                    if unitGUID == select(i, ...) then
+                        EventHandler.Fire(nil, "UNIT_HEAL_PREDICTION", unit)
+                        break
+                    end
+                end
+            end
+        end
+    end
+
+    -- Active-heal set: while a GUID has pending heals we repaint on a short
+    -- clock, because HoT ticks slide through the 3s window WITHOUT any
+    -- HealComm callback; entries drop themselves when the lib reports nothing
+    local activeHeals = {}
+
+    local function OnHealEvent(event, casterGUID, spellID, healType, endTime, ...)
+        for i = 1, select("#", ...) do
+            activeHeals[select(i, ...)] = true
+        end
+        FireForGUIDs(...)
+    end
+
+    local function OnHealModified(event, guid)
+        FireForGUIDs(guid)
+    end
+
+    --! CRITICAL: LibHealComm loads AFTER Polyfills.lua (Cell.toc: Polyfills
+    --! at line 17, Libs\LoadLibs_Classic.xml at line 21), so registering
+    --! callbacks at file load silently does nothing - that's why the predict
+    --! vanished entirely. ClassicAPI solves this with a lazy OnRegister hook
+    --! on the event definition: it runs when the FIRST Cell button registers
+    --! UNIT_HEAL_PREDICTION, long after all libs are loaded. We redefine that
+    --! same hook (single path - replaces ClassicAPI's player-only handler,
+    --! never runs alongside it) with full callbacks.
+    local owner = "Cell_HealPrediction"
+    local registered = false
+
+    local function UNIT_HEAL_PREDICTION_EH(trigger)
+        local comm = GetHealComm()
+        if trigger == "OnRegister" then
+            if comm and not registered then
+                registered = true
+                comm.RegisterCallback(owner, "HealComm_HealStarted", OnHealEvent)
+                comm.RegisterCallback(owner, "HealComm_HealUpdated", OnHealEvent)
+                comm.RegisterCallback(owner, "HealComm_HealDelayed", OnHealEvent)
+                comm.RegisterCallback(owner, "HealComm_HealStopped", OnHealEvent)
+                comm.RegisterCallback(owner, "HealComm_ModifierChanged", OnHealModified)
+                comm.RegisterCallback(owner, "HealComm_GUIDDisappeared", OnHealModified)
+            end
+        else
+            if comm and registered then
+                registered = false
+                comm.UnregisterCallback(owner, "HealComm_HealStarted")
+                comm.UnregisterCallback(owner, "HealComm_HealUpdated")
+                comm.UnregisterCallback(owner, "HealComm_HealDelayed")
+                comm.UnregisterCallback(owner, "HealComm_HealStopped")
+                comm.UnregisterCallback(owner, "HealComm_ModifierChanged")
+                comm.UnregisterCallback(owner, "HealComm_GUIDDisappeared")
+            end
+        end
+    end
+
+    if EventHandler and EventHandler.Define then
+        -- Overwrites ClassicAPI's broken player-only hook for this event;
+        -- "Event" is already defined by ClassicAPI, no need to redefine it
+        EventHandler.Define("OnRegister", "UNIT_HEAL_PREDICTION", UNIT_HEAL_PREDICTION_EH)
+        EventHandler.Define("OnUnregister", "UNIT_HEAL_PREDICTION", UNIT_HEAL_PREDICTION_EH)
+    end
+
+    -- Repaint clock: only runs while something is in activeHeals
+    local clock = CreateFrame("Frame", "CellHealPredictionClock")
+    local elapsed = 0
+    clock:SetScript("OnUpdate", function(self, delta)
+        elapsed = elapsed + delta
+        if elapsed < 0.25 then return end
+        elapsed = 0
+        if not next(activeHeals) then return end
+        local lib = GetHealComm()
+        for guid in pairs(activeHeals) do
+            if not lib or not lib:GetHealAmount(guid, lib.ALL_HEALS) then
+                activeHeals[guid] = nil
+            end
+            FireForGUIDs(guid)
+        end
+    end)
+
+    -- Absorbs: ClassicAPI stubs UnitGetTotalAbsorbs to always return 0;
+    -- back it with AbsorbsMonitor-1.0 when present (Cell ships the lib)
+    do
         local absorbComm
         local function GetAbsorbComm()
             if absorbComm == nil then
@@ -2316,96 +2407,13 @@ if not UnitGetIncomingHeals then
         end
 
         function UnitGetTotalAbsorbs(unit)
-            local comm = GetAbsorbComm()
-            if not comm then return 0 end
+            local lib = GetAbsorbComm()
+            if not lib then return 0 end
             local guid = unit and UnitGUID(unit)
             if not guid then return 0 end
-            return comm.Unit_Total(guid) or 0
+            return lib.Unit_Total(guid) or 0
         end
     end
-    -- Heal absorbs (healing-reduction shields) genuinely don't exist on 3.3.5
-    if not UnitGetTotalHealAbsorbs then
-        function UnitGetTotalHealAbsorbs() return 0 end
-    end
-
-    -- Synthetic UNIT_HEAL_PREDICTION dispatch --------------------------------
-    -- Frames that RegisterEvent("UNIT_HEAL_PREDICTION") never receive it from
-    -- the 3.3.5 client, so we track them (via the same metatable hook pattern
-    -- as the roster proxy) and fire their OnEvent handler from HealComm
-    -- callbacks.
-    local healPredFrames = setmetatable({}, { __mode = "k" })
-
-    do
-        local sample = CreateFrame("Frame")
-        local mt = getmetatable(sample)
-        mt = mt and mt.__index
-        if mt and mt.RegisterEvent and not mt._CellHealPredictionHook then
-            hooksecurefunc(mt, "RegisterEvent", function(self, event)
-                if event == "UNIT_HEAL_PREDICTION" then
-                    healPredFrames[self] = true
-                end
-            end)
-            hooksecurefunc(mt, "UnregisterEvent", function(self, event)
-                if event == "UNIT_HEAL_PREDICTION" then
-                    healPredFrames[self] = nil
-                end
-            end)
-            hooksecurefunc(mt, "UnregisterAllEvents", function(self)
-                healPredFrames[self] = nil
-            end)
-            mt._CellHealPredictionHook = true
-        end
-    end
-
-    local function FireHealPrediction(guid)
-        local unit = GuidToUnit(guid)
-        if not unit then return end
-        for frame in pairs(healPredFrames) do
-            local handler = frame:GetScript("OnEvent")
-            if handler then
-                pcall(handler, frame, "UNIT_HEAL_PREDICTION", unit)
-            end
-        end
-    end
-
-    local callbackOwner = {}
-    local function OnHealEvent(event, casterGUID, spellID, healType, endTime, ...)
-        for i = 1, select("#", ...) do
-            FireHealPrediction((select(i, ...)))
-        end
-    end
-    local function OnHealStopped(event, casterGUID, spellID, healType, interrupted, ...)
-        for i = 1, select("#", ...) do
-            FireHealPrediction((select(i, ...)))
-        end
-    end
-    local function OnModifierChanged(event, guid)
-        FireHealPrediction(guid)
-    end
-
-    -- Init frame: LibHealComm loads after Polyfills, so wire up on login;
-    -- roster events invalidate the GUID map.
-    local initFrame = CreateFrame("Frame", "CellHealPredictionProxy")
-    initFrame:RegisterEvent("PLAYER_LOGIN")
-    initFrame:RegisterEvent("PARTY_MEMBERS_CHANGED")
-    initFrame:RegisterEvent("RAID_ROSTER_UPDATE")
-    initFrame:RegisterEvent("UNIT_PET")
-    initFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
-    initFrame:RegisterEvent("PLAYER_FOCUS_CHANGED")
-    initFrame:SetScript("OnEvent", function(self, event)
-        if event == "PLAYER_LOGIN" then
-            local comm = GetHealComm()
-            if comm then
-                comm.RegisterCallback(callbackOwner, "HealComm_HealStarted", OnHealEvent)
-                comm.RegisterCallback(callbackOwner, "HealComm_HealUpdated", OnHealEvent)
-                comm.RegisterCallback(callbackOwner, "HealComm_HealDelayed", OnHealEvent)
-                comm.RegisterCallback(callbackOwner, "HealComm_HealStopped", OnHealStopped)
-                comm.RegisterCallback(callbackOwner, "HealComm_ModifierChanged", OnModifierChanged)
-                comm.RegisterCallback(callbackOwner, "HealComm_GUIDDisappeared", OnModifierChanged)
-            end
-        end
-        guidMapDirty = true
-    end)
 end
 
 -- LocalizedClassList
@@ -2948,17 +2956,53 @@ do
     end
 
     -- Fix 3: GetClickCastingSpellList fails with mixed-case class names
+    -- + PRIEST list is missing Binding Heal (base id 32546; the list uses
+    --   rank-1 ids and F.GetMaxSpellRank resolves the top rank, 48120 on 3.3.5)
+    local missingSpells = {
+        ["PRIEST"] = {
+            { id = 32546, after = 2060 }, -- Binding Heal, after Greater Heal
+        },
+    }
+
     local function PatchGetClickCastingSpellList()
         if not Cell or not Cell.funcs or not Cell.funcs.GetClickCastingSpellList then return end
         if Cell._GetClickCastingSpellListPatched then return end
         Cell._GetClickCastingSpellListPatched = true
 
         local orig_GetClickCastingSpellList = Cell.funcs.GetClickCastingSpellList
-        Cell.funcs.GetClickCastingSpellList = function(class)
+        Cell.funcs.GetClickCastingSpellList = function(class, ...)
             if class and type(class) == "string" then
                 class = string.upper(class)
             end
-            return orig_GetClickCastingSpellList(class)
+            local spells = orig_GetClickCastingSpellList(class, ...)
+
+            local missing = spells and missingSpells[class]
+            if missing then
+                local F = Cell.funcs
+                for _, m in ipairs(missing) do
+                    local present, insertAt
+                    for i, t in ipairs(spells) do
+                        if t[4] == m.id then
+                            present = true
+                            break
+                        end
+                        if t[4] == m.after then
+                            insertAt = i + 1
+                        end
+                    end
+                    if not present then
+                        local name, icon = F.GetSpellInfo(m.id)
+                        if name then -- spell known to the client
+                            -- same entry shape as the original builder:
+                            -- {icon, name, spellType, spellId, maxRank}
+                            local rank = F.GetMaxSpellRank and F.GetMaxSpellRank(m.id) or nil
+                            tinsert(spells, insertAt or (#spells + 1), {icon, name, nil, m.id, rank})
+                        end
+                    end
+                end
+            end
+
+            return spells
         end
     end
 

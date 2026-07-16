@@ -1137,7 +1137,12 @@ local function UnitButton_UpdateDebuffs(self)
             end
 
             -- user created indicators
-            I.UpdateCustomIndicators(self, "debuff", spellId, name, expirationTime - duration, duration, debuffType or "", icon, count, refreshing)
+            --! WotLK fix: castByMe was not passed for debuffs (only for
+            --! buffs), so custom debuff indicators with "Cast By: Me" never
+            --! showed and "Cast By: Others" matched everything. The debuff
+            --! loop already has `source` - derive castByMe the same way the
+            --! buff path does (upstream computes it for both aura types).
+            I.UpdateCustomIndicators(self, "debuff", spellId, name, expirationTime - duration, duration, debuffType or "", icon, count, refreshing, source == "player" or source == "pet")
 
             -- prepare raidDebuffs
             if enabledIndicators["raidDebuffs"] and I.GetDebuffOrder(name, spellId, count) then
@@ -1648,8 +1653,13 @@ ShouldShowPowerBar = function(b)
     if not (b:IsVisible() or b.isPreview) then return end
     if not b.powerSize or b.powerSize == 0 then return end
 
-    -- NOTE: no role while solo, so always show power bar
-    if not b.states.guid or Cell.vars.groupType == "solo" then
+    --! WotLK fix: the backport added a solo bypass here ("no role while
+    --! solo, always show power bar"), which made power filters do nothing
+    --! outside of a group. Upstream Cell has no such bypass: class-level
+    --! boolean filters (HUNTER/MAGE/WARLOCK/...) don't need a role at all,
+    --! and role-based ones already fall back to "show" below when the role
+    --! is unknown. Matches upstream UnitButton.lua ShouldShowPowerBar.
+    if not b.states.guid then
         return true
     end
 
@@ -3125,7 +3135,7 @@ local function UnitButton_OnTick(self)
                         self.__nameRetries = nil
                     else
                         -- NOTE: update on next tick
-                        -- 国服可以起名为“未知目标”，干！就只多重试4次好了
+                        -- 国服可以���名为“未知目标”，干！就只多重试4次好了
                         self.__nameRetries = (self.__nameRetries or 0) + 1
                         self.__unitGuid = nil
                     end

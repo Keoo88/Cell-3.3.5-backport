@@ -2581,6 +2581,27 @@ local function CreateBarOrientationPane()
 end
 
 -------------------------------------------------
+-- misc (WotLK fix: restore Power Bar Filters entry point)
+-- The backport kept Modules\Layouts\PowerFilters.lua (loaded via
+-- LoadModules_Classic.xml) but dropped retail's CreateMiscPane, so
+-- F.ShowPowerFilters was never called from anywhere and the panel was
+-- unreachable. Restored 1:1 from upstream Cell (Layouts.lua, CreateMiscPane).
+-------------------------------------------------
+local function CreateMiscPane()
+    local miscPane = Cell.CreateTitledPane(layoutsTab, L["Misc"], 205, 80)
+    miscPane:SetPoint("TOPLEFT", 222, -445)
+
+    local powerFilterBtn = Cell.CreateButton(miscPane, L["Power Bar Filters"], "accent-hover", {195, 20})
+    Cell.frames.layoutsTab.powerFilterBtn = powerFilterBtn
+    powerFilterBtn:SetPoint("TOPLEFT", 5, -27)
+    powerFilterBtn:SetScript("OnClick", function()
+        F.ShowPowerFilters(selectedLayout, selectedLayoutTable)
+    end)
+
+    Cell.frames.powerFilters:SetPoint("BOTTOMRIGHT", powerFilterBtn, "TOPRIGHT", 0, P.Scale(5))
+end
+
+-------------------------------------------------
 -- tips
 -------------------------------------------------
 local tips = layoutsTab:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
@@ -2874,6 +2895,7 @@ local function ShowTab(tab)
             CreateGroupFilterPane()
             CreateLayoutSetupPane()
             CreateBarOrientationPane()
+            CreateMiscPane()
 
             LoadLayoutDropdown()
             LoadAutoSwitchDropdowns()
