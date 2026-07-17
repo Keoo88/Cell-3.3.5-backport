@@ -2057,6 +2057,11 @@ local function CreateSetting_Color(parent)
         settingWidgets["color"] = widget
 
         local colorPicker = Cell.CreateColorPicker(widget, L["Color"], false, function(r, g, b, a)
+            -- 3.3.5 backport: old DBs may lack the color table for built-in
+            -- indicators; never let the callback die on nil silently
+            if not widget.colorTable then
+                widget.colorTable = {1, 1, 1}
+            end
             widget.colorTable[1] = r
             widget.colorTable[2] = g
             widget.colorTable[3] = b

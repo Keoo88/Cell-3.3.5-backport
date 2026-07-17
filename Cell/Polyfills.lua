@@ -207,22 +207,28 @@ do
         local origSetGradientAlpha = mt.__index.SetGradientAlpha
 
         local function unpackColor(c)
-            if type(c) ~= "table" then return end
-            if c.GetRGBA then
-                return c:GetRGBA()
+            local t = type(c)
+            if t ~= "table" and t ~= "userdata" then return end
+            local ok, r, g, b, a = pcall(function()
+                if c.GetRGBA then
+                    return c:GetRGBA()
+                end
+                return c.r, c.g, c.b, c.a or 1
+            end)
+            if ok then
+                return r, g, b, a
             end
-            return c.r, c.g, c.b, c.a or 1
         end
 
         -- accept either (orientation, color1, color2) or the classic numeric signature
         if origSetGradient and not mt.__index._CellSetGradientPolyfill then
             function mt.__index:SetGradient(orientation, ...)
                 local c1, c2 = ...
-                if type(c1) == "table" and type(c2) == "table" then
+                if c1 ~= nil and type(c1) ~= "number" and c2 ~= nil and type(c2) ~= "number" then
                     local r1, g1, b1, a1 = unpackColor(c1)
                     local r2, g2, b2, a2 = unpackColor(c2)
-                    if origSetGradientAlpha then
-                        return origSetGradientAlpha(self, orientation, r1, g1, b1, a1, r2, g2, b2, a2)
+                    if r1 and r2 and origSetGradientAlpha then
+                        return origSetGradientAlpha(self, orientation, r1, g1, b1, a1 or 1, r2, g2, b2, a2 or 1)
                     end
                 end
                 return origSetGradient(self, orientation, ...)
@@ -233,10 +239,12 @@ do
         if origSetGradientAlpha and not mt.__index._CellSetGradientAlphaPolyfill then
             function mt.__index:SetGradientAlpha(orientation, ...)
                 local args = {...}
-                if #args == 2 and type(args[1]) == "table" and type(args[2]) == "table" then
+                if #args == 2 and type(args[1]) ~= "number" then
                     local r1, g1, b1, a1 = unpackColor(args[1])
                     local r2, g2, b2, a2 = unpackColor(args[2])
-                    return origSetGradientAlpha(self, orientation, r1, g1, b1, a1, r2, g2, b2, a2)
+                    if r1 and r2 then
+                        return origSetGradientAlpha(self, orientation, r1, g1, b1, a1 or 1, r2, g2, b2, a2 or 1)
+                    end
                 end
                 return origSetGradientAlpha(self, orientation, ...)
             end
@@ -773,6 +781,20 @@ do
     --      field is written FROM this function, reading it back would create
     --      a circular dependency)
 
+    --
+    --! WotLK fix (Blizzard tank-icon bug): this polyfill used to REPLACE the
+    --! GLOBAL UnitGroupRolesAssigned. Blizzard's own FrameXML (PlayerFrame /
+    --! PartyMemberFrame LFD role icons) and other addons (native ElvUI, oUF,
+    --! XPerl) still call it with the NATIVE 3.3.5 contract:
+    --!   local isTank, isHealer, isDamage = UnitGroupRolesAssigned(unit)
+    --! A retail-style single-string return ("HEALER", "DAMAGER", ...) is
+    --! truthy in Lua, so isTank was ALWAYS "true" -> every grouped player got
+    --! a TANK shield on the Blizzard player/party frames regardless of the
+    --! real role. The polyfill is now Cell-PRIVATE (Cell_UnitGroupRolesAssigned)
+    --! and the global keeps its native three-boolean behavior. All Cell call
+    --! sites (UnitButton_Cata_Wrath, SpotlightFrame, RaidRosterFrame, Debug,
+    --! LibGroupInfo) were switched to the private function.
+
     local orig_UnitGroupRolesAssigned = UnitGroupRolesAssigned
 
     -- Debug flag for role detection (toggle with /cell debug role)
@@ -781,7 +803,7 @@ do
     -- hot path: this polyfill runs for every unit button role/power update,
     -- so cache the LibGroupInfo reference instead of a LibStub lookup per call
     local _cachedLGI
-    function UnitGroupRolesAssigned(unit)
+    function Cell_UnitGroupRolesAssigned(unit)
         if not unit then return "NONE" end
 
         local result = nil

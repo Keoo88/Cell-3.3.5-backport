@@ -74,37 +74,63 @@ function I.CreateAoEHealing(parent)
     aoeHealing.tex:SetAllPoints(aoeHealing)
     aoeHealing.tex:SetTexture(Cell.vars.whiteTexture)
 
-    local ag = aoeHealing:CreateAnimationGroup()
-    local a1 = ag:CreateAnimation("Alpha")
-    a1:SetFromAlpha(0)
-    a1:SetToAlpha(1)
-    a1:SetDuration(0.5)
-    a1:SetOrder(1)
-    a1:SetSmoothing("OUT")
-    local a2 = ag:CreateAnimation("Alpha")
-    a2:SetFromAlpha(1)
-    a2:SetToAlpha(0)
-    a2:SetDuration(0.5)
-    a2:SetOrder(2)
-    a2:SetSmoothing("IN")
+    -- 3.3.5a: do NOT use a native AnimationGroup here. Playing a native
+    -- Alpha animation (what the Fix-4 shim translates SetFromAlpha/SetToAlpha
+    -- into via SetChange) makes the client render the animated texture
+    -- WITHOUT its vertex color / gradient state: the bar shows as a flat
+    -- white rectangle no matter what SetColor applied. A plain color fill
+    -- (SetTexture(r,g,b,a)) survives the animation, which is how the tester
+    -- probes pinned it down. Drive the flash fade manually via
+    -- OnUpdate + SetAlpha instead: with no native animation playing, the
+    -- gradient and color render correctly (same as the static options preview).
+    local FADE_IN, FADE_OUT = 0.5, 0.5
 
-    ag:SetScript("OnPlay", function()
-        aoeHealing:Show()
-    end)
-    ag:SetScript("OnFinished", function()
-        aoeHealing:Hide()
-    end)
+    local function Fade_OnUpdate(self, elapsed)
+        local t = (self._elapsed or 0) + elapsed
+        self._elapsed = t
+        if t < FADE_IN then
+            local p = t / FADE_IN
+            self:SetAlpha(1 - (1 - p) * (1 - p)) -- ease-out, like SetSmoothing("OUT")
+        elseif t < FADE_IN + FADE_OUT then
+            local p = (t - FADE_IN) / FADE_OUT
+            self:SetAlpha(1 - p * p) -- ease-in, like SetSmoothing("IN")
+        else
+            self:SetScript("OnUpdate", nil)
+            self._elapsed = nil
+            self:SetAlpha(1)
+            self:Hide()
+        end
+    end
+
+    -- 3.3.5a: the retail path (SetGradient + CreateColor tables) goes through
+    -- the shared-metatable polyfill and proved unreliable in the field. Call
+    -- the native numeric SetGradientAlpha directly and keep SetVertexColor as
+    -- a base tint so the bar is colored even if gradients misbehave.
+    function aoeHealing:ApplyColor()
+        local r = aoeHealing.r or 1
+        local g = aoeHealing.g or 1
+        local b = aoeHealing.b or 0
+        local tex = aoeHealing.tex
+        tex:SetVertexColor(r, g, b, 0.77)
+        if tex.SetGradientAlpha then
+            -- native wrath signature: orientation, bottom RGBA, top RGBA
+            tex:SetGradientAlpha("VERTICAL", r, g, b, 0, r, g, b, 0.77)
+        elseif tex.SetGradient then
+            tex:SetGradient("VERTICAL", CreateColor(r, g, b, 0), CreateColor(r, g, b, 0.77))
+        end
+    end
 
     function aoeHealing:SetColor(r, g, b)
-        aoeHealing.tex:SetGradient("VERTICAL", CreateColor(r, g, b, 0), CreateColor(r, g, b, 0.77))
+        aoeHealing.r, aoeHealing.g, aoeHealing.b = r, g, b
+        aoeHealing:ApplyColor()
     end
 
     function aoeHealing:Display()
-        -- if ag:IsPlaying() then
-        --     ag:Restart()
-        -- else
-            ag:Play()
-        -- end
+        aoeHealing:ApplyColor()
+        aoeHealing._elapsed = 0
+        aoeHealing:SetAlpha(0)
+        aoeHealing:Show()
+        aoeHealing:SetScript("OnUpdate", Fade_OnUpdate)
     end
 end
 

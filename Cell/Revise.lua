@@ -3492,6 +3492,29 @@ function F.Revise()
         end
     end
 
+    --! Backfill missing built-in indicator colors.
+    --! Older backport DBs lack ["color"] on aoeHealing/targetCounter: the
+    --! indicator is then never colored at init (stays white) and the options
+    --! color picker errors out on a nil colorTable BEFORE saving/firing, so
+    --! changing the color silently does nothing, while height keeps working
+    --! because ["height"] exists in old DBs. Idempotent, runs every load.
+    local builtInColorDefaults = {
+        ["aoeHealing"] = {1, 1, 0},
+        ["targetCounter"] = {1, 0.1, 0.1},
+    }
+    if type(CellDB["layouts"]) == "table" then
+        for _, layout in pairs(CellDB["layouts"]) do
+            if type(layout) == "table" and type(layout["indicators"]) == "table" then
+                for _, t in pairs(layout["indicators"]) do
+                    local default = builtInColorDefaults[t["indicatorName"]]
+                    if default and t["color"] == nil then
+                        t["color"] = {default[1], default[2], default[3]}
+                    end
+                end
+            end
+        end
+    end
+
     CellDB["revise"] = Cell.version
     if CellCharacterDB then
         CellCharacterDB["revise"] = Cell.version
