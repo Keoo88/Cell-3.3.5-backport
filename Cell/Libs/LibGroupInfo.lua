@@ -173,7 +173,7 @@ local IsInGroup = IsInGroup
 local GetNumGroupMembers = GetNumGroupMembers
 local UnitInParty = UnitInParty
 local UnitInRaid = UnitInRaid
-local UnitGroupRolesAssigned = UnitGroupRolesAssigned
+local UnitGroupRolesAssigned = Cell_UnitGroupRolesAssigned or UnitGroupRolesAssigned --! WotLK fix: prefer Cell's private retail-contract polyfill; the bare global is native (3 booleans)
 
 local locale = GetLocale()
 local GetSpecName = GetSpecName
@@ -221,7 +221,12 @@ local function UpdateBaseInfo(unit, guid)
     if not guid then return end
 
     if not cache[guid] then cache[guid] = {} end
-    if IS_WRATH then
+    --! WotLK fix: guard on "not IS_RETAIL and not IS_MISTS" instead of
+    --! IS_WRATH: on 3.3.5 Alpha clients WOW_PROJECT_ID may not match
+    --! WOW_PROJECT_WRATH_CLASSIC, causing IS_WRATH=false even though
+    --! BuildAndNotify_Wrath is still called, leaving talents=nil and
+    --! crashing at line 393 (attempt to index field ? a nil value).
+    if not IS_RETAIL and not IS_MISTS then
         if not cache[guid]["talents"] then
             cache[guid]["talents"] = {}
         end
@@ -388,6 +393,9 @@ local function BuildAndNotify_Wrath(unit)
         --! INSPECT_TALENT_READY data.
         cache[guid].inspected = true
     else
+        --! defensive: ensure talents table exists even if UpdateBaseInfo
+        --! ran with IS_WRATH=false (3.3.5 Alpha WOW_PROJECT_ID mismatch)
+        if not cache[guid]["talents"] then cache[guid]["talents"] = {} end
         for i = 1, GetNumTalentTabs() do
             local name, texture, pointsSpent, fileName = GetTalentTabInfo(i)
             cache[guid]["talents"][fileName] = {
