@@ -60,6 +60,13 @@ local MSG_MULTI_NEXT  = "\002"
 local MSG_MULTI_LAST  = "\003"
 local MSG_ESCAPE = "\004"
 
+-- 3.3.5 backport: pre-4.1 clients have no separate prefix field. SendAddonMessage
+-- transmits "prefix\ttext" with a combined limit of 254 bytes, and the AceComm
+-- wire format of that era puts the multipart marker at the END of the PREFIX,
+-- not at the start of the text. Cell's polyfills define RegisterAddonMessagePrefix
+-- and C_ChatInfo, so capability detection lies here - detect by client build.
+local IS_PRE_PREFIX_CLIENT = (select(4, GetBuildInfo()) or 0) < 40100
+
 -- remove old structures (pre WoW 4.0)
 AceComm.multipart_origprefixes = nil
 AceComm.multipart_reassemblers = nil
@@ -108,7 +115,12 @@ function AceComm:SendCommMessage(prefix, text, distribution, target, prio, callb
 	prefix = NormalizePrefix(prefix)
 
 	local textlen = #text
-	local maxtextlen = 255  -- Yes, the max is 255 even if the dev post said 256. I tested. Char 256+ get silently truncated. /Mikk, 20110327
+	local maxtextlen
+	if IS_PRE_PREFIX_CLIENT then
+		maxtextlen = 254 - #prefix	-- 254 is the max length of prefix + text that can be sent in one message (there's an internal separator char)
+	else
+		maxtextlen = 255  -- Yes, the max is 255 even if the dev post said 256. I tested. Char 256+ get silently truncated. /Mikk, 20110327
+	end
 	local queueName = prefix
 
 	local ctlCallback = nil
@@ -119,7 +131,7 @@ function AceComm:SendCommMessage(prefix, text, distribution, target, prio, callb
 	end
 
 	local forceMultipart
-	if match(text, "^[\001-\009]") then -- 4.1+: see if the first character is a control character
+	if not IS_PRE_PREFIX_CLIENT and match(text, "^[\001-\009]") then -- 4.1+: see if the first character is a control character
 		-- we need to escape the first character with a \004
 		if textlen+1 > maxtextlen then	-- would we go over the size limit?
 			forceMultipart = true	-- just make it multipart, no escape problems then
@@ -136,20 +148,32 @@ function AceComm:SendCommMessage(prefix, text, distribution, target, prio, callb
 
 		-- first part
 		local chunk = strsub(text, 1, maxtextlen)
-		CTL:SendAddonMessage(prio, prefix, MSG_MULTI_FIRST..chunk, distribution, target, queueName, ctlCallback, maxtextlen)
+		if IS_PRE_PREFIX_CLIENT then
+			CTL:SendAddonMessage(prio, prefix..MSG_MULTI_FIRST, chunk, distribution, target, queueName, ctlCallback, maxtextlen)
+		else
+			CTL:SendAddonMessage(prio, prefix, MSG_MULTI_FIRST..chunk, distribution, target, queueName, ctlCallback, maxtextlen)
+		end
 
 		-- continuation
 		local pos = 1+maxtextlen
 
 		while pos+maxtextlen <= textlen do
 			chunk = strsub(text, pos, pos+maxtextlen-1)
-			CTL:SendAddonMessage(prio, prefix, MSG_MULTI_NEXT..chunk, distribution, target, queueName, ctlCallback, pos+maxtextlen-1)
+			if IS_PRE_PREFIX_CLIENT then
+				CTL:SendAddonMessage(prio, prefix..MSG_MULTI_NEXT, chunk, distribution, target, queueName, ctlCallback, pos+maxtextlen-1)
+			else
+				CTL:SendAddonMessage(prio, prefix, MSG_MULTI_NEXT..chunk, distribution, target, queueName, ctlCallback, pos+maxtextlen-1)
+			end
 			pos = pos + maxtextlen
 		end
 
 		-- final part
 		chunk = strsub(text, pos)
-		CTL:SendAddonMessage(prio, prefix, MSG_MULTI_LAST..chunk, distribution, target, queueName, ctlCallback, textlen)
+		if IS_PRE_PREFIX_CLIENT then
+			CTL:SendAddonMessage(prio, prefix..MSG_MULTI_LAST, chunk, distribution, target, queueName, ctlCallback, textlen)
+		else
+			CTL:SendAddonMessage(prio, prefix, MSG_MULTI_LAST..chunk, distribution, target, queueName, ctlCallback, textlen)
+		end
 	end
 end
 
@@ -258,6 +282,19 @@ AceComm.callbacks.OnUnused = nil
 local function OnEvent(self, event, prefix, message, distribution, sender)
 	if event == "CHAT_MSG_ADDON" then
 		sender = Ambiguate(sender, "none")
+		-- 3.3.5 wire format (old embedded AceComm in other addons, and our own
+		-- sends on pre-4.1 clients): multipart marker is appended to the prefix
+		local basePrefix, prefixControl = match(prefix, "^(.+)([\001-\003])$")
+		if prefixControl then
+			if prefixControl==MSG_MULTI_FIRST then
+				AceComm:OnReceiveMultipartFirst(basePrefix, message, distribution, sender)
+			elseif prefixControl==MSG_MULTI_NEXT then
+				AceComm:OnReceiveMultipartNext(basePrefix, message, distribution, sender)
+			elseif prefixControl==MSG_MULTI_LAST then
+				AceComm:OnReceiveMultipartLast(basePrefix, message, distribution, sender)
+			end
+			return
+		end
 		local control, rest = match(message, "^([\001-\009])(.*)")
 		if control then
 			if control==MSG_MULTI_FIRST then
