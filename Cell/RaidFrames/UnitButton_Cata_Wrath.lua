@@ -1652,7 +1652,9 @@ ShouldShowPowerText = function(b)
     elseif F.IsPet(b.states.guid) then
         class = "PET"
     elseif F.IsNPC(b.states.guid) then
-        if UnitInPartyIsAI(b.states.unit) then
+        --! WotLK fix: UnitInPartyIsAI does not exist on 3.3.5 (retail follower
+        --! dungeons API) - guard the global to avoid a nil call on NPC units.
+        if UnitInPartyIsAI and UnitInPartyIsAI(b.states.unit) then
             class = b.states.class
             role = GetRole(b)
         else
@@ -2764,6 +2766,11 @@ end)
 UnitButton_UpdateAll = function(self)
     if not self:IsVisible() then return end
 
+    --! WotLK fix (offline detect, see UNIT_HEALTH branch): sync the
+    --! connection-state cache on every full update, normalized to boolean
+    --! (UnitIsConnected returns 1/nil on 3.3.5).
+    self.__isConnected = (self.states.unit and UnitIsConnected(self.states.unit)) and true or false
+
     UnitButton_UpdateVehicleStatus(self)
     UnitButton_UpdateName(self)
     UnitButton_UpdateNameTextColor(self)
@@ -2942,6 +2949,20 @@ local function UnitButton_OnEvent(self, event, unit, ...)
             UnitButton_UpdateShieldAbsorbs(self)
             UnitButton_UpdateHealAbsorbs(self, true)
             -- UnitButton_UpdateStatusText(self)
+            --! WotLK fix: UNIT_CONNECTION does not exist in 3.3.5 (added 4.0),
+            --! so its registration above never fires and OFFLINE state was only
+            --! refreshed by (synthetic) GROUP_ROSTER_UPDATE - reliable in raid
+            --! (RAID_ROSTER_UPDATE) but NOT in party. Blizzard's own 3.3.5
+            --! PartyMemberFrame refreshes online status on UNIT_HEALTH
+            --! (PartyMemberFrame.lua:421) - the server fires UNIT_HEALTH for a
+            --! unit on connect/disconnect. Mirror that: on connection-state
+            --! change, request a full update (grey bar, OFFLINE status text).
+            local connected = UnitIsConnected(unit) and true or false
+            if connected ~= self.__isConnected then
+                self.__isConnected = connected
+                self._updateRequired = 1
+                self._powerUpdateRequired = 1
+            end
 
         elseif event == "UNIT_HEAL_PREDICTION" or event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_STOP" or event == "UNIT_SPELLCAST_CHANNEL_START" or event == "UNIT_SPELLCAST_CHANNEL_STOP" or event == "UNIT_SPELLCAST_DELAYED" then
             UnitButton_UpdateHealPrediction(self)
@@ -4246,4 +4267,49 @@ function CellUnitButton_OnLoad(button)
     button:SetScript("OnUpdate", UnitButton_OnUpdate)
     button:SetScript("OnEvent", UnitButton_OnEvent)
     button:RegisterForClicks("AnyDown")
+end
+
+-------------------------------------------------
+-- LibGroupInfo -> live role updates (WotLK)
+-------------------------------------------------
+--! WotLK fix: nothing in Cell consumed LibGroupInfo's "GroupInfo_Update"
+--! callback, so roles resolved asynchronously (inspect queue finishing, or
+--! the player swapping dual spec) never reached the unit buttons:
+--! states.role kept its stale value until some unrelated full update, and
+--! TANK/HEALER power filters + the role icon looked dead. Refresh the
+--! affected button(s) as soon as fresh spec info arrives.
+do
+    local LGI = LibStub and LibStub:GetLibrary("LibGroupInfo", true)
+    if LGI and not Cell.isRetail then
+        LGI.RegisterCallback("CellUnitButton_RoleUpdate", "GroupInfo_Update", function(_, guid)
+            if not Cell.loaded then return end
+            F.HandleUnitButton("guid", guid, function(b)
+                UnitButton_UpdateRole(b)
+
+                if not (b:IsVisible() or b.isPreview) then
+                    -- recompute power filters on next OnShow (same flag the
+                    -- normal update path uses)
+                    b._powerUpdateRequired = 1
+                    return
+                end
+
+                b._shouldShowPowerText = ShouldShowPowerText(b)
+                b._shouldShowPowerBar = ShouldShowPowerBar(b)
+                CheckPowerEventRegistration(b)
+
+                if b._shouldShowPowerText then
+                    UnitButton_UpdatePowerTextColor(b)
+                    UnitButton_UpdatePowerText(b)
+                else
+                    b.indicators.powerText:Hide()
+                end
+
+                if b._shouldShowPowerBar then
+                    ShowPowerBar(b)
+                else
+                    HidePowerBar(b)
+                end
+            end)
+        end)
+    end
 end

@@ -111,7 +111,11 @@ function eventFrame:PLAYER_ENTERING_WORLD()
         isValidZone = zoneFilters["pve"]
     end
 
-    if counterEnabled and isValidZone then
+    --! WotLK perf fix: C_NamePlate here is a stub polyfill (3.3.5 has
+    --! no nameplate unit API), so nameplates{} can never be populated.
+    --! The 0.25s ticker would burn CPU iterating the whole group 4x/sec
+    --! while always reporting 0 - don't start it at all.
+    if counterEnabled and isValidZone and not (C_NamePlate and C_NamePlate._cellPolyfill) then
         eventFrame:RegisterEvent("NAME_PLATE_UNIT_ADDED")
         eventFrame:RegisterEvent("NAME_PLATE_UNIT_REMOVED")
         ScanNameplates()

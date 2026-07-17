@@ -404,13 +404,20 @@ local function CreateBuffButton(parent, size, spell1, spell2, icon, index)
     b:SetBackdrop({edgeFile = Cell.vars.whiteTexture, edgeSize = P.Scale(1)})
     b:SetBackdropBorderColor(0, 0, 0, 1)
 
-    b:RegisterForClicks("LeftButtonUp", "RightButtonUp", "LeftButtonDown", "RightButtonDown") -- NOTE: ActionButtonUseKeyDown will affect this
+    --! WotLK fix: on 3.3.5 SecureActionButton_OnClick executes the action on
+    --! BOTH down and up (the ActionButtonUseKeyDown cvar gating is a later
+    --! addition), so Up+Down registration cast the buff twice per click.
+    --! Register down-only; the OnClick hook below must accept down=true now.
+    b:RegisterForClicks("LeftButtonDown", "RightButtonDown")
     b:SetAttribute("type1", "spell")
     b:SetAttribute("spell1", spell1)
     b:SetAttribute("type2", "spell")
     b:SetAttribute("spell2", spell2)
     b:HookScript("OnClick", function(self, button, down)
-        if button == "LeftButton" and IsShiftKeyDown() and not down then
+        --! WotLK fix: was "and not down" (upstream fired the announce on the
+        --! Up click) - with down-only registration the hook only ever runs
+        --! with down=true, so the Up-guard would break shift-announce.
+        if button == "LeftButton" and IsShiftKeyDown() then
             local msg = F.GetUnaffectedString(index)
             if msg then
                 UpdateSendChannel()

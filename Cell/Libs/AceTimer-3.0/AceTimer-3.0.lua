@@ -91,6 +91,8 @@ local function new(self, loop, func, delay, ...)
 	}
 
 	activeTimers[timer] = timer
+	-- perf: wake the driver; it hides itself when no timers remain
+	AceTimer.frame:Show()
 
 	return timer
 end
@@ -324,4 +326,15 @@ AceTimer.frame:SetScript("OnUpdate", function(self, elapsed)
 			end
 		end
 	end
+	-- perf: no active timers left - stop running this OnUpdate every
+	-- frame (the upstream C_Timer.After engine has no such loop; this
+	-- backported OnUpdate engine otherwise spins forever doing nothing)
+	if not next(activeTimers) then
+		self:Hide()
+	end
 end)
+
+-- start asleep if nothing was scheduled during load
+if not next(activeTimers) then
+	AceTimer.frame:Hide()
+end

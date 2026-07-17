@@ -306,6 +306,23 @@ local WRATH_TREE_ROLES = {
     DRUID       = {"DAMAGER", "DAMAGER", "HEALER"},
 }
 
+--! WotLK fix: locale-independent talent tab background prefixes per class,
+--! used to validate that inspect data actually belongs to the inspected
+--! unit (e.g. "ShamanElementalCombat" -> SHAMAN). Same idea as
+--! LibTalentQuery's validateTrees, but fileNames need no LibBabble.
+local CLASS_TALENT_FILE_PREFIX = {
+    WARRIOR = "Warrior",
+    PALADIN = "Paladin",
+    HUNTER = "Hunter",
+    ROGUE = "Rogue",
+    PRIEST = "Priest",
+    DEATHKNIGHT = "DeathKnight",
+    SHAMAN = "Shaman",
+    MAGE = "Mage",
+    WARLOCK = "Warlock",
+    DRUID = "Druid",
+}
+
 local function BuildAndNotify_Wrath(unit)
     Print("|cffff7777LGI:BuildAndNotify_Wrath|r", unit)
 
@@ -318,21 +335,58 @@ local function BuildAndNotify_Wrath(unit)
     local maxTab
 
     if isInspect then
-        for i = 1, GetNumTalentTabs(true) do
-            local name, texture, pointsSpent, fileName = GetTalentTabInfo(i, true, false)
-            cache[guid]["talents"][fileName] = {
-                ["points"] = pointsSpent,
-                ["name"] = name,
-                ["icon"] = texture,
+        --! WotLK fix: on 3.3.5 the inspect talent storage can hold STALE or
+        --! FOREIGN data: our own talents (own respec, silently failed
+        --! NotifyInspect) or a previously inspected unit's. Symptom: a party
+        --! warrior's role followed the PLAYER's spec changes (resto = tab 3
+        --! -> WARRIOR[3] = TANK). Validate like LibTalentQuery does: the tab
+        --! background fileName is class-determined and locale-independent,
+        --! so it must match the inspected unit's class, and total points
+        --! must be > 0. On bad data, bail out (return false) so the queue
+        --! re-requests the unit instead of caching garbage.
+        local numTabs = GetNumTalentTabs(true)
+        local activeGroup = GetActiveTalentGroup and GetActiveTalentGroup(true) or nil
+        local expectedPrefix = CLASS_TALENT_FILE_PREFIX[cache[guid].class]
+        local totalPoints = 0
+        local tabs = {}
+
+        for i = 1, numTabs do
+            local name, texture, pointsSpent, fileName = GetTalentTabInfo(i, true, false, activeGroup)
+            if expectedPrefix and not (fileName and strfind(fileName, expectedPrefix, 1, true) == 1) then
+                Print("|cffff7777LGI:INSPECT_DATA_MISMATCH|r", unit, fileName)
+                return false
+            end
+            totalPoints = totalPoints + (pointsSpent or 0)
+            tabs[i] = {name = name, texture = texture, points = pointsSpent or 0, fileName = fileName}
+        end
+
+        if numTabs == 0 or totalPoints == 0 then
+            Print("|cffff7777LGI:INSPECT_DATA_EMPTY|r", unit)
+            return false
+        end
+
+        for i = 1, numTabs do
+            local tab = tabs[i]
+            cache[guid]["talents"][tab.fileName] = {
+                ["points"] = tab.points,
+                ["name"] = tab.name,
+                ["icon"] = tab.texture,
             }
 
-            if pointsSpent > maxPoints then
-                maxPoints = pointsSpent
+            if tab.points > maxPoints then
+                maxPoints = tab.points
                 maxTab = i
-                cache[guid].specName = name
-                cache[guid].specIcon = texture
+                cache[guid].specName = tab.name
+                cache[guid].specIcon = tab.texture
             end
         end
+
+        --! WotLK fix: mark as inspected (the retail path sets this, the
+        --! wrath path never did) - otherwise every roster event/rescan
+        --! re-queued EVERY member forever, keeping the inspect queue
+        --! churning and massively raising the odds of misattributed
+        --! INSPECT_TALENT_READY data.
+        cache[guid].inspected = true
     else
         for i = 1, GetNumTalentTabs() do
             local name, texture, pointsSpent, fileName = GetTalentTabInfo(i)
@@ -349,6 +403,19 @@ local function BuildAndNotify_Wrath(unit)
                 cache[guid].specIcon = texture
             end
         end
+
+        --! WotLK fix: very early during login the client can still report
+        --! 0/0/0 for our OWN talents (same quirk LibTalentQuery documents
+        --! for inspects). Don't accept that as the final answer - retry
+        --! once shortly after. Level < 10 characters legitimately have 0
+        --! points; the single retry is harmless for them.
+        if not maxTab and not lib.playerRetryScheduled then
+            lib.playerRetryScheduled = true
+            C_Timer.After(5, function()
+                lib.playerRetryScheduled = nil
+                BuildAndNotify_Wrath("player")
+            end)
+        end
     end
 
     -- derive role from class + dominant tree (was never set in the wrath
@@ -361,6 +428,7 @@ local function BuildAndNotify_Wrath(unit)
 
     --! fire
     lib.callbacks:Fire(UPDATE_EVENT, guid, unit, cache[guid])
+    return true
 end
 
 local function Query(unit)
@@ -372,7 +440,8 @@ local function Query(unit)
     if IS_RETAIL or IS_MISTS then
         BuildAndNotify(unit)
     else
-        BuildAndNotify_Wrath(unit)
+        -- returns false when the inspect data was rejected as stale/foreign
+        return BuildAndNotify_Wrath(unit)
     end
 end
 
@@ -389,6 +458,30 @@ function frame:PLAYER_LOGIN()
     else
         cache[PLAYER_GUID] = {["talents"]={}}
         -- frame:RegisterEvent("UNIT_AURA")
+
+        --! WotLK fix: PLAYER_SPECIALIZATION_CHANGED doesn't exist on 3.3.5,
+        --! so the player's cached spec was built once at login and never
+        --! refreshed - the role stuck to whatever spec you logged in with.
+        --! Own spec changes arrive as ACTIVE_TALENT_GROUP_CHANGED (dual
+        --! spec swap) and PLAYER_TALENT_UPDATE (learning/resetting talents);
+        --! other players' dual-spec swaps are visible as a successful cast
+        --! of a talent-activation spell (same trick as LibGroupTalents).
+        frame:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
+        frame:RegisterEvent("PLAYER_TALENT_UPDATE")
+        frame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
+
+        --! WotLK fix: group members outside inspect range (28y) are skipped
+        --! by AddToQueue and nothing re-queues them until the next roster
+        --! event - in a static group they stayed uninspected forever (role
+        --! defaulted to DAMAGER). Rescan periodically; already-inspected
+        --! members are skipped, so this only touches missing ones.
+        if not lib.rescanTicker then
+            lib.rescanTicker = C_Timer.NewTicker(15, function()
+                if IsInGroup() and PLAYER_GUID then
+                    frame:GROUP_ROSTER_UPDATE(true)
+                end
+            end)
+        end
     end
 
     frame:RegisterEvent("PLAYER_ENTERING_WORLD")
@@ -421,6 +514,17 @@ function frame:PLAYER_ENTERING_WORLD(isLogin, isReload)
         inInstance = nil
         shouldUpdate = true
     elseif isLogin or isReload then -- login/reload
+        shouldUpdate = true
+    end
+
+    --! WotLK fix: the isLogin/isReload payload was added in Legion (7.0).
+    --! On 3.3.5 PLAYER_ENTERING_WORLD fires with NO arguments, so logging
+    --! in while in the open world (not an instance) never set shouldUpdate
+    --! and Query("player") never ran: the player's own specRole stayed nil
+    --! and the role chain fell through to the DAMAGER default (solo 0/0/41
+    --! resto shaman showed as DPS). Loading screens are rare on 3.3.5 -
+    --! just always refresh.
+    if not (IS_RETAIL or IS_MISTS) then
         shouldUpdate = true
     end
 
@@ -526,8 +630,16 @@ function frame:INSPECT_READY(guid)
     if queueGUIDs[guid] then
         Print("|cffffff33LGI:INSPECT_READY|r", guid, queueGUIDs[guid].unit)
         lib.callbacks:Fire(QUEUE_EVENT, guid, queueGUIDs[guid].unit, "INSPECT_READY")
-        Query(queueGUIDs[guid].unit)
-        queueGUIDs[guid] = nil
+        --! WotLK fix: only dequeue the unit when valid talent data was
+        --! actually cached. Query returns false when the inspect storage
+        --! held stale/foreign talents (see BuildAndNotify_Wrath) - put the
+        --! unit back into "waiting" so the queue re-requests it (attempts
+        --! are still capped by MAX_ATTEMPTS).
+        if Query(queueGUIDs[guid].unit) == false and queueGUIDs[guid].attempts < MAX_ATTEMPTS then
+            queueGUIDs[guid].status = "waiting"
+        else
+            queueGUIDs[guid] = nil
+        end
     end
 end
 
@@ -643,6 +755,49 @@ end
 
 function frame:UNIT_NAME_UPDATE(unit)
     frame:PLAYER_SPECIALIZATION_CHANGED(unit)
+end
+
+--! WotLK fix: 3.3.5 equivalents of PLAYER_SPECIALIZATION_CHANGED (see
+--! PLAYER_LOGIN). Both may fire on a dual-spec swap - Query is cheap and
+--! idempotent, the duplicate just refires the update callback.
+function frame:ACTIVE_TALENT_GROUP_CHANGED()
+    Query("player")
+end
+
+function frame:PLAYER_TALENT_UPDATE()
+    Query("player")
+end
+
+-- Other players' dual-spec swaps: a successful cast of a talent-activation
+-- spell (TALENT_ACTIVATION_SPELLS = 63645 primary / 63644 secondary, same
+-- detection LibGroupTalents uses). Invalidate and re-inspect that unit.
+local specChangeSpells = {}
+do
+    local activationSpells = _G.TALENT_ACTIVATION_SPELLS or {63645, 63644}
+    for _, spellId in ipairs(activationSpells) do
+        local spellName = GetSpellInfo(spellId)
+        if spellName then
+            specChangeSpells[spellName] = true
+        end
+    end
+end
+
+function frame:UNIT_SPELLCAST_SUCCEEDED(unit, spellName)
+    if not spellName or not specChangeSpells[spellName] then return end
+    if UnitIsUnit(unit, "player") then return end -- covered by ACTIVE_TALENT_GROUP_CHANGED
+    if not (strfind(unit, "^party%d") or strfind(unit, "^raid%d")) then return end
+
+    local guid = UnitGUID(unit)
+    if not guid then return end
+
+    if cache[guid] then
+        cache[guid].inspected = nil
+    end
+    if queueGUIDs[guid] then
+        queueGUIDs[guid].attempts = 0 -- reset attempts if already queued
+    else
+        AddToQueue(unit, guid)
+    end
 end
 
 -- function frame:UNIT_PHASE(unit)

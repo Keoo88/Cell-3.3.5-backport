@@ -30,9 +30,26 @@ marksFrame.moverText:SetPoint("TOP", 0, -3)
 marksFrame.moverText:SetText(L["Mover"])
 marksFrame.moverText:Hide()
 
+--! WotLK fix: world markers do not exist on 3.3.5 (added in 4.0), and the
+--! secure attribute type "worldmarker" is not recognized by 3.3.5
+--! SecureTemplates. The options dropdown already disables world/both modes on
+--! wrath, but a SavedVariables file migrated from a newer client can still
+--! carry "world_*"/"both_*" - which would show a dead UI and start the
+--! IsRaidMarkerActive ticker (API missing on 3.3.5 -> Lua error every 0.5s).
+--! Coerce such values back to target-only, preserving orientation.
+local function NormalizeMarksMode()
+    if Cell.isVanilla or Cell.isWrath then
+        local mode = CellDB["tools"]["marks"][3]
+        if strfind(mode, "^world") or strfind(mode, "^both") then
+            CellDB["tools"]["marks"][3] = strfind(mode, "_v$") and "target_v" or "target_h"
+        end
+    end
+end
+
 local function ShowMover(show)
     if show then
         if not CellDB["tools"]["marks"][1] then return end
+        NormalizeMarksMode() --! WotLK fix
         marksFrame:EnableMouse(true)
         marksFrame.moverText:Show()
         Cell.StylizeFrame(marksFrame, {0, 1, 0, 0.4}, {0, 0, 0, 0})
@@ -206,7 +223,11 @@ local worldMarkIndices = {5, 6, 3, 2, 7, 1, 4, 8}
 local worldMarkButtons = {}
 for i = 1, 9 do
     worldMarkButtons[i] = Cell.CreateButton(worldMarks, "", "accent-hover", {20, 20}, false, false, nil, nil, "SecureActionButtonTemplate")
-    worldMarkButtons[i]:RegisterForClicks("LeftButtonUp", "LeftButtonDown") -- NOTE: ActionButtonUseKeyDown will affect this
+    --! WotLK fix: on 3.3.5 SecureActionButton_OnClick executes the action on
+    --! BOTH down and up (the ActionButtonUseKeyDown cvar gating is a later
+    --! addition), so registering Up+Down fires the action twice per click.
+    --! Register down-only, matching the target-mark buttons above.
+    worldMarkButtons[i]:RegisterForClicks("LeftButtonDown")
     worldMarkButtons[i].texture = worldMarkButtons[i]:CreateTexture(nil, "ARTWORK")
 
     if i == 9 then
@@ -240,6 +261,9 @@ end
 
 local worldMarksTimer
 worldMarks:SetScript("OnShow", function()
+    --! WotLK fix: IsRaidMarkerActive does not exist on 3.3.5 - never start
+    --! the poller there (worldMarks should not be shown on wrath anyway).
+    if not IsRaidMarkerActive then return end
     worldMarksTimer = C_Timer.NewTicker(0.5, function()
         for i = 1, 8 do
             if IsRaidMarkerActive(worldMarkIndices[i]) then
@@ -357,6 +381,7 @@ local function CheckPermission()
         marksFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
     else
         marksFrame:UnregisterEvent("PLAYER_REGEN_ENABLED")
+        NormalizeMarksMode() --! WotLK fix
         if CellDB["tools"]["marks"][1] then
             if strfind(CellDB["tools"]["marks"][3], "^target") then
                 if marksFrame.moverText:IsShown() or Cell.vars.hasPartyMarkPermission then

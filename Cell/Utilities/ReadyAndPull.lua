@@ -58,7 +58,12 @@ Cell.RegisterCallback("ShowMover", "RaidButtons_ShowMover", ShowMover)
 -- pull
 -------------------------------------------------
 pullBtn = Cell.CreateStatusBarButton(buttonsFrame, L["Pull"], {60, 17}, 7, "SecureActionButtonTemplate")
-pullBtn:RegisterForClicks("LeftButtonUp", "RightButtonUp", "LeftButtonDown", "RightButtonDown") -- NOTE: ActionButtonUseKeyDown will affect this
+--! WotLK fix: on 3.3.5 SecureActionButton_OnClick executes the action on BOTH
+--! down and up (the ActionButtonUseKeyDown cvar gating is a later addition),
+--! so registering Up+Down ran the pull macro (e.g. "/dbm pull N") twice per
+--! click - with DBM that starts and instantly cancels the pull timer.
+--! Register down-only, matching readyBtn below.
+pullBtn:RegisterForClicks("LeftButtonDown", "RightButtonDown")
 pullBtn:Hide()
 
 -------------------------------------------------

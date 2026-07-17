@@ -151,16 +151,189 @@ function Cell.Debug:HandleCommand(option)
         self:Report()
     elseif option == "clear" or option == "c" then
         self:Clear()
+    elseif option == "dump" or option == "d" then
+        self:Dump()
     elseif option == "help" or option == "h" then
         print(COLOR_INFO .. "Cell Debug Commands:" .. COLOR_RESET)
         print("  /cell debug - Toggle debug mode")
         print("  /cell debug v|verbose - Toggle verbose logging")
         print("  /cell debug r|report - Show debug report")
         print("  /cell debug c|clear - Clear debug data")
+        print("  /cell debug d|dump - Open a copyable diagnostic dump (for bug reports)")
         print("  /cell debug h|help - Show this help")
     else
         self.enabled = not self.enabled
         print(string.format("Cell Debug: %s", 
             self.enabled and "enabled" or "disabled"))
     end
+end
+
+-------------------------------------------------
+-- Diagnostic dump (/cell debug dump)
+-- Builds a full state report and shows it in a window with an EditBox so
+-- testers can copy it (Ctrl+A, Ctrl+C) and paste it into a bug report.
+-- Works even when debug mode is disabled; fire counters are only collected
+-- while debug mode is enabled, so toggle /cell debug before reproducing.
+-------------------------------------------------
+
+local dumpFrame
+
+local function GetDumpFrame()
+    if dumpFrame then return dumpFrame end
+
+    local f = CreateFrame("Frame", "CellDebugDumpFrame", UIParent)
+    f:SetSize(560, 420)
+    f:SetPoint("CENTER")
+    f:SetFrameStrata("DIALOG")
+    f:SetBackdrop({
+        bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        edgeSize = 14,
+        insets = {left = 3, right = 3, top = 3, bottom = 3},
+    })
+    f:SetBackdropColor(0.05, 0.05, 0.05, 0.95)
+    f:SetBackdropBorderColor(0.4, 0.4, 0.4, 1)
+    f:SetMovable(true)
+    f:EnableMouse(true)
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", f.StartMoving)
+    f:SetScript("OnDragStop", f.StopMovingOrSizing)
+
+    local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    title:SetPoint("TOP", 0, -8)
+    title:SetText("Cell Debug Dump - Ctrl+A, Ctrl+C")
+
+    local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
+    close:SetPoint("TOPRIGHT", -2, -2)
+
+    local scroll = CreateFrame("ScrollFrame", "CellDebugDumpScroll", f, "UIPanelScrollFrameTemplate")
+    scroll:SetPoint("TOPLEFT", 10, -28)
+    scroll:SetPoint("BOTTOMRIGHT", -30, 10)
+
+    local eb = CreateFrame("EditBox", nil, scroll)
+    eb:SetMultiLine(true)
+    eb:SetMaxLetters(0)
+    eb:SetFontObject(ChatFontNormal)
+    eb:SetWidth(510)
+    eb:SetAutoFocus(false)
+    eb:SetScript("OnEscapePressed", function(self)
+        self:ClearFocus()
+        f:Hide()
+    end)
+    -- the box exists only for copying: restore the text if the user types
+    eb:SetScript("OnTextChanged", function(self, userInput)
+        if userInput then
+            self:SetText(f.reportText or "")
+            self:HighlightText()
+        end
+    end)
+    scroll:SetScrollChild(eb)
+    f.editBox = eb
+
+    table.insert(UISpecialFrames, "CellDebugDumpFrame") -- close on ESC
+
+    dumpFrame = f
+    return f
+end
+
+local function AddUnitLines(lines, unit)
+    if not UnitExists(unit) then return end
+
+    local name = UnitName(unit)
+    local _, class = UnitClass(unit)
+    local level = UnitLevel(unit)
+    local role = UnitGroupRolesAssigned and UnitGroupRolesAssigned(unit) or "?"
+    table.insert(lines, string.format("%s: %s (%s, lvl %s) role=%s",
+        unit, tostring(name), tostring(class), tostring(level), tostring(role)))
+
+    local LGI = LibStub and LibStub:GetLibrary("LibGroupInfo", true)
+    local guid = UnitGUID(unit)
+    if LGI and guid and LGI.GetCachedInfo then
+        local info = LGI:GetCachedInfo(guid)
+        if info then
+            -- shallow-dump scalar fields, whatever the cache structure is
+            local parts = {}
+            for k, v in pairs(info) do
+                local t = type(v)
+                if t == "string" or t == "number" or t == "boolean" then
+                    table.insert(parts, tostring(k) .. "=" .. tostring(v))
+                end
+            end
+            table.sort(parts)
+            table.insert(lines, "    LGI: " .. table.concat(parts, ", "))
+        else
+            table.insert(lines, "    LGI: no cached info")
+        end
+    end
+end
+
+function Cell.Debug:BuildDumpText()
+    local lines = {}
+    table.insert(lines, "=== Cell Debug Dump ===")
+    table.insert(lines, date("%Y-%m-%d %H:%M:%S"))
+
+    local version, build = GetBuildInfo()
+    table.insert(lines, string.format("client: %s (build %s)", tostring(version), tostring(build)))
+    local cellVer = GetAddOnMetadata and GetAddOnMetadata("Cell", "Version")
+    table.insert(lines, "Cell version: " .. tostring(cellVer))
+
+    if UpdateAddOnMemoryUsage and GetAddOnMemoryUsage then
+        UpdateAddOnMemoryUsage()
+        table.insert(lines, string.format("memory: %.0f KB", GetAddOnMemoryUsage("Cell")))
+    end
+
+    -- own talents: name(backgroundFileName)=points per tab
+    if GetNumTalentTabs and GetTalentTabInfo then
+        local tabs = {}
+        for i = 1, GetNumTalentTabs() do
+            local tname, _, points, background = GetTalentTabInfo(i)
+            table.insert(tabs, string.format("%s(%s)=%d",
+                tostring(tname), tostring(background), points or 0))
+        end
+        table.insert(lines, "player talents: " .. table.concat(tabs, ", "))
+    end
+
+    local numRaid = GetNumRaidMembers and GetNumRaidMembers() or 0
+    local numParty = GetNumPartyMembers and GetNumPartyMembers() or 0
+    table.insert(lines, "")
+    table.insert(lines, string.format("group: raid=%d party=%d", numRaid, numParty))
+    if numRaid > 0 then
+        for i = 1, numRaid do
+            AddUnitLines(lines, "raid" .. i)
+        end
+    else
+        AddUnitLines(lines, "player")
+        for i = 1, numParty do
+            AddUnitLines(lines, "party" .. i)
+        end
+    end
+
+    table.insert(lines, "")
+    table.insert(lines, string.format("callbacks: registrations=%d fires=%d (fires counted only while debug mode is ON)",
+        self.stats.totalRegistrations, self.stats.totalFires))
+    for event, registrations in pairs(self.registrations) do
+        table.insert(lines, string.format("  reg %s: %d", event, #registrations))
+    end
+    for event, count in pairs(self.fires) do
+        local listeners = Cell.GetEventListenersCount and Cell.GetEventListenersCount(event) or -1
+        table.insert(lines, string.format("  fired %s: %d (listeners now: %d)", event, count, listeners))
+    end
+    if next(self.stats.missedCallbacks) then
+        table.insert(lines, "  MISSED (fired with 0 listeners):")
+        for event, count in pairs(self.stats.missedCallbacks) do
+            table.insert(lines, string.format("    %s: %d", event, count))
+        end
+    end
+
+    table.insert(lines, "=== end of dump ===")
+    return table.concat(lines, "\n")
+end
+
+function Cell.Debug:Dump()
+    local f = GetDumpFrame()
+    f.reportText = self:BuildDumpText()
+    f.editBox:SetText(f.reportText)
+    f:Show()
+    f.editBox:HighlightText()
+    f.editBox:SetFocus()
 end

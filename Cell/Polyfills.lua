@@ -778,6 +778,9 @@ do
     -- Debug flag for role detection (toggle with /cell debug role)
     local roleDebugEnabled = false
 
+    -- hot path: this polyfill runs for every unit button role/power update,
+    -- so cache the LibGroupInfo reference instead of a LibStub lookup per call
+    local _cachedLGI
     function UnitGroupRolesAssigned(unit)
         if not unit then return "NONE" end
 
@@ -846,7 +849,12 @@ do
         end
 
         -- Fallback: Check party assignments (Main Tank/Main Assist)
-        if not result then
+        --! WotLK fix: only meaningful while actually in a group. On some
+        --! cores GetPartyAssignment("MAINTANK", "player") returns true when
+        --! SOLO, painting a tank icon on any ungrouped character (tester:
+        --! resto shaman solo in Dalaran showed a tank icon). Retail
+        --! assignments only exist in groups; skip to spec-based detection.
+        if not result and (GetNumRaidMembers() > 0 or GetNumPartyMembers() > 0) then
             if GetPartyAssignment("MAINTANK", unit) then
                 result = "TANK"
                 roleSource = "MainTank assignment"
@@ -858,7 +866,10 @@ do
 
         -- Fallback: talent-based detection via LibGroupInfo (specRole ONLY)
         if not result then
-            local LibGroupInfo = LibStub and LibStub:GetLibrary("LibGroupInfo", true)
+            if not _cachedLGI and LibStub then
+                _cachedLGI = LibStub:GetLibrary("LibGroupInfo", true)
+            end
+            local LibGroupInfo = _cachedLGI
             if LibGroupInfo then
                 local guid = UnitGUID(unit)
                 if guid then
@@ -1590,8 +1601,15 @@ do
                 timer._elapsed = timer._elapsed + elapsed
                 if timer._elapsed >= timer._duration then
                     if timer._iterations then
-                        -- ticker: fire, then either continue or finish
-                        timer._elapsed = 0
+                        -- ticker: fire, then either continue or finish.
+                        -- Carry the overshoot into the next interval so the
+                        -- average period stays exact at any framerate (same
+                        -- trick as ElvUI's AceTimer backport); clamp after
+                        -- lag spikes to avoid rapid-fire catch-up.
+                        timer._elapsed = timer._elapsed - timer._duration
+                        if timer._elapsed >= timer._duration then
+                            timer._elapsed = 0
+                        end
                         local ok, err = pcall(timer._callback, timer)
                         if not ok then onError(err) end
                         if timer._iterations > 0 then
@@ -2152,6 +2170,9 @@ end
 -- C_NamePlate (Modern nameplate API, not in WotLK)
 if not C_NamePlate then
     C_NamePlate = {}
+    -- marker: this is a stub (3.3.5 has no nameplate unit API); consumers
+    -- like the TargetCounter indicator use it to skip pointless polling
+    C_NamePlate._cellPolyfill = true
     function C_NamePlate.GetNamePlates(issecure)
         -- WotLK has no nameplate API
         -- Return empty table
