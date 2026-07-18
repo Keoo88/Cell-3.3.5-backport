@@ -242,7 +242,7 @@ local function AddUnitLines(lines, unit)
     local name = UnitName(unit)
     local _, class = UnitClass(unit)
     local level = UnitLevel(unit)
-    local role = UnitGroupRolesAssigned and UnitGroupRolesAssigned(unit) or "?"
+    local role = Cell_UnitGroupRolesAssigned and Cell_UnitGroupRolesAssigned(unit) or "?" --! WotLK fix: Cell-private role polyfill (global stays native)
     table.insert(lines, string.format("%s: %s (%s, lvl %s) role=%s",
         unit, tostring(name), tostring(class), tostring(level), tostring(role)))
 

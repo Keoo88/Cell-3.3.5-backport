@@ -454,7 +454,7 @@ local function CreateRaidRosterGrid(parent, index)
 
     function grid:Set(raidIndex)
         -- NOTE: on 3.3.5a GetRaidRosterInfo has only 11 returns (combatRole was added in 4.x),
-        -- resolve the role via the UnitGroupRolesAssigned polyfill instead
+        -- resolve the role via the Cell_UnitGroupRolesAssigned polyfill instead
         local name, _, subgroup, _, _, classFileName = GetRaidRosterInfo(raidIndex)
 
         if not name then
@@ -482,7 +482,7 @@ local function CreateRaidRosterGrid(parent, index)
         grid.raidIndex = raidIndex
         grid.unit = "raid"..raidIndex
         grid.name = name
-        grid.role = UnitGroupRolesAssigned("raid"..raidIndex)
+        grid.role = Cell_UnitGroupRolesAssigned("raid"..raidIndex) --! WotLK fix: Cell-private role polyfill (global stays native)
         grid.color[1], grid.color[2], grid.color[3] = F.GetClassColor(classFileName)
         grid.isLeader = UnitIsGroupLeader(grid.unit)
         grid.isAssistant = UnitIsGroupAssistant(grid.unit)

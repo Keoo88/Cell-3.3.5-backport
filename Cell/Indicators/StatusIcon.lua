@@ -128,6 +128,18 @@ function I.CreateStatusIcon(parent)
     bar.elapsedTime = 0
     bar:SetScript("OnUpdate", function(self, elapsed)
         if bar.elapsedTime >= 0.25 then
+            --! self-heal: on 3.3.5a the "Resurrecting" aura (160029) does not
+            --! exist, so the SPELL_AURA_REMOVED / FindAuraById clear path is dead
+            --! and the icon would otherwise linger until the 60s fallback timer
+            --! whenever a clean dead->alive transition is missed. Hide as soon as
+            --! the unit is actually alive again.
+            local u = parent.states.unit
+            if u and not UnitIsDeadOrGhost(u) then
+                local g = parent.states.guid
+                if g then rez[g] = nil end
+                resurrectionIcon:Hide()
+                return
+            end
             bar:SetValue(bar:GetValue() + bar.elapsedTime)
             bar.elapsedTime = 0
         end

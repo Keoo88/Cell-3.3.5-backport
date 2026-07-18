@@ -578,7 +578,7 @@ UpdateTanks = function()
     -- search for tanks
     local units = {}
     for unit in F.IterateGroupMembers() do
-        if UnitGroupRolesAssigned(unit) == "TANK" then
+        if Cell_UnitGroupRolesAssigned(unit) == "TANK" then --! WotLK fix: Cell-private role polyfill (global stays native)
             tinsert(units, unit)
         end
     end
@@ -610,7 +610,7 @@ UpdateHealers = function()
     -- search for healers
     local units = {}
     for unit in F.IterateGroupMembers() do
-        if UnitGroupRolesAssigned(unit) == "HEALER" then
+        if Cell_UnitGroupRolesAssigned(unit) == "HEALER" then --! WotLK fix: Cell-private role polyfill (global stays native)
             tinsert(units, unit)
         end
     end
