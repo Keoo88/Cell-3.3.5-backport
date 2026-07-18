@@ -104,4 +104,15 @@ end
 
 -- Global
 _G.C_CreatureInfo = C_CreatureInfo
-_G.GetClassInfo = C_CreatureInfo.GetClassInfo
+-- NOTE: the retail/Cata global GetClassInfo(classID) returns a TUPLE
+-- (className, classFile, classID), whereas C_CreatureInfo.GetClassInfo returns a
+-- ClassInfo TABLE. Aliasing the global straight to the table-returning function broke
+-- every tuple-expecting caller (Utils.lua F.GetClassID build, LocalizedClassList
+-- polyfill). With classFileToID empty, F.GetClassID/Cell.vars.playerClassID became nil,
+-- so I.CanDispel returned nil for every type and the Dispels indicator never colored
+-- frames on 3.3.5a. Wrap it to expose the retail tuple contract.
+function _G.GetClassInfo(classID)
+	local info = C_CreatureInfo.GetClassInfo(classID)
+	if not info then return end
+	return info.className, info.classFile, info.classID
+end
