@@ -3216,6 +3216,19 @@ local function UnitButton_OnTick(self)
                 end
             end
 
+            --! WotLK fix: 3.3.5a does not fire a reliable event on a corpse<->ghost
+            --! transition. UNIT_HEALTH often arrives BEFORE UnitIsGhost /
+            --! UnitIsDeadOrGhost flip, and no follow-up event is sent, so the
+            --! "GHOST"/"DEAD" status text only refreshed on the next full update
+            --! (e.g. mouseover). Poll the dead/ghost state on the 0.5s tick and
+            --! refresh the status text whenever it changes.
+            local u = self.states.unit
+            local deadGhostState = (UnitIsGhost(u) and 2) or (UnitIsDeadOrGhost(u) and 1) or 0
+            if deadGhostState ~= self.__deadGhostState then
+                self.__deadGhostState = deadGhostState
+                UnitButton_UpdateStatusText(self)
+            end
+
             local displayedGuid = UnitGUID(self.states.displayedUnit)
             if displayedGuid ~= self.__displayedGuid then
                 -- NOTE: displayed unit entity changed
