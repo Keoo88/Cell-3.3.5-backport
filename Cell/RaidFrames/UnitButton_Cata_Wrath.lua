@@ -1189,7 +1189,11 @@ local function UnitButton_UpdateDebuffs(self)
                 if filters and filters[debuffType] then
                     local canDispel = I.CanDispel(debuffType)
                     -- when "only show dispellable by me" is checked, require a positive match
-                    if not filters["dispellableByMe"] or canDispel then
+                    -- NOTE: Bleeds are never dispellable by any class, so I.CanDispel("Bleed")
+                    -- is always nil. Without this exception, the default "dispellableByMe"
+                    -- filter would permanently hide Bleed highlights even though the Bleed
+                    -- filter is enabled. Bleeds bypass the dispellable-by-me gate.
+                    if not filters["dispellableByMe"] or canDispel or debuffType == "Bleed" then
                         if Cell.vars.dispelBlacklist[spellId] then
                             self._debuffs_dispel[debuffType] = false
                         else

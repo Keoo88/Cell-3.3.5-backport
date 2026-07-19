@@ -20,6 +20,27 @@ end
 -- Crossreference with SpellEffect.Effect == 6
 
 bleedList = {
+    -- ==========================================================================
+    -- WotLK 3.3.5a player bleeds (all ranks). The upstream list only carries
+    -- modern-retail spell IDs, so max-rank WotLK bleeds were never recognized
+    -- and CheckDebuffType never returned "Bleed". Added below (Mechanic=Bleeding).
+    -- ==========================================================================
+    -- DRUID: Rip
+    [9492] = true, [9493] = true, [9752] = true, [9894] = true, [9896] = true, [27008] = true, [49799] = true, [49800] = true,
+    -- DRUID: Rake (periodic bleed)
+    [1822] = true, [1823] = true, [1824] = true, [9904] = true, [27003] = true, [48573] = true, [48574] = true,
+    -- DRUID: Lacerate
+    [33745] = true, [48567] = true, [48568] = true,
+    -- DRUID: Pounce Bleed
+    [9007] = true, [9824] = true, [9826] = true, [27007] = true, [49804] = true,
+    -- ROGUE: Rupture
+    [8639] = true, [8640] = true, [11273] = true, [11274] = true, [11275] = true, [26867] = true, [48671] = true, [48672] = true,
+    -- ROGUE: Garrote
+    [8631] = true, [8632] = true, [8633] = true, [11289] = true, [11290] = true, [26839] = true, [26884] = true, [48675] = true, [48676] = true,
+    -- WARRIOR: Rend
+    [772] = true, [6546] = true, [6547] = true, [6548] = true, [11572] = true, [11573] = true, [11574] = true, [25208] = true, [46845] = true, [47465] = true,
+    -- WARRIOR: Deep Wounds (applied debuff)
+    [12721] = true,
     [1227293] = true, -- Gushing Wound
     [1221386] = true, -- Spearhead
     [1218302] = true, -- Punctured

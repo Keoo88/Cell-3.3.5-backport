@@ -332,6 +332,12 @@ local function BuildAndNotify_Wrath(unit)
     Print("|cffff7777LGI:BuildAndNotify_Wrath|r", unit)
 
     local guid = UnitGUID(unit)
+    --! WotLK fix: the retail BuildAndNotify bails on a nil guid, but this Wrath
+    --! path never did. When UnitGUID(unit) is nil (e.g. PLAYER_TALENT_UPDATE
+    --! firing before the unit is available), UpdateBaseInfo returns early without
+    --! creating cache[guid], so cache[guid]["talents"] crashed at line 398
+    --! (attempt to index field '?' a nil value). Guard the same way.
+    if not guid then return end
     UpdateBaseInfo(unit, guid)
 
     -- spec
