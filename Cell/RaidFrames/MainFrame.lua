@@ -45,6 +45,14 @@ P.Size(anchorFrame, 20, 10)
 anchorFrame:SetMovable(true)
 anchorFrame:SetClampedToScreen(true)
 
+-- Combat fix: if combat starts while the anchor is being dragged, abort the
+-- drag immediately so the frame does not stay stuck to the cursor. OnDragStop
+-- only fires on mouse release, which can be much later.
+anchorFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
+anchorFrame:SetScript("OnEvent", function(self)
+    self:StopMovingOrSizing()
+end)
+
 local function RegisterButtonEvents(frame)
     -- frame:RegisterForDrag("LeftButton")
     frame:SetScript("OnDragStart", function()
@@ -53,7 +61,11 @@ local function RegisterButtonEvents(frame)
         anchorFrame:SetUserPlaced(false)
     end)
     frame:SetScript("OnDragStop", function()
-        if InCombatLockdown() then return end
+        -- Combat fix: ALWAYS stop moving, even in combat. anchorFrame is a plain
+        -- (non-secure) frame, so StopMovingOrSizing is NOT combat-protected. The
+        -- previous InCombatLockdown() early-return meant that if combat started
+        -- mid-drag, releasing the mouse never stopped movement and the frame
+        -- stayed stuck to the cursor until /reload.
         anchorFrame:StopMovingOrSizing()
         P.SavePosition(anchorFrame, Cell.vars.currentLayoutTable["main"]["position"])
     end)
