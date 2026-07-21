@@ -393,10 +393,11 @@ end
 -------------------------------------------------
 -- create text
 -------------------------------------------------
-local flipBookFrames = {
-    ["A"] = 31,
-    ["B"] = 30,
-    ["C"] = 25,
+local flipBookInfo = {
+    -- [type] = { rows, columns, totalFrames }
+    ["A"] = {8, 4, 31},
+    ["B"] = {8, 4, 30},
+    ["C"] = {8, 4, 25},
 }
 
 function U.CreateDispelRequestText(parent)
@@ -407,33 +408,50 @@ function U.CreateDispelRequestText(parent)
     drText:Hide()
 
     local tex = drText:CreateTexture(nil, "ARTWORK")
-    -- tex:SetTexture("Interface/AddOns/Cell/Media/FlipBooks/dispel.png")
-    --tex:SetAtlas("UI-HUD-ActionBar-GCD-Flipbook")
-    --tex:SetTexture("interface/hud/uiactionbarfx")
-    --tex:SetTexCoord(0.412598, 0.458496, 0.393555, 0.898438) -- NOTE: SetTexCoord will NOT work
     tex:SetAllPoints(drText)
-    tex:SetParentKey("Flipbook")
 
-    local ag = drText:CreateAnimationGroup()
-    ag:SetLooping("REPEAT")
+    --! WotLK 3.3.5a has NO FlipBook animation type. In retail the dispel icon is
+    --! a sprite-sheet (rows x columns grid) animated by CreateAnimation("FlipBook"),
+    --! which cycles through the cells. The polyfills turn "FlipBook" into a no-op
+    --! Alpha animation and stub SetFlipBook*/SetChildKey/SetParentKey, so nothing
+    --! ever cycled: SetTexture drew the ENTIRE sheet at once (a garbled grid of
+    --! tiny frames) whenever a dispel request arrived. Emulate the flipbook by
+    --! stepping SetTexCoord over the grid on OnUpdate (fires only while shown).
+    local floor = math.floor
+    local rows, columns, totalFrames = 8, 4, 31
+    local duration = 1 -- seconds per full loop (retail used flip:SetDuration(1))
+    local frameIndex, elapsed = 0, 0
 
-    local flip = ag:CreateAnimation("FlipBook")
-    flip:SetDuration(1)
-    flip:SetFlipBookRows(8)
-    flip:SetFlipBookColumns(4)
-    flip:SetFlipBookFrames(31)
-    --flip:SetFlipBookFrameWidth(0)
-    --flip:SetFlipBookFrameHeight(0)
-    flip:SetChildKey("Flipbook")
+    local function ShowFrame(i)
+        local col = i % columns
+        local row = floor(i / columns)
+        tex:SetTexCoord(col / columns, (col + 1) / columns, row / rows, (row + 1) / rows)
+    end
+
+    drText:SetScript("OnUpdate", function(self, elap)
+        elapsed = elapsed + elap
+        local step = duration / totalFrames
+        while elapsed >= step do
+            elapsed = elapsed - step
+            frameIndex = (frameIndex + 1) % totalFrames
+            ShowFrame(frameIndex)
+        end
+    end)
 
     function drText:Display()
-        drText:Show()
-        ag:Play()
+        frameIndex, elapsed = 0, 0
+        ShowFrame(0)
+        drText:Show() -- OnUpdate only fires while shown, so the loop is self-gating
     end
 
     function drText:SetType(type)
         tex:SetTexture("Interface/AddOns/Cell/Media/FlipBooks/dispel_"..type..".png")
-        flip:SetFlipBookFrames(flipBookFrames[type])
+        local info = flipBookInfo[type]
+        if info then
+            rows, columns, totalFrames = info[1], info[2], info[3]
+        end
+        frameIndex, elapsed = 0, 0
+        ShowFrame(0)
     end
 
     function drText:SetColor(color)
