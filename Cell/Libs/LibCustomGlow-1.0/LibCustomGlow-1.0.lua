@@ -376,6 +376,13 @@ function lib.PixelGlow_Start(r,color,N,frequency,length,th,xOffset,yOffset,borde
             -- WotLK: AddMaskTexture may not exist
             if f.bg.AddMaskTexture then
                 f.bg:AddMaskTexture(f.masks[2])
+            else
+                -- WotLK 3.3.5a: no mask texture API. In retail this dark bg is
+                -- clipped by masks[2] down to a thin border band. Unmasked, its
+                -- SetAllPoints(f) makes it a solid 0.1,0.1,0.1,0.8 rectangle over
+                -- the ENTIRE unit frame (the "dark texture on frame" bug). It
+                -- cannot be confined to the border without a mask, so hide it.
+                f.bg:Hide()
             end
         end
     else
