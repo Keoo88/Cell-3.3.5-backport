@@ -270,11 +270,25 @@ if Cell.isRetail then
             end
         ]])
 
-        wrapFrame:WrapScript(b, "OnEnter", [[
-            -- print("OnEnter")
-            if mouseoverbutton then mouseoverbutton:ClearBindings() end --! NOTE: 鼠标放在过远单位上->被挡住->移走->移至可用单位再移出，会发现之前的不可用单位的按键绑定仍未取消
-            mouseoverbutton = self
-        ]])
+        --! Wrap OnEnter exactly once per button. WrapScript ACCUMULATES wrappers
+        --! and never unwraps, and SetBindingClicks runs on every OnShow, so in a
+        --! raid the wrappers stack until entering a frame overflows ("chunk has
+        --! too many syntax levels") and ALL mouseover click-casting dies until
+        --! the next /reload.
+        if not b._cellOnEnterWrapped then
+            b._cellOnEnterWrapped = true
+            wrapFrame:WrapScript(b, "OnEnter", [[
+                -- print("OnEnter")
+                if mouseoverbutton then mouseoverbutton:ClearBindings() end
+                mouseoverbutton = self
+            ]])
+
+            --! Clear the tracked button on hide so a later poke cannot hit a
+            --! stale frame handle ("Invalid frame handle") after it hides.
+            wrapFrame:WrapScript(b, "OnHide", [[
+                if mouseoverbutton == self then mouseoverbutton = nil end
+            ]])
+        end
 
         --! NOTE: if another frame shows in front of b, _onleave will NOT trigger. Use WrapScript to solve this issue.
         b:SetAttribute("_onleave", [[
@@ -348,22 +362,29 @@ else
             end
         ]])
 
-        wrapFrame:WrapScript(b, "OnEnter", [[
-            -- print("OnEnter")
-            if mouseoverbutton then
-                --! NOTE: 鼠标放在过远单位上->被挡住->移走->移至可用单位再移出，会发现之前的不可用单位的按键绑定仍未取消
-                mouseoverbutton:ClearBindings()
+        if not b._cellOnEnterWrapped then
+            b._cellOnEnterWrapped = true
+            wrapFrame:WrapScript(b, "OnEnter", [[
+                -- print("OnEnter")
+                if mouseoverbutton then
+                    mouseoverbutton:ClearBindings()
 
-                --! vehicle (previous button)
-                local oldUnit = mouseoverbutton:GetAttribute("oldUnit")
-                if oldUnit then
-                    -- print("wrap restore unit")
-                    mouseoverbutton:SetAttribute("unit", oldUnit)
-                    mouseoverbutton:SetAttribute("oldUnit", nil)
+                    --! vehicle (previous button)
+                    local oldUnit = mouseoverbutton:GetAttribute("oldUnit")
+                    if oldUnit then
+                        mouseoverbutton:SetAttribute("unit", oldUnit)
+                        mouseoverbutton:SetAttribute("oldUnit", nil)
+                    end
                 end
-            end
-            mouseoverbutton = self
-        ]])
+                mouseoverbutton = self
+            ]])
+
+            --! Clear the tracked button on hide so a later poke cannot hit a
+            --! stale frame handle ("Invalid frame handle") after it hides.
+            wrapFrame:WrapScript(b, "OnHide", [[
+                if mouseoverbutton == self then mouseoverbutton = nil end
+            ]])
+        end
 
         --! NOTE: if another frame shows in front of b, _onleave will NOT trigger. Use WrapScript to solve this issue.
         b:SetAttribute("_onleave", [[
@@ -611,7 +632,7 @@ local function ApplyClickCastings(b)
                 condition = F.IsResurrectionForDead(spellName) and ",dead" or ",nodead"
             end
 
-            local unit = Cell.isRetail and "@mouseover" or "@cell"
+            local unit = Cell.isRetail and "@mouseover,exists" or "@cell,exists"
 
             -- "sMaRt" resurrection
             local sMaRt = ""

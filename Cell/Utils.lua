@@ -2375,15 +2375,12 @@ local harmItems = {
 --     end
 -- end
 
-local UnitInSpellRange
-if C_Spell and C_Spell.IsSpellInRange then
-    UnitInSpellRange = function(spellName, unit)
-        return IsSpellInRange(spellName, unit)
-    end
-else
-    UnitInSpellRange = function(spellName, unit)
-        return IsSpellInRange(spellName, unit) == 1
-    end
+--! WotLK 3.3.5a only: native IsSpellInRange -- and the ClassicAPI alias
+--! C_Spell.IsSpellInRange = IsSpellInRange -- returns 1/0/nil, NOT a boolean.
+--! The old C_Spell branch returned the raw value, and 0 (out of range) is
+--! truthy in Lua, so range checks treated every unit as in-range. Always == 1.
+local UnitInSpellRange = function(spellName, unit)
+    return IsSpellInRange(spellName, unit) == 1
 end
 
 local rc = CreateFrame("Frame")
@@ -2447,9 +2444,12 @@ function F.IsInRange(unit, check)
     if UnitIsUnit("player", unit) then
         return true
 
-    elseif not check and F.UnitInGroup(unit) then
+    elseif not check and Cell.isRetail and F.UnitInGroup(unit) then
         -- NOTE: UnitInRange only works with group players/pets
         --! but not available for PLAYER PET when SOLO
+        --! WotLK/ClassicAPI: UnitInRange is a fixed ~28yd interact check (not spell
+        --! range), so gate it behind isRetail and fall through to the spell-based
+        --! path below for correct ~40yd healer range on classic.
         local inRange, checked = UnitInRange(unit)
         if not checked then
             return F.IsInRange(unit, true)

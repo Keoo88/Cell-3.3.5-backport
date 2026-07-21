@@ -3126,6 +3126,12 @@ Cell.vars.guids = {} -- guid to unitid
 Cell.vars.names = {} -- name to unitid
 
 local function UnitButton_OnShow(self)
+    --! WotLK 3.3.5a: some header update paths can leave raid buttons
+    --! non-interactive (dead mouseover/clicks) until /reload. Force it on show.
+    if not self:IsMouseEnabled() then
+        self:EnableMouse(true)
+    end
+
     self._updateRequired = 1 -- prevent UnitButton_UpdateAll twice. when convert party <-> raid, GROUP_ROSTER_UPDATE fired.
     self._powerUpdateRequired = 1
     UnitButton_RegisterEvents(self)
@@ -3270,6 +3276,22 @@ local function UnitButton_OnTick(self)
     self.__tickCount = e
 
     UnitButton_UpdateInRange(self)
+
+    --! WotLK 3.3.5a: UNIT_HEALTH_FREQUENT does not exist and UNIT_HEALTH is
+    --! server-throttled (worse in big raids), so health bars can lag. Poll for
+    --! changes here as a fallback. Change-detected, so an unchanged unit costs
+    --! only a couple of API reads and triggers no redraw.
+    if self._indicatorsReady and not self._updateRequired and self.states.displayedUnit then
+        local u = self.states.displayedUnit
+        if UnitHealthMax(u) ~= self.states.healthMax then
+            UnitButton_UpdateHealthMax(self)
+            UnitButton_UpdateHealth(self)
+            UnitButton_UpdateHealPrediction(self)
+        elseif UnitHealth(u) ~= self.states.health then
+            UnitButton_UpdateHealth(self)
+            UnitButton_UpdateHealPrediction(self)
+        end
+    end
 
     if self._updateRequired and self._indicatorsReady then
         self._updateRequired = nil
@@ -4005,6 +4027,10 @@ local DumbFunc = function() end
 
 function CellUnitButton_OnLoad(button)
     local name = button:GetName()
+
+    --! Keep mouse interaction enabled on header-generated secure buttons; some
+    --! WotLK header update paths can leave raid buttons non-interactive.
+    button:EnableMouse(true)
 
     --! WotLK 3.3.5a: Auto-register raid buttons created by SecureGroupHeader
     if name and name:find("CellRaidFrame") then
