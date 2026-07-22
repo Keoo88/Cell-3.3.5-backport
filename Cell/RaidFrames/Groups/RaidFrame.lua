@@ -118,7 +118,7 @@ do
     combinedHeader:SetAttribute("yOffset", -1)
     combinedHeader:SetAttribute("unitsPerColumn", 5)
     combinedHeader:SetAttribute("maxColumns", 8)
-    -- combinedHeader:SetAttribute("showRaid", true)
+    combinedHeader:SetAttribute("showRaid", true)
 
     combinedHeader:SetAttribute("startingIndex", -39)
     combinedHeader:Show()

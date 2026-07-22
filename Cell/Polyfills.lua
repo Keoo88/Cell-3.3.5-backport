@@ -3600,3 +3600,408 @@ if not BackdropTemplateMixin then
     -- Create an empty mixin (backdrop functions already exist natively in Wrath)
     BackdropTemplateMixin = {}
 end
+
+-------------------------------------------------
+-- WotLK 3.3.5a: Sort By Role support for secure group headers
+-- The stock 3.3.5a SecureGroupHeader_Update only understands groupBy values
+-- nil / "GROUP" / "CLASS" / "ROLE". Cell requests groupBy = "ASSIGNEDROLE"
+-- (LFD-style TANK/HEALER/DAMAGER), which the stock client silently ignores, so
+-- role sorting never happens. Below we install a faithful copy of the 3.3.5a
+-- FrameXML SecureGroupHeader_Update with one extra grouping branch for
+-- ASSIGNEDROLE. Any header that is NOT using ASSIGNEDROLE is handed straight
+-- back to the original client function, so nothing else about grouping,
+-- filtering or layout changes (zero regression on the existing behavior).
+-------------------------------------------------
+do
+    local _orig_SecureGroupHeader_Update = SecureGroupHeader_Update
+    if type(_orig_SecureGroupHeader_Update) == "function" then
+        local select = select
+        local tonumber = tonumber
+        local type = type
+        local ceil = math.ceil
+        local min = math.min
+        local max = math.max
+        local abs = math.abs
+        local strsplit = strsplit
+        local tinsert = table.insert
+        local wipe = wipe or table.wipe
+        local strtrim = strtrim or string.trim
+        local CallRestrictedClosure = CallRestrictedClosure
+        local GetManagedEnvironment = GetManagedEnvironment
+        local GetFrameHandle = GetFrameHandle
+
+        local function getRelativePointAnchor(point)
+            point = point:upper()
+            if (point == "TOP") then
+                return "BOTTOM", 0, -1
+            elseif (point == "BOTTOM") then
+                return "TOP", 0, 1
+            elseif (point == "LEFT") then
+                return "RIGHT", 1, 0
+            elseif (point == "RIGHT") then
+                return "LEFT", -1, 0
+            elseif (point == "TOPLEFT") then
+                return "BOTTOMRIGHT", 1, -1
+            elseif (point == "TOPRIGHT") then
+                return "BOTTOMLEFT", -1, -1
+            elseif (point == "BOTTOMLEFT") then
+                return "TOPRIGHT", 1, 1
+            elseif (point == "BOTTOMRIGHT") then
+                return "TOPLEFT", -1, 1
+            else
+                return "CENTER", 0, 0
+            end
+        end
+
+        local function setAttributesWithoutResponse(self, ...)
+            local oldIgnore = self:GetAttribute("_ignore")
+            self:SetAttribute("_ignore", "attributeChanges")
+            for i = 1, select('#', ...), 2 do
+                self:SetAttribute(select(i, ...))
+            end
+            self:SetAttribute("_ignore", oldIgnore)
+        end
+
+        local function SetupUnitButtonConfiguration(header, newChild, defaultConfigFunction)
+            local configCode = header:GetAttribute("initialConfigFunction") or defaultConfigFunction
+            if (type(configCode) == "string") then
+                local selfHandle = GetFrameHandle(newChild)
+                if (selfHandle) then
+                    CallRestrictedClosure("self", GetManagedEnvironment(header, true),
+                        selfHandle, configCode, selfHandle)
+                end
+            end
+        end
+
+        local function configureChildren(self, unitTable)
+            local point = self:GetAttribute("point") or "TOP"
+            local relativePoint, xOffsetMult, yOffsetMult = getRelativePointAnchor(point)
+            local xMultiplier, yMultiplier = abs(xOffsetMult), abs(yOffsetMult)
+            local xOffset = self:GetAttribute("xOffset") or 0
+            local yOffset = self:GetAttribute("yOffset") or 0
+            local sortDir = self:GetAttribute("sortDir") or "ASC"
+            local columnSpacing = self:GetAttribute("columnSpacing") or 0
+            local startingIndex = self:GetAttribute("startingIndex") or 1
+
+            local unitCount = #unitTable
+            local numDisplayed = unitCount - (startingIndex - 1)
+            local unitsPerColumn = self:GetAttribute("unitsPerColumn")
+            local numColumns
+            if ( unitsPerColumn and numDisplayed > unitsPerColumn ) then
+                numColumns = min( ceil(numDisplayed / unitsPerColumn), (self:GetAttribute("maxColumns") or 1) )
+            else
+                unitsPerColumn = numDisplayed
+                numColumns = 1
+            end
+            local loopStart = startingIndex
+            local loopFinish = min((startingIndex - 1) + unitsPerColumn * numColumns, unitCount)
+            local step = 1
+
+            numDisplayed = loopFinish - (loopStart - 1)
+
+            if ( sortDir == "DESC" ) then
+                loopStart = unitCount - (startingIndex - 1)
+                loopFinish = loopStart - (numDisplayed - 1)
+                step = -1
+            end
+
+            local needButtons = max(1, numDisplayed)
+            if not ( self:GetAttribute("child"..needButtons) ) then
+                local buttonTemplate = self:GetAttribute("template")
+                local templateType = self:GetAttribute("templateType") or "Button"
+                local name = self:GetName()
+                for i = 1, needButtons, 1 do
+                    local childAttr = "child" .. i
+                    if not ( self:GetAttribute(childAttr) ) then
+                        local newButton = CreateFrame(templateType, name and (name.."UnitButton"..i), self, buttonTemplate)
+                        self[i] = newButton
+                        SetupUnitButtonConfiguration(self, newButton)
+                        setAttributesWithoutResponse(self, childAttr, newButton, "frameref-"..childAttr, GetFrameHandle(newButton))
+                    end
+                end
+            end
+
+            local columnAnchorPoint, columnRelPoint, colxMulti, colyMulti
+            if ( numColumns > 1 ) then
+                columnAnchorPoint = self:GetAttribute("columnAnchorPoint")
+                columnRelPoint, colxMulti, colyMulti = getRelativePointAnchor(columnAnchorPoint)
+            end
+
+            local buttonNum = 0
+            local columnNum = 1
+            local columnUnitCount = 0
+            local currentAnchor = self
+            for i = loopStart, loopFinish, step do
+                buttonNum = buttonNum + 1
+                columnUnitCount = columnUnitCount + 1
+                if ( columnUnitCount > unitsPerColumn ) then
+                    columnUnitCount = 1
+                    columnNum = columnNum + 1
+                end
+
+                local unitButton = self:GetAttribute("child"..buttonNum)
+                if ( buttonNum == 1 ) then
+                    unitButton:SetPoint(point, currentAnchor, point, 0, 0)
+                    if ( columnAnchorPoint ) then
+                        unitButton:SetPoint(columnAnchorPoint, currentAnchor, columnAnchorPoint, 0, 0)
+                    end
+                elseif ( columnUnitCount == 1 ) then
+                    local columnAnchor = self:GetAttribute("child"..(buttonNum - unitsPerColumn))
+                    unitButton:SetPoint(columnAnchorPoint, columnAnchor, columnRelPoint, colxMulti * columnSpacing, colyMulti * columnSpacing)
+                else
+                    unitButton:SetPoint(point, currentAnchor, relativePoint, xMultiplier * xOffset, yMultiplier * yOffset)
+                end
+                unitButton:SetAttribute("unit", unitTable[i])
+
+                local configCode = unitButton:GetAttribute("refreshUnitChange")
+                if ( type(configCode) == "string" ) then
+                    local selfHandle = GetFrameHandle(unitButton)
+                    if ( selfHandle ) then
+                        CallRestrictedClosure("self",
+                            GetManagedEnvironment(unitButton, true),
+                            selfHandle, configCode, selfHandle)
+                    end
+                end
+
+                if not unitButton:GetAttribute("statehidden") then
+                    unitButton:Show()
+                end
+
+                currentAnchor = unitButton
+            end
+            repeat
+                buttonNum = buttonNum + 1
+                local unitButton = self:GetAttribute("child"..buttonNum)
+                if ( unitButton ) then
+                    unitButton:Hide()
+                    unitButton:ClearAllPoints()
+                    unitButton:SetAttribute("unit", nil)
+                end
+            until not ( unitButton )
+
+            local unitButton = self:GetAttribute("child1")
+            local unitButtonWidth = unitButton:GetWidth()
+            local unitButtonHeight = unitButton:GetHeight()
+            if ( numDisplayed > 0 ) then
+                local width = xMultiplier * (unitsPerColumn - 1) * unitButtonWidth + ( (unitsPerColumn - 1) * (xOffset * xOffsetMult) ) + unitButtonWidth
+                local height = yMultiplier * (unitsPerColumn - 1) * unitButtonHeight + ( (unitsPerColumn - 1) * (yOffset * yOffsetMult) ) + unitButtonHeight
+
+                if ( numColumns > 1 ) then
+                    width = width + ( (numColumns - 1) * abs(colxMulti) * (width + columnSpacing) )
+                    height = height + ( (numColumns - 1) * abs(colyMulti) * (height + columnSpacing) )
+                end
+
+                self:SetWidth(width)
+                self:SetHeight(height)
+            else
+                local minWidth = self:GetAttribute("minWidth") or (yMultiplier * unitButtonWidth)
+                local minHeight = self:GetAttribute("minHeight") or (xMultiplier * unitButtonHeight)
+                self:SetWidth( max(minWidth, 0.1) )
+                self:SetHeight( max(minHeight, 0.1) )
+            end
+        end
+
+        local function GetGroupHeaderType(self)
+            local kind, start, stop
+            local nRaid = GetNumRaidMembers()
+            local nParty = GetNumPartyMembers()
+            if ( nRaid > 0 and self:GetAttribute("showRaid") ) then
+                kind = "RAID"
+            elseif ( (nRaid > 0 or nParty > 0) and self:GetAttribute("showParty") ) then
+                kind = "PARTY"
+            elseif ( self:GetAttribute("showSolo") ) then
+                kind = "SOLO"
+            end
+            if ( kind ) then
+                if ( kind == "RAID" ) then
+                    start = 1
+                    stop = nRaid
+                else
+                    if ( kind == "SOLO" or self:GetAttribute("showPlayer") ) then
+                        start = 0
+                    else
+                        start = 1
+                    end
+                    stop = nParty
+                end
+            end
+            return kind, start, stop
+        end
+
+        local function GetGroupRosterInfo(kind, index)
+            local _, unit, name, subgroup, className, role, server
+            if ( kind == "RAID" ) then
+                unit = "raid"..index
+                name, _, subgroup, _, _, className, _, _, _, role = GetRaidRosterInfo(index)
+            else
+                if ( index > 0 ) then
+                    unit = "party"..index
+                else
+                    unit = "player"
+                end
+                if ( UnitExists(unit) ) then
+                    name, server = UnitName(unit)
+                    if (server and server ~= "") then
+                        name = name.."-"..server
+                    end
+                    _, className = UnitClass(unit)
+                    if ( GetPartyAssignment("MAINTANK", unit) ) then
+                        role = "MAINTANK"
+                    elseif ( GetPartyAssignment("MAINASSIST", unit) ) then
+                        role = "MAINASSIST"
+                    end
+                end
+                subgroup = 1
+            end
+            return unit, name, subgroup, className, role
+        end
+
+        local function fillTable(tbl, ...)
+            for i = 1, select("#", ...), 1 do
+                local key = select(i, ...)
+                key = tonumber(key) or strtrim(key)
+                tbl[key] = i
+            end
+        end
+
+        local function doubleFillTable(tbl, ...)
+            fillTable(tbl, ...)
+            for i = 1, select("#", ...), 1 do
+                tbl[i] = strtrim(select(i, ...))
+            end
+        end
+
+        local tokenTable = {}
+        local sortingTable = {}
+        local groupingTable = {}
+
+        local function sortOnGroupWithNames(a, b)
+            local order1 = tokenTable[ groupingTable[a] ]
+            local order2 = tokenTable[ groupingTable[b] ]
+            if ( order1 ) then
+                if ( not order2 ) then
+                    return true
+                else
+                    if ( order1 == order2 ) then
+                        return sortingTable[a] < sortingTable[b]
+                    else
+                        return order1 < order2
+                    end
+                end
+            else
+                if ( order2 ) then
+                    return false
+                else
+                    return sortingTable[a] < sortingTable[b]
+                end
+            end
+        end
+
+        local function sortOnGroupWithIDs(a, b)
+            local order1 = tokenTable[ groupingTable[a] ]
+            local order2 = tokenTable[ groupingTable[b] ]
+            if ( order1 ) then
+                if ( not order2 ) then
+                    return true
+                else
+                    if ( order1 == order2 ) then
+                        return tonumber(a:match("%d+") or -1) < tonumber(b:match("%d+") or -1)
+                    else
+                        return order1 < order2
+                    end
+                end
+            else
+                if ( order2 ) then
+                    return false
+                else
+                    return tonumber(a:match("%d+") or -1) < tonumber(b:match("%d+") or -1)
+                end
+            end
+        end
+
+        local function sortOnNames(a, b)
+            return sortingTable[a] < sortingTable[b]
+        end
+
+        local function sortOnNameList(a, b)
+            return tokenTable[ sortingTable[a] ] < tokenTable[ sortingTable[b] ]
+        end
+
+        function SecureGroupHeader_Update(self)
+            if ( self:GetAttribute("groupBy") ~= "ASSIGNEDROLE" ) then
+                return _orig_SecureGroupHeader_Update(self)
+            end
+
+            local nameList = self:GetAttribute("nameList")
+            local groupFilter = self:GetAttribute("groupFilter")
+            local sortMethod = self:GetAttribute("sortMethod")
+            local groupBy = self:GetAttribute("groupBy")
+
+            wipe(sortingTable)
+
+            local kind, start, stop = GetGroupHeaderType(self)
+            if ( not kind ) then
+                configureChildren(self, sortingTable)
+                return
+            end
+
+            if ( not groupFilter and not nameList ) then
+                groupFilter = "1,2,3,4,5,6,7,8"
+            end
+
+            if ( groupFilter ) then
+                fillTable(wipe(tokenTable), strsplit(",", groupFilter))
+                local strictFiltering = self:GetAttribute("strictFiltering")
+                for i = start, stop, 1 do
+                    local unit, name, subgroup, className, role = GetGroupRosterInfo(kind, i)
+                    if ( name and
+                        ((not strictFiltering) and
+                        (tokenTable[subgroup] or tokenTable[className] or (role and tokenTable[role]))
+                        ) or
+                        (tokenTable[subgroup] and tokenTable[className])
+                    ) then
+                        tinsert(sortingTable, unit)
+                        sortingTable[unit] = name
+                        if ( groupBy == "GROUP" ) then
+                            groupingTable[unit] = subgroup
+                        elseif ( groupBy == "CLASS" ) then
+                            groupingTable[unit] = className
+                        elseif ( groupBy == "ROLE" ) then
+                            groupingTable[unit] = role
+                        elseif ( groupBy == "ASSIGNEDROLE" ) then
+                            groupingTable[unit] = Cell_UnitGroupRolesAssigned(unit) or "NONE"
+                        end
+                    end
+                end
+
+                if ( groupBy ) then
+                    local groupingOrder = self:GetAttribute("groupingOrder") or ""
+                    doubleFillTable(wipe(tokenTable), strsplit(",", (groupingOrder:gsub("%s+", ""))))
+                    if ( sortMethod == "NAME" ) then
+                        table.sort(sortingTable, sortOnGroupWithNames)
+                    else
+                        table.sort(sortingTable, sortOnGroupWithIDs)
+                    end
+                elseif ( sortMethod == "NAME" ) then
+                    table.sort(sortingTable, sortOnNames)
+                end
+            else
+                doubleFillTable(wipe(tokenTable), strsplit(",", nameList))
+                for i = start, stop, 1 do
+                    local unit, name = GetGroupRosterInfo(kind, i)
+                    if ( tokenTable[name] ) then
+                        tinsert(sortingTable, unit)
+                        sortingTable[unit] = name
+                    end
+                end
+                if ( sortMethod == "NAME" ) then
+                    table.sort(sortingTable, sortOnNames)
+                elseif ( sortMethod == "NAMELIST" ) then
+                    table.sort(sortingTable, sortOnNameList)
+                end
+            end
+
+            configureChildren(self, sortingTable)
+        end
+    end
+end

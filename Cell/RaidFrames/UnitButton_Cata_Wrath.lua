@@ -3626,7 +3626,9 @@ function B.SetOrientation(button, orientation, rotateTexture)
     healthBar:SetRotatesTexture(rotateTexture)
     powerBar:SetRotatesTexture(rotateTexture)
 
-    button.indicators.healthThresholds:SetOrientation(orientation)
+    if button.indicators.healthThresholds then
+        button.indicators.healthThresholds:SetOrientation(orientation)
+    end
 
     if rotateTexture then
         F.RotateTexture(healthBarLoss, 90)

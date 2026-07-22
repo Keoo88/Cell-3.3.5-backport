@@ -128,33 +128,27 @@ function I.CreateStatusIcon(parent)
     bar.elapsedTime = 0
     bar:SetScript("OnUpdate", function(self, elapsed)
         if bar.elapsedTime >= 0.25 then
-            --! self-heal: on 3.3.5a the "Resurrecting" aura (160029) does not
-            --! exist, so the SPELL_AURA_REMOVED / FindAuraById clear path is dead
-            --! and the icon would otherwise linger until the 60s fallback timer
-            --! whenever a clean dead->alive transition is missed. Hide as soon as
-            --! the unit is actually alive again.
-            local u = parent.states.unit
-            if u and not UnitIsDeadOrGhost(u) then
-                local g = parent.states.guid
-                if g then rez[g] = nil end
-                resurrectionIcon:Hide()
-                return
-            end
             bar:SetValue(bar:GetValue() + bar.elapsedTime)
             bar.elapsedTime = 0
         end
         bar.elapsedTime = bar.elapsedTime + elapsed
     end)
 
-    local mask = resurrectionIcon:CreateMaskTexture()
-    mask:SetTexture(Cell.vars.whiteTexture, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
-    mask:SetPoint("TOPLEFT", bar:GetStatusBarTexture(), "BOTTOMLEFT")
-    mask:SetPoint("BOTTOMRIGHT")
+    --! WotLK 3.3.5a: CreateMaskTexture (8.0+) does not exist, returns nil.
+    local mask
+    if not Cell.isWrath then
+        mask = resurrectionIcon:CreateMaskTexture()
+        mask:SetTexture(Cell.vars.whiteTexture, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+        mask:SetPoint("TOPLEFT", bar:GetStatusBarTexture(), "BOTTOMLEFT")
+        mask:SetPoint("BOTTOMRIGHT")
+    end
 
     local maskIcon = bar:CreateTexture(nil, "ARTWORK")
     maskIcon:SetAllPoints(resurrectionIcon)
     maskIcon:SetTexture("Interface\\RaidFrame\\Raid-Icon-Rez")
-    maskIcon:AddMaskTexture(mask)
+    if mask then
+        maskIcon:AddMaskTexture(mask)
+    end
 
     function resurrectionIcon:SetTimer(start, duration)
         resurrectionIcon:Hide() -- pause OnUpdate

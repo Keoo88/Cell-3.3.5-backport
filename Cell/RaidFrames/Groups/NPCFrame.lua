@@ -192,7 +192,27 @@ for i = 1, 8 do
         local unitSpacing = self:GetAttribute("unitSpacing")
 
         local npcFrame = self:GetFrameRef("npcFrame")
-        self:RunFor(npcFrame, npcFrame:GetAttribute("pointUpdater"), orientation, point, anchorPoint, unitSpacing)
+        -- WotLK: neither RunAttribute nor RunFor exist in the restricted
+        -- environment; inline the npc button re-anchor loop directly.
+        local last
+        for i = 1, 8 do
+            local button = npcFrame:GetFrameRef("button"..i)
+            if button then
+                button:ClearAllPoints()
+                if button:IsVisible() then
+                    if last then
+                        if orientation == "vertical" then
+                            button:SetPoint(point, last, anchorPoint, 0, unitSpacing)
+                        else
+                            button:SetPoint(point, last, anchorPoint, unitSpacing, 0)
+                        end
+                    else
+                        button:SetPoint("TOPLEFT", npcFrame)
+                    end
+                    last = button
+                end
+            end
+        end
     ]])
     -- WotLK: RunAttribute doesn't exist, inline the pointUpdater logic
     button.helper:SetAttribute("_onshow", [[
@@ -202,7 +222,27 @@ for i = 1, 8 do
         local unitSpacing = self:GetAttribute("unitSpacing")
 
         local npcFrame = self:GetFrameRef("npcFrame")
-        self:RunFor(npcFrame, npcFrame:GetAttribute("pointUpdater"), orientation, point, anchorPoint, unitSpacing)
+        -- WotLK: neither RunAttribute nor RunFor exist in the restricted
+        -- environment; inline the npc button re-anchor loop directly.
+        local last
+        for i = 1, 8 do
+            local button = npcFrame:GetFrameRef("button"..i)
+            if button then
+                button:ClearAllPoints()
+                if button:IsVisible() then
+                    if last then
+                        if orientation == "vertical" then
+                            button:SetPoint(point, last, anchorPoint, 0, unitSpacing)
+                        else
+                            button:SetPoint(point, last, anchorPoint, unitSpacing, 0)
+                        end
+                    else
+                        button:SetPoint("TOPLEFT", npcFrame)
+                    end
+                    last = button
+                end
+            end
+        end
     ]])
     button.helper:SetAttribute("_onhide", [[
         local orientation = self:GetAttribute("orientation")
@@ -211,7 +251,27 @@ for i = 1, 8 do
         local unitSpacing = self:GetAttribute("unitSpacing")
 
         local npcFrame = self:GetFrameRef("npcFrame")
-        self:RunFor(npcFrame, npcFrame:GetAttribute("pointUpdater"), orientation, point, anchorPoint, unitSpacing)
+        -- WotLK: neither RunAttribute nor RunFor exist in the restricted
+        -- environment; inline the npc button re-anchor loop directly.
+        local last
+        for i = 1, 8 do
+            local button = npcFrame:GetFrameRef("button"..i)
+            if button then
+                button:ClearAllPoints()
+                if button:IsVisible() then
+                    if last then
+                        if orientation == "vertical" then
+                            button:SetPoint(point, last, anchorPoint, 0, unitSpacing)
+                        else
+                            button:SetPoint(point, last, anchorPoint, unitSpacing, 0)
+                        end
+                    else
+                        button:SetPoint("TOPLEFT", npcFrame)
+                    end
+                    last = button
+                end
+            end
+        end
     ]])
 end
 
