@@ -515,6 +515,18 @@ end
 
 local function AddToUpdateQueue(b)
     if queue[b] then return end
+    --! WotLK fix: a button that never went through the init path still has
+    --! _waitingForIndicatorCreation set and NO indicator frames created (e.g. the
+    --! combined-header buttons the first time Combine Groups is toggled on: the layout
+    --! name does not change, so UpdateIndicators routes ALL buttons into the update
+    --! queue). The WAITING_FOR_UPDATE branch of Process() force-sets _indicatorsReady
+    --! and runs UnitButton_UpdateAuras, which crashed on self.indicators.debuffs (nil),
+    --! and the OnTick path (_updateRequired) then kept crashing every 0.25s. Route such
+    --! buttons to the INIT queue instead - it creates indicators from the current layout.
+    if b._waitingForIndicatorCreation then
+        AddToInitQueue(b)
+        return
+    end
     b._indicatorsReady = nil
     b._status = WAITING_FOR_UPDATE
     queue[b] = true

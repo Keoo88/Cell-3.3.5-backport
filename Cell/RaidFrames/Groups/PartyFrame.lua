@@ -362,26 +362,24 @@ local function PartyFrame_UpdateLayout(layout, which)
         end
     end
 
-    if not which or which == "sort" then
-        if layout["main"]["sortByRole"] then
-            header:SetAttribute("sortMethod", "NAME")
-            local order = table.concat(layout["main"]["roleOrder"], ",")..",NONE"
-            header:SetAttribute("groupingOrder", order)
-            header:SetAttribute("groupBy", "ASSIGNEDROLE")
-        else
-            header:SetAttribute("sortMethod", "INDEX")
-            header:SetAttribute("groupingOrder", "")
-            header:SetAttribute("groupBy", nil)
-        end
-    end
+    --! WotLK fix: the old "sort" branch set header sorting attributes here
+    --! (sortMethod/groupingOrder/groupBy="ASSIGNEDROLE") - useless on 3.3.5: the party
+    --! buttons are manual (not header-managed) and ASSIGNEDROLE doesn't exist anyway.
+    --! Role sorting is now done by the anchor branch above (which also runs on "sort").
 
     if not which or which == "hideSelf" then
         --! WotLK 3.3.5a: Don't use showPlayer attribute - it triggers auto button creation
         --! Instead, manually show/hide the first button (player button)
+        --! WotLK fix: a bare Hide() never worked - the player button is driven by
+        --! RegisterUnitWatch (see button creation above), and the watch re-shows it
+        --! right away because unit "player" always exists. Toggle the watch itself:
+        --! unregister + hide to conceal, re-register to restore (the watch evaluates
+        --! immediately on register and shows the button again).
         if layout["main"]["hideSelf"] then
+            UnregisterUnitWatch(manualButtons[1])
             manualButtons[1]:Hide()
         else
-            manualButtons[1]:Show()
+            RegisterUnitWatch(manualButtons[1])
         end
     end
 
