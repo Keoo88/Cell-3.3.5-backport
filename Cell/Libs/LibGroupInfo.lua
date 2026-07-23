@@ -681,21 +681,29 @@ local function IterateAllUnits()
         for i = 1, GetNumGroupMembers() do
             local unit = "raid"..i
             local guid = UnitGUID(unit)
-            currentMembers[guid] = true
-            if not (UnitIsUnit(unit, "player") or (cache[guid] and cache[guid].inspected) or queueGUIDs[guid]) then
-                AddToQueue(unit, guid)
+            --! WotLK soloq fix: sparse/unavailable raid slots return a nil GUID
+            --! (solo-queue arena raid groups), which crashed currentMembers[guid]
+            --! with "table index is nil". Skip slots without a resolvable GUID.
+            if guid then
+                currentMembers[guid] = true
+                if not (UnitIsUnit(unit, "player") or (cache[guid] and cache[guid].inspected) or queueGUIDs[guid]) then
+                    AddToQueue(unit, guid)
+                end
             end
         end
-        cache[PLAYER_GUID].unit = "raid"..UnitInRaid("player")
+        local pRaidIndex = UnitInRaid("player")
+        if pRaidIndex then cache[PLAYER_GUID].unit = "raid"..pRaidIndex end
 
     elseif IsInGroup() then
         wasInGroup = true
         for i = 1, GetNumGroupMembers()-1 do
             local unit = "party"..i
             local guid = UnitGUID(unit)
-            currentMembers[guid] = true
-            if not ((cache[guid] and cache[guid].inspected) or queueGUIDs[guid]) then
-                AddToQueue(unit, guid)
+            if guid then
+                currentMembers[guid] = true
+                if not ((cache[guid] and cache[guid].inspected) or queueGUIDs[guid]) then
+                    AddToQueue(unit, guid)
+                end
             end
         end
 
