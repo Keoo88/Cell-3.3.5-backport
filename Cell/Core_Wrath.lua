@@ -547,7 +547,26 @@ Cell.vars.raidSetup = {
 }
 
 function eventFrame:GROUP_ROSTER_UPDATE()
-    if IsInRaid() then
+    --! WotLK 3.3.5a soloq: solo-queue arena puts your team into a RAID group
+    --! (IsInRaid() == true), so Cell registered the group as "raid" and showed
+    --! raid frames. An arena must always use the party (arena) frame like a
+    --! normal 2s/3s. Force party group type while inside an arena instance.
+    --! NOTE: do NOT write instanceType here - PLAYER_ENTERING_WORLD owns it and
+    --! resets it on zone change; writing it here left the layout stuck on arena.
+    local _, _iType = IsInInstance()
+    if _iType == "arena" then
+        if Cell.vars.groupType ~= "party" then
+            Cell.vars.groupType = "party"
+            Cell.Fire("GroupTypeChanged", "party")
+            -- Layout update will be triggered by GroupTypeChanged callback -> PreUpdateLayout
+        end
+
+        -- arena shows the party frame: clear stale raid unit buttons
+        for i = 1, 40 do
+            Cell.unitButtons.raid.units["raid"..i] = nil
+            _G["CellRaidFrameMember"..i] = nil
+        end
+    elseif IsInRaid() then
         if Cell.vars.groupType ~= "raid" then
             Cell.vars.groupType = "raid"
             Cell.Fire("GroupTypeChanged", "raid")
@@ -690,6 +709,23 @@ function eventFrame:PLAYER_ENTERING_WORLD()
 
     if CellDB["firstRun"] then
         F.FirstRun()
+    end
+
+    --! Merged from the duplicate PLAYER_ENTERING_WORLD that used to be defined
+    --! below and silently overwrote this handler (which disabled layout auto-
+    --! switching entirely - arena/bg layouts never applied). On reload/login/
+    --! zone-in, force a roster refresh if we're already grouped so names and
+    --! indicators populate.
+    if IsInRaid() or IsInGroup() then
+        C_Timer.After(0.1, function() eventFrame:GROUP_ROSTER_UPDATE() end)
+        C_Timer.After(0.5, function() eventFrame:GROUP_ROSTER_UPDATE() end)
+        C_Timer.After(0.6, function()
+            if Cell.vars.groupType == "party" or Cell.vars.groupType == "solo" then
+                if Cell.frames.partyFrame and Cell.frames.partyFrame:IsShown() then
+                    Cell.Fire("GroupTypeChanged", "party")
+                end
+            end
+        end)
     end
 end
 
@@ -852,26 +888,6 @@ function eventFrame:PLAYER_TALENT_UPDATE()
     CheckDivineAegis()
     -- UpdateSpecVars(true)
     F.UpdateClickCastingProfileLabel()
-end
-
-function eventFrame:PLAYER_ENTERING_WORLD()
-    -- NOTE: Cell no longer registers with LibSharedMedia
-    -- F.RegisterWithLSM()  -- Now a no-op
-
-    -- On reload/login, force a roster refresh if we're already grouped so names/indicators populate.
-    if IsInRaid() or IsInGroup() then
-        -- Run twice (early and after a short delay) to catch late unit name resolution.
-        C_Timer.After(0.1, function() eventFrame:GROUP_ROSTER_UPDATE() end)
-        C_Timer.After(0.5, function() eventFrame:GROUP_ROSTER_UPDATE() end)
-        -- And force party button sync/update shortly after (covers solo/party)
-        C_Timer.After(0.6, function()
-            if Cell.vars.groupType == "party" or Cell.vars.groupType == "solo" then
-                if Cell.frames.partyFrame and Cell.frames.partyFrame:IsShown() then
-                    Cell.Fire("GroupTypeChanged", "party")
-                end
-            end
-        end)
-    end
 end
 
 eventFrame:SetScript("OnEvent", function(self, event, ...)
