@@ -755,7 +755,8 @@ end
 Cell.RegisterCallback("UpdateClickCastings", "UpdateClickCastings", F.UpdateClickCastings)
 
 local function UpdateQueuedClickCastings()
-    UpdateClickCastings(true, true)
+    -- fix latent upstream bug: bare UpdateClickCastings() global does not exist (only F.UpdateClickCastings)
+    F.UpdateClickCastings(true, true)
 end
 Cell.RegisterCallback("UpdateQueuedClickCastings", "UpdateQueuedClickCastings", UpdateQueuedClickCastings)
 
