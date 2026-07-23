@@ -442,8 +442,10 @@ local function DR_UpdateRequests(which)
             drDisplayType = CellDB["dispelRequest"]["type"]
 
             DR:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
-            DR:RegisterEvent("ENCOUNTER_START")
-            DR:RegisterEvent("ENCOUNTER_END")
+            --! WotLK: ENCOUNTER_START/END do not exist on 3.3.5 (added 5.4) - the
+            --! registrations were silently inert. Kept as documentation of intent.
+            -- DR:RegisterEvent("ENCOUNTER_START")
+            -- DR:RegisterEvent("ENCOUNTER_END")
         else
             DR:UnregisterAllEvents()
         end

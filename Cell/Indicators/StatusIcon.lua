@@ -345,7 +345,7 @@ end
 function I.EnableStatusIcon(enabled)
     if enabled then
         eventFrame:RegisterEvent("INCOMING_RESURRECT_CHANGED")
-        eventFrame:RegisterEvent("UNIT_PHASE")
+        -- eventFrame:RegisterEvent("UNIT_PHASE") --! WotLK: event does not exist on 3.3.5 (added 4.x) - registration was silently inert, the phase icon never triggered this way
         eventFrame:RegisterEvent("PARTY_MEMBER_DISABLE")
         eventFrame:RegisterEvent("PARTY_MEMBER_ENABLE")
         if Cell.isRetail and CELL_SUMMON_ICONS_ENABLED then

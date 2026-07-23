@@ -439,10 +439,13 @@ function I.EnableTargetedSpells(enabled)
         eventFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_UPDATE")
 
         eventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
-        eventFrame:RegisterEvent("NAME_PLATE_UNIT_ADDED")
-        eventFrame:RegisterEvent("NAME_PLATE_UNIT_REMOVED")
+        --! WotLK: NAME_PLATE_UNIT_* (7.0) and ENCOUNTER_END (5.4) do not exist on
+        --! 3.3.5 - these registrations were silently inert (casts are still picked up
+        --! via the UNIT_SPELLCAST_* events above). Kept as documentation of intent.
+        -- eventFrame:RegisterEvent("NAME_PLATE_UNIT_ADDED")
+        -- eventFrame:RegisterEvent("NAME_PLATE_UNIT_REMOVED")
 
-        eventFrame:RegisterEvent("ENCOUNTER_END")
+        -- eventFrame:RegisterEvent("ENCOUNTER_END")
 
         Cell.RegisterCallback("EnterInstance", "TargetedSpells_EnterInstance", EnterLeaveInstance)
         Cell.RegisterCallback("LeaveInstance", "TargetedSpells_LeaveInstance", EnterLeaveInstance)

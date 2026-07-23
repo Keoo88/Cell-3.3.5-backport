@@ -146,7 +146,7 @@ function frame:PLAYER_ENTERING_WORLD()
     if isIn then
         inInstance = true
         if instanceType == "raid" then
-            frame:RegisterEvent("ENCOUNTER_START")
+            -- frame:RegisterEvent("ENCOUNTER_START") --! WotLK: event does not exist on 3.3.5 (added 5.4) - was silently inert; the count reset below still happens on entering a raid instance
             count = 0
         else
             frame:UnregisterEvent("ENCOUNTER_START")
@@ -163,7 +163,7 @@ local timer
 function frame:GROUP_ROSTER_UPDATE()
     if IsInGroup() then
         if IsEncounterInProgress() then
-            frame:RegisterEvent("ENCOUNTER_END")
+            -- frame:RegisterEvent("ENCOUNTER_END") --! WotLK: event does not exist on 3.3.5 (added 5.4) - was silently inert; priority re-check simply waits for the next roster update
         else
             if timer then timer:Cancel() end
             timer = C_Timer.NewTimer(7, function()

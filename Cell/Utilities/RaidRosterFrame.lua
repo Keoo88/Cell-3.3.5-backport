@@ -370,12 +370,15 @@ local function CreateRaidRosterGrid(parent, index)
     end)
 
     -- swap
-    grid:SetScript("OnShow", function()
-        grid:RegisterEvent("GLOBAL_MOUSE_UP")
-    end)
-    grid:SetScript("OnHide", function()
-        grid:UnregisterEvent("GLOBAL_MOUSE_UP")
-    end)
+    --! WotLK: GLOBAL_MOUSE_UP does not exist on 3.3.5 (added 8.1.5) - these
+    --! registrations were silently inert (drag-swap still ends via the buttons'
+    --! own mouse handlers). Kept as documentation of intent.
+    -- grid:SetScript("OnShow", function()
+    --     grid:RegisterEvent("GLOBAL_MOUSE_UP")
+    -- end)
+    -- grid:SetScript("OnHide", function()
+    --     grid:UnregisterEvent("GLOBAL_MOUSE_UP")
+    -- end)
     grid:SetScript("OnEvent", function(self, event)
         if movingGrid and movingGrid ~= self and self:IsMouseOver() then
             if isInstantMode then

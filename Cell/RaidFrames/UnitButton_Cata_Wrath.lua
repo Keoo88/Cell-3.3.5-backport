@@ -1782,6 +1782,8 @@ end
 
 CheckPowerEventRegistration = function(b)
     if b:IsVisible() and not b.isPreview and (b._shouldShowPowerText or b._shouldShowPowerBar) then
+        --! WotLK: UNIT_POWER does not exist on stock 3.3.5 (added in 4.0) - kept for
+        --! custom cores that backported it; the per-power-type events below do the work.
         b:RegisterEvent("UNIT_POWER")
         b:RegisterEvent("UNIT_MANA")
         b:RegisterEvent("UNIT_RAGE")
@@ -2484,9 +2486,8 @@ local blessing
 local lastHealTimeStamp = {}
 
 -- Localized Spell Names
-local PWS_NAME = GetSpellInfo(17) or "Power Word: Shield"
-local DA_NAME = GetSpellInfo(47753) or "Divine Aegis"
--- Localized Spell Names
+--! WotLK fix: removed a literal duplicate of these two locals that immediately
+--! shadowed this pair (cosmetic, backlog item 3)
 local PWS_NAME = GetSpellInfo(17) or "Power Word: Shield"
 local DA_NAME = GetSpellInfo(47753) or "Divine Aegis"
 local PAK_NAME = GetSpellInfo(64413) or "Protection of Ancient Kings"
@@ -2891,9 +2892,14 @@ local function UnitButton_RegisterEvents(self)
     self:RegisterEvent("GROUP_ROSTER_UPDATE")
 
     self:RegisterEvent("UNIT_HEALTH")
+    --! WotLK: UNIT_HEALTH_FREQUENT does not exist on stock 3.3.5 - kept for custom
+    --! cores that backported it (harmless if it never fires; UNIT_HEALTH plus the
+    --! 0.25s change-detected poll in OnTick cover health updates).
     self:RegisterEvent("UNIT_HEALTH_FREQUENT")
     self:RegisterEvent("UNIT_MAXHEALTH")
 
+    --! WotLK: UNIT_POWER does not exist on stock 3.3.5 (added in 4.0) - kept for
+    --! custom cores that backported it; the per-power-type events below do the work.
     self:RegisterEvent("UNIT_POWER")
     self:RegisterEvent("UNIT_MANA")
     self:RegisterEvent("UNIT_RAGE")

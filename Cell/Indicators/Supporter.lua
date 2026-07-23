@@ -262,7 +262,14 @@ end
 -- events
 -------------------------------------------------
 local eventFrame = CreateFrame("Frame")
-eventFrame:RegisterEvent("FIRST_FRAME_RENDERED")
+--! WotLK: FIRST_FRAME_RENDERED does not exist on 3.3.5 (retail event), so this
+--! gate never fired, GROUP_ROSTER_UPDATE below was never registered, and the whole
+--! supporter-badge feature was silently dead. Left INTENTIONALLY dead: the
+--! supporter list (Supporters.lua) is retail player names - meaningless on a 3.3.5
+--! private server - and reviving it would add a group-wide scan after every roster
+--! change for nothing. To revive: RegisterEvent("PLAYER_ENTERING_WORLD") here and
+--! mirror it in the unregister line inside OnEvent below.
+-- eventFrame:RegisterEvent("FIRST_FRAME_RENDERED")
 
 local displays = {
     [true] = Display,
