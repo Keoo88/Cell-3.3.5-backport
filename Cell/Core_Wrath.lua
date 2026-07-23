@@ -726,7 +726,11 @@ function eventFrame:PLAYER_LOGIN()
     eventFrame:RegisterEvent("RAID_ROSTER_UPDATE")
     eventFrame:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
     eventFrame:RegisterEvent("PLAYER_TALENT_UPDATE")
-    eventFrame:RegisterEvent("UI_SCALE_CHANGED")
+    --! WotLK fix: was UI_SCALE_CHANGED - a retail event that does not exist on 3.3.5
+    --! (absent from FrameXML 3.3.5), so the registration was silently inert.
+    --! DISPLAY_SIZE_CHANGED is the native 3.3.5 signal for resolution/window size
+    --! changes (Blizzard's own ContainerFrame relies on it).
+    eventFrame:RegisterEvent("DISPLAY_SIZE_CHANGED")
 
     Cell.vars.playerNameShort = GetUnitName("player")
     Cell.vars.playerNameFull = F.UnitFullName("player")
@@ -798,11 +802,30 @@ local function DelayedUpdatePixels()
     updatePixelsTimer = C_Timer.NewTimer(1, UpdatePixels)
 end
 
-function eventFrame:UI_SCALE_CHANGED()
+--! WotLK fix: was 'function eventFrame:UI_SCALE_CHANGED()' - dead on 3.3.5, the event
+--! does not exist there. DISPLAY_SIZE_CHANGED covers resolution/window size changes.
+function eventFrame:DISPLAY_SIZE_CHANGED()
     DelayedUpdatePixels()
 end
 
 hooksecurefunc(UIParent, "SetScale", DelayedUpdatePixels)
+
+--! WotLK fix: on 3.3.5 Blizzard's Video Options apply uiScale/useUiScale NATIVELY in the
+--! client - UIParent is rescaled without going through the Lua UIParent:SetScale, so the
+--! hook above never fires for them. The options panel does commit the CVars through the
+--! global SetCVar (FrameXML OptionsPanelTemplates.lua:198), so hook that instead.
+--! CVAR_UPDATE is NOT suitable here: on 3.3.5 its arg1 is a global-string tag (not the
+--! CVar name), and the uiscale slider is declared with an empty tag (VideoOptionsPanels.lua:89).
+--! Cross-checked with ElvUI-WotLK: its own UI_SCALE_CHANGED registration is inert too,
+--! it relies on UPDATE_FLOATING_CHAT_WINDOWS + reload popups instead (Core/PixelPerfect.lua).
+hooksecurefunc("SetCVar", function(cvar)
+    if type(cvar) == "string" then
+        cvar = strlower(cvar)
+        if cvar == "uiscale" or cvar == "useuiscale" then
+            DelayedUpdatePixels()
+        end
+    end
+end)
 
 -- WotLK 3.3.5a: Route additional roster events to GROUP_ROSTER_UPDATE handler
 function eventFrame:PARTY_MEMBERS_CHANGED()

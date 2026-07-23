@@ -6,10 +6,16 @@ local GetScreenHeight = GetScreenHeight
 
 local PixelUtil = {};
 
+--! WotLK fix: was reading GetScreenResolutions()[GetCurrentResolution()] directly and
+--! crashed with '768.0 / nil' whenever the lookup failed (GetCurrentResolution can
+--! return 0/nil in windowed mode). Route through GetPhysicalScreenSize (defined below
+--! in this file), which has safe fallbacks, and guard the division.
 function PixelUtil.GetPixelToUIUnitFactor()
-    local physicalWidth, physicalHeight = match((({GetScreenResolutions()})[GetCurrentResolution()] or ""), "(%d+).-(%d+)");
-    physicalWidth, physicalHeight  = tonumber(physicalWidth),tonumber(physicalHeight)
-    return 768.0 / physicalHeight;
+    local _, physicalHeight = GetPhysicalScreenSize();
+    if physicalHeight and physicalHeight > 0 then
+        return 768.0 / physicalHeight;
+    end
+    return 1;
 end
 
 function PixelUtil.GetNearestPixelSize(uiUnitSize, layoutScale, minPixels)
@@ -71,7 +77,28 @@ function PixelUtil.SetStatusBarValue(statusBar, value)
     end
 end
 
+--! WotLK fix: was 'return GetScreenWidth(), GetScreenHeight()' - those return UI UNITS
+--! (height is always ~768 regardless of resolution), so P.GetPixelPerfectScale() was
+--! always 1 and all pixel-perfect math degenerated to identity. It also shadowed the
+--! correct gxResolution-based polyfill in Polyfills.lua ('if not GetPhysicalScreenSize'
+--! there never passes - ClassicAPI loads first per Cell.toc). Real physical pixels come
+--! from the gxResolution CVar (ElvUI-WotLK technique, Core/Core.lua:65), then from the
+--! resolution list, and only then degrade to UI units as a last resort.
 function GetPhysicalScreenSize()
+	local resolution = GetCVar and GetCVar("gxResolution")
+	if resolution then
+		local w, h = match(resolution, "(%d+)x(%d+)")
+		if w and h then
+			return tonumber(w), tonumber(h)
+		end
+	end
+	local index = GetCurrentResolution and GetCurrentResolution()
+	if index and index > 0 then
+		local w, h = match((({GetScreenResolutions()})[index] or ""), "(%d+).-(%d+)")
+		if w and h then
+			return tonumber(w), tonumber(h)
+		end
+	end
 	return GetScreenWidth(), GetScreenHeight()
 end
 
