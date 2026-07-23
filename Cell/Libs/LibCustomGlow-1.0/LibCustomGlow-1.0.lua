@@ -25,6 +25,13 @@ if isRetail then
     shineCoords = {0.8115234375,0.9169921875,0.8798828125,0.9853515625}
 end
 
+--! WotLK fix: bundled textures for glows whose retail art does not exist on 3.3.5.
+--! Interface\SpellActivationOverlay\IconAlert(+Ants) was added in 4.0 and the proc
+--! flipbook sheet is a 10.x atlas, so both "Action Button Glow" and "Proc Glow"
+--! rendered NOTHING on 3.3.5 (SetTexture on a missing file draws nothing at all).
+--! The .blp files are bundled next to this lib, same way WeakAuras-WotLK ships them.
+local texturePath = [[Interface\AddOns\Cell\Libs\LibCustomGlow-1.0\]]
+
 function lib.RegisterTextures(texture,id)
     textureList[id] = texture
 end
@@ -632,14 +639,14 @@ local function configureButtonGlow(f,alpha)
     f.spark = f:CreateTexture(nil, "BACKGROUND")
     f.spark:SetPoint("CENTER")
     f.spark:SetAlpha(0)
-    f.spark:SetTexture([[Interface\SpellActivationOverlay\IconAlert]])
+    f.spark:SetTexture(texturePath .. [[IconAlert]]) --! WotLK fix: bundled (retail path absent on 3.3.5)
     f.spark:SetTexCoord(0.00781250, 0.61718750, 0.00390625, 0.26953125)
 
     -- inner glow
     f.innerGlow = f:CreateTexture(nil, "ARTWORK")
     f.innerGlow:SetPoint("CENTER")
     f.innerGlow:SetAlpha(0)
-    f.innerGlow:SetTexture([[Interface\SpellActivationOverlay\IconAlert]])
+    f.innerGlow:SetTexture(texturePath .. [[IconAlert]]) --! WotLK fix: bundled (retail path absent on 3.3.5)
     f.innerGlow:SetTexCoord(0.00781250, 0.50781250, 0.27734375, 0.52734375)
 
     -- inner glow over
@@ -647,14 +654,14 @@ local function configureButtonGlow(f,alpha)
     f.innerGlowOver:SetPoint("TOPLEFT", f.innerGlow, "TOPLEFT")
     f.innerGlowOver:SetPoint("BOTTOMRIGHT", f.innerGlow, "BOTTOMRIGHT")
     f.innerGlowOver:SetAlpha(0)
-    f.innerGlowOver:SetTexture([[Interface\SpellActivationOverlay\IconAlert]])
+    f.innerGlowOver:SetTexture(texturePath .. [[IconAlert]]) --! WotLK fix: bundled (retail path absent on 3.3.5)
     f.innerGlowOver:SetTexCoord(0.00781250, 0.50781250, 0.53515625, 0.78515625)
 
     -- outer glow
     f.outerGlow = f:CreateTexture(nil, "ARTWORK")
     f.outerGlow:SetPoint("CENTER")
     f.outerGlow:SetAlpha(0)
-    f.outerGlow:SetTexture([[Interface\SpellActivationOverlay\IconAlert]])
+    f.outerGlow:SetTexture(texturePath .. [[IconAlert]]) --! WotLK fix: bundled (retail path absent on 3.3.5)
     f.outerGlow:SetTexCoord(0.00781250, 0.50781250, 0.27734375, 0.52734375)
 
     -- outer glow over
@@ -662,14 +669,14 @@ local function configureButtonGlow(f,alpha)
     f.outerGlowOver:SetPoint("TOPLEFT", f.outerGlow, "TOPLEFT")
     f.outerGlowOver:SetPoint("BOTTOMRIGHT", f.outerGlow, "BOTTOMRIGHT")
     f.outerGlowOver:SetAlpha(0)
-    f.outerGlowOver:SetTexture([[Interface\SpellActivationOverlay\IconAlert]])
+    f.outerGlowOver:SetTexture(texturePath .. [[IconAlert]]) --! WotLK fix: bundled (retail path absent on 3.3.5)
     f.outerGlowOver:SetTexCoord(0.00781250, 0.50781250, 0.53515625, 0.78515625)
 
     -- ants
     f.ants = f:CreateTexture(nil, "OVERLAY")
     f.ants:SetPoint("CENTER")
     f.ants:SetAlpha(0)
-    f.ants:SetTexture([[Interface\SpellActivationOverlay\IconAlertAnts]])
+    f.ants:SetTexture(texturePath .. [[IconAlertAnts]]) --! WotLK fix: bundled (retail path absent on 3.3.5)
 
     -- WotLK compatible: use simple mock animation groups that just show/hide
     f.animIn = { appear = {}, fade = {}, playing = false }
@@ -843,12 +850,131 @@ lib.stopList["Action Button Glow"] = lib.ButtonGlow_Stop
 
 
 -- ProcGlow
+--! WotLK fix: "Proc Glow" was completely invisible on 3.3.5 - the old adaptation
+--! pointed at Interface\SpellActivationOverlay\IconAlert (a 4.0 texture missing on
+--! 3.3.5) and stubbed the animations out entirely. Ported the WeakAuras-WotLK
+--! approach instead: the retail proc flipbook sheet is bundled as UIActionBarFX.blp
+--! and animated manually via OnUpdate + SetTexCoord stepping (FlipBook animations do
+--! not exist on 3.3.5): a 0.7s start burst, then a 30-frame 6x5 loop. If the bundled
+--! texture is absent (source checkout without binaries), falls back to the native
+--! 3.3.5 UI-ActionButton-Border glow with an alpha pulse instead of rendering nothing.
+
+local BaseTexCoord = {
+    ["Loop"] = {0.412598, 0.575195, 0.000976562, 0.391602},
+    ["Start"] = {0.000488281, 0.411621, 0.000976562, 0.987305},
+}
+
+local function SetTile(texture, frame, rows, columns, frameScaleW, frameScaleH, key)
+    frame = frame - 1
+    local row = math.floor(frame / columns)
+    local column = frame % columns
+
+    local leftStart, rightEnd, topStart, bottomEnd = BaseTexCoord[key][1], BaseTexCoord[key][2], BaseTexCoord[key][3], BaseTexCoord[key][4]
+
+    local fullWidth = rightEnd - leftStart
+    local fullHeight = bottomEnd - topStart
+
+    local baseDeltaX = fullWidth / columns
+    local baseDeltaY = fullHeight / rows
+
+    local deltaX = baseDeltaX * frameScaleW
+    local deltaY = baseDeltaY * frameScaleH
+
+    local left = leftStart + baseDeltaX * column + (baseDeltaX - deltaX) / 2
+    local right = left + deltaX
+
+    local top = topStart + baseDeltaY * row + (baseDeltaY - deltaY) / 2
+    local bottom = top + deltaY
+
+    texture:SetTexCoord(left, right, top, bottom)
+end
+
+local StartFlipbook
+local FlipbookAnimation_OnUpdate
+
+FlipbookAnimation_OnUpdate = function(self, elapsed)
+    local data = self.flipbookData
+    if not data then return end
+
+    if data.animElapsed then
+        data.animElapsed = data.animElapsed + elapsed
+        if data.animElapsed >= 0.7 then
+            -- start burst finished -> switch to the loop flipbook
+            if self:IsShown() then
+                StartFlipbook(self, self.ProcLoop, 6, 5, 30, ((data.animOptions and (30 / data.animOptions)) or 30), nil, nil, "Loop")
+            end
+            data.animElapsed = nil
+            data.animOptions = nil
+            return
+        end
+    end
+
+    data.elapsedTime = data.elapsedTime + elapsed
+    local frameDuration = 1 / data.frameRate
+
+    if data.elapsedTime >= frameDuration then
+        data.elapsedTime = data.elapsedTime - frameDuration
+        data.currentFrame = data.currentFrame + 1
+        if data.currentFrame > data.totalFrames then
+            data.currentFrame = 1
+        end
+        SetTile(data.texture, data.currentFrame, data.rows, data.columns, 1, 1, data.key)
+    end
+end
+
+local function StopFlipbook(f)
+    f:SetScript("OnUpdate", nil)
+    if f.flipbookData and f.flipbookData.texture then
+        f.flipbookData.texture:Hide()
+    end
+    f.flipbookData = nil
+end
+
+StartFlipbook = function(f, texture, rows, columns, totalFrames, frameRate, startAnim, startOptionsDur, key)
+    StopFlipbook(f)
+    f.flipbookData = {
+        key = key,
+        texture = texture,
+        rows = rows,
+        columns = columns,
+        totalFrames = totalFrames,
+        frameRate = frameRate,
+        currentFrame = 1,
+        elapsedTime = 0,
+        animElapsed = startAnim,
+        animOptions = startOptionsDur,
+    }
+    SetTile(texture, 1, rows, columns, 1, 1, key)
+    texture:Show()
+    f:SetScript("OnUpdate", FlipbookAnimation_OnUpdate)
+end
+
+--! fallback driver (no bundled texture): native 3.3.5 glow with an alpha pulse
+local function PulseAnimation_OnUpdate(self, elapsed)
+    local data = self.pulseData
+    if not data then return end
+    data.t = (data.t + elapsed * 1.5) % 1
+    data.texture:SetAlpha(0.55 + 0.45 * math.sin(data.t * 6.2831853))
+end
+
+local function StopPulse(f)
+    if f.pulseData then
+        f:SetScript("OnUpdate", nil)
+        if f.pulseData.texture then
+            f.pulseData.texture:Hide()
+        end
+        f.pulseData = nil
+    end
+end
 
 local function ProcGlowResetter(framePool, frame)
     frame:Hide()
     frame:ClearAllPoints()
     frame:SetScript("OnShow", nil)
     frame:SetScript("OnHide", nil)
+    frame:SetScript("OnUpdate", nil) --! WotLK fix: don't leak the flipbook/pulse driver into the pool
+    frame.flipbookData = nil
+    frame.pulseData = nil
     local parent = frame:GetParent()
     if frame.key and parent[frame.key] then
         parent[frame.key] = nil
@@ -882,59 +1008,78 @@ function ProcGlowPool:Release(frame)
 end
 lib.ProcGlowPool = ProcGlowPool
 
+local hasProcTexture -- nil = not probed yet; on 3.3.5 SetTexture returns 1 when the file exists
+
 local function InitProcGlow(f)
-    -- WotLK compatibility: SetAtlas, SetChildKey, FlipBook don't exist
-    -- Create simple textures without Retail-only features
     f.ProcStart = f:CreateTexture(nil, "ARTWORK")
     f.ProcStart:SetBlendMode("ADD")
-    -- Use a simple texture instead of Atlas
-    f.ProcStart:SetTexture([[Interface\SpellActivationOverlay\IconAlert]])
-    f.ProcStart:SetTexCoord(0.00781250, 0.50781250, 0.27734375, 0.52734375)
-    f.ProcStart:SetAlpha(0)
-    f.ProcStart:SetSize(150, 150)
-    f.ProcStart:SetPoint("CENTER")
+    local ok = f.ProcStart:SetTexture(texturePath .. [[UIActionBarFX]])
+    if hasProcTexture == nil then
+        hasProcTexture = ok and true or false
+    end
 
-    f.ProcLoop = f:CreateTexture(nil, "ARTWORK")
-    -- Use a simple texture instead of Atlas
-    f.ProcLoop:SetTexture([[Interface\SpellActivationOverlay\IconAlert]])
-    f.ProcLoop:SetTexCoord(0.00781250, 0.50781250, 0.27734375, 0.52734375)
-    f.ProcLoop:SetAlpha(0)
-    f.ProcLoop:SetAllPoints()
+    if hasProcTexture then
+        f.ProcStart:SetTexCoord(0.0827148248, 0.1649413686, 0.000976562, 0.165364635) -- first Start frame
+        f.ProcStart:SetAlpha(1)
+        f.ProcStart:SetSize(150, 150)
+        f.ProcStart:SetPoint("CENTER")
+        f.ProcStart:Hide()
 
-    -- WotLK: Create stub animation groups that don't use Retail-only features
-    f.ProcLoopAnim = { playing = false }
-    f.ProcLoopAnim.Play = function(self) self.playing = true end
-    f.ProcLoopAnim.Stop = function(self) self.playing = false end
-    f.ProcLoopAnim.IsPlaying = function(self) return self.playing end
+        f.ProcLoop = f:CreateTexture(nil, "ARTWORK")
+        f.ProcLoop:SetTexture(texturePath .. [[UIActionBarFX]])
+        f.ProcLoop:SetTexCoord(0.412598, 0.4451174, 0.000976562, 0.066080801666667) -- first Loop frame
+        f.ProcLoop:SetAlpha(1)
+        f.ProcLoop:SetAllPoints()
+        f.ProcLoop:Hide()
+    else
+        -- fallback: native 3.3.5 yellow action-button glow (pulsed from SetupProcGlow)
+        f.ProcStart:SetTexture([[Interface\Buttons\UI-ActionButton-Border]])
+        f.ProcStart:SetTexCoord(0, 1, 0, 1)
+        f.ProcStart:Hide()
 
-    f.ProcStartAnim = { playing = false }
-    f.ProcStartAnim.Play = function(self) self.playing = true end
-    f.ProcStartAnim.Stop = function(self) self.playing = false end
-    f.ProcStartAnim.IsPlaying = function(self) return self.playing end
-    f.ProcStartAnim.SetScript = function() end
+        f.ProcLoop = f:CreateTexture(nil, "ARTWORK")
+        f.ProcLoop:SetBlendMode("ADD")
+        f.ProcLoop:SetTexture([[Interface\Buttons\UI-ActionButton-Border]])
+        f.ProcLoop:SetTexCoord(0.05, 0.95, 0.05, 0.95)
+        f.ProcLoop:SetAllPoints()
+        f.ProcLoop:Hide()
+    end
 
     f.key = nil
 end
 
 local function SetupProcGlow(f, options)
-    -- WotLK: Simple setup without complex animations
-    f.key = "_ProcGlow" .. (options.key or "")
-    
-    if not options.color then
-        if f.ProcStart.SetDesaturated then f.ProcStart:SetDesaturated(nil) end
-        f.ProcStart:SetVertexColor(1, 1, 1, 1)
-        if f.ProcLoop.SetDesaturated then f.ProcLoop:SetDesaturated(nil) end
-        f.ProcLoop:SetVertexColor(1, 1, 1, 1)
-    else
-        if f.ProcStart.SetDesaturated then f.ProcStart:SetDesaturated(1) end
-        f.ProcStart:SetVertexColor(options.color[1], options.color[2], options.color[3], options.color[4] or 1)
-        if f.ProcLoop.SetDesaturated then f.ProcLoop:SetDesaturated(1) end
-        f.ProcLoop:SetVertexColor(options.color[1], options.color[2], options.color[3], options.color[4] or 1)
-    end
-    
-    -- WotLK: Just show the glow texture directly without animations
-    f.ProcStart:SetAlpha(0)
-    f.ProcLoop:SetAlpha(options.color and options.color[4] or 1)
+    f.key = "_ProcGlow" .. options.key
+
+    f:SetScript("OnHide", function(self)
+        StopFlipbook(self)
+        StopPulse(self)
+    end)
+
+    f:SetScript("OnShow", function(self)
+        if hasProcTexture then
+            StopFlipbook(self)
+            if self.startAnim then
+                local width, height = self:GetSize()
+                self.ProcStart:SetSize((width / 42 * 150) / 1.4, (height / 42 * 150) / 1.4)
+                self.ProcLoop:Hide()
+                StartFlipbook(self, self.ProcStart, 6, 5, 30, 30, 0, options.duration, "Start")
+            else
+                StartFlipbook(self, self.ProcLoop, 6, 5, 30, (30 / options.duration), nil, nil, "Loop")
+            end
+        else
+            StopPulse(self)
+            self.pulseData = { texture = self.ProcLoop, t = 0 }
+            self.ProcLoop:Show()
+            self:SetScript("OnUpdate", PulseAnimation_OnUpdate)
+        end
+    end)
+
+    local color = options.color or {1, 1, 1, 1}
+    f.ProcStart:SetVertexColor(color[1], color[2], color[3], color[4] or 1)
+    f.ProcLoop:SetVertexColor(color[1], color[2], color[3], color[4] or 1)
+
+    f.startAnim = options.startAnim
 end
 
 local ProcGlowDefaults = {
