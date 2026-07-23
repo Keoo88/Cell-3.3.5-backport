@@ -418,7 +418,10 @@ unitname:SetAttribute("_onclick", [[
 ]])
 function unitname:SetUnit(index, target)
     local unitId = F.GetTargetUnitID(target)
-    if unitId and (UnitIsPlayer(unitId) or UnitInPartyIsAI(unitId)) then
+    --! WotLK fix: UnitInPartyIsAI does not exist on 3.3.5 (retail follower
+    --! dungeons API) - guard the global, otherwise assigning an NPC target
+    --! to a spotlight slot crashes with a nil call.
+    if unitId and (UnitIsPlayer(unitId) or (UnitInPartyIsAI and UnitInPartyIsAI(unitId))) then
         local name = GetUnitName(unitId, true)
         Cell.unitButtons.spotlight[index]:SetAttribute("unit", unitId)
         assignmentButtons[index]:SetText(name)

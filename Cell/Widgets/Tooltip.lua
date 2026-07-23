@@ -80,6 +80,10 @@ CreateTooltip("CellSpellTooltip", true)
 -- CreateTooltip("CellScanningTooltip")
 
 function F.ShowSpellTooltips(tooltip, spellID)
+    --! WotLK fix: CreateBaseTooltipInfo/ProcessInfo are retail 10.x tooltip-data
+    --! API and do not exist on 3.3.5. The function is currently unreferenced,
+    --! but guard it so a future caller degrades to a no-op instead of crashing.
+    if not CreateBaseTooltipInfo then return end
     local tooltipInfo = CreateBaseTooltipInfo("GetSpellByID", spellID)
     tooltip:ProcessInfo(tooltipInfo)
     tooltip:Show()
