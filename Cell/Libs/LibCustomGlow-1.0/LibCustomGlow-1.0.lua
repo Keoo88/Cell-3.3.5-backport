@@ -1013,37 +1013,19 @@ local hasProcTexture -- nil = not probed yet; on 3.3.5 SetTexture returns 1 when
 local function InitProcGlow(f)
     f.ProcStart = f:CreateTexture(nil, "ARTWORK")
     f.ProcStart:SetBlendMode("ADD")
-    local ok = f.ProcStart:SetTexture(texturePath .. [[UIActionBarFX]])
-    if hasProcTexture == nil then
-        hasProcTexture = ok and true or false
-    end
+    f.ProcStart:SetTexture(texturePath .. [[UIActionBarFX]])
+    f.ProcStart:SetTexCoord(0.0827148248, 0.1649413686, 0.000976562, 0.165364635) -- first Start frame
+    f.ProcStart:SetAlpha(1)
+    f.ProcStart:SetSize(150, 150)
+    f.ProcStart:SetPoint("CENTER")
+    f.ProcStart:Hide()
 
-    if hasProcTexture then
-        f.ProcStart:SetTexCoord(0.0827148248, 0.1649413686, 0.000976562, 0.165364635) -- first Start frame
-        f.ProcStart:SetAlpha(1)
-        f.ProcStart:SetSize(150, 150)
-        f.ProcStart:SetPoint("CENTER")
-        f.ProcStart:Hide()
-
-        f.ProcLoop = f:CreateTexture(nil, "ARTWORK")
-        f.ProcLoop:SetTexture(texturePath .. [[UIActionBarFX]])
-        f.ProcLoop:SetTexCoord(0.412598, 0.4451174, 0.000976562, 0.066080801666667) -- first Loop frame
-        f.ProcLoop:SetAlpha(1)
-        f.ProcLoop:SetAllPoints()
-        f.ProcLoop:Hide()
-    else
-        -- fallback: native 3.3.5 yellow action-button glow (pulsed from SetupProcGlow)
-        f.ProcStart:SetTexture([[Interface\Buttons\UI-ActionButton-Border]])
-        f.ProcStart:SetTexCoord(0, 1, 0, 1)
-        f.ProcStart:Hide()
-
-        f.ProcLoop = f:CreateTexture(nil, "ARTWORK")
-        f.ProcLoop:SetBlendMode("ADD")
-        f.ProcLoop:SetTexture([[Interface\Buttons\UI-ActionButton-Border]])
-        f.ProcLoop:SetTexCoord(0.05, 0.95, 0.05, 0.95)
-        f.ProcLoop:SetAllPoints()
-        f.ProcLoop:Hide()
-    end
+    f.ProcLoop = f:CreateTexture(nil, "ARTWORK")
+    f.ProcLoop:SetTexture(texturePath .. [[UIActionBarFX]])
+    f.ProcLoop:SetTexCoord(0.412598, 0.4451174, 0.000976562, 0.066080801666667) -- first Loop frame
+    f.ProcLoop:SetAlpha(1)
+    f.ProcLoop:SetAllPoints()
+    f.ProcLoop:Hide()
 
     f.key = nil
 end
@@ -1057,21 +1039,14 @@ local function SetupProcGlow(f, options)
     end)
 
     f:SetScript("OnShow", function(self)
-        if hasProcTexture then
-            StopFlipbook(self)
-            if self.startAnim then
-                local width, height = self:GetSize()
-                self.ProcStart:SetSize((width / 42 * 150) / 1.4, (height / 42 * 150) / 1.4)
-                self.ProcLoop:Hide()
-                StartFlipbook(self, self.ProcStart, 6, 5, 30, 30, 0, options.duration, "Start")
-            else
-                StartFlipbook(self, self.ProcLoop, 6, 5, 30, (30 / options.duration), nil, nil, "Loop")
-            end
+        StopFlipbook(self)
+        if self.startAnim then
+            local width, height = self:GetSize()
+            self.ProcStart:SetSize((width / 42 * 150) / 1.4, (height / 42 * 150) / 1.4)
+            self.ProcLoop:Hide()
+            StartFlipbook(self, self.ProcStart, 6, 5, 30, 30, 0, options.duration, "Start")
         else
-            StopPulse(self)
-            self.pulseData = { texture = self.ProcLoop, t = 0 }
-            self.ProcLoop:Show()
-            self:SetScript("OnUpdate", PulseAnimation_OnUpdate)
+            StartFlipbook(self, self.ProcLoop, 6, 5, 30, (30 / options.duration), nil, nil, "Loop")
         end
     end)
 
