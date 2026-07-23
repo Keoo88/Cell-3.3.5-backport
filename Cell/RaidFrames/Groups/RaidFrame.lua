@@ -440,41 +440,46 @@ end
 
 local function ApplyRoleSort(layout)
     local sortByRole = layout["main"]["sortByRole"]
+    --! WotLK 3.3.5a: role sorting is performed by our SecureGroupHeader_Update override
+    --! (Polyfills.lua), which ONLY runs when groupBy == "ASSIGNEDROLE". The previous
+    --! nameList path set groupBy=nil, so every update fell through to the stock client
+    --! function and the managed raid buttons were never re-sorted. Drive the override
+    --! directly instead: groupBy=ASSIGNEDROLE + groupingOrder (role priority) +
+    --! sortMethod="NAME" (alphabetical within a role, matching upstream).
+    local order = layout["main"]["roleOrder"] or ROLE_ORDER_FALLBACK
+    local groupingOrder = table.concat(order, ",")..",NONE"
 
     if layout["main"]["combineGroups"] then
-        -- nameList order is only preserved while sortMethod is not "NAME"
-        SetHeaderAttribute(combinedHeader, "sortMethod", "INDEX")
-        SetHeaderAttribute(combinedHeader, "groupingOrder", "")
-        SetHeaderAttribute(combinedHeader, "groupBy", nil)
-
-        local list = sortByRole and BuildRoleSortedNameList(layout)
-        if list then
-            SetHeaderAttribute(combinedHeader, "groupFilter", nil)
-            SetHeaderAttribute(combinedHeader, "nameList", list)
-        else -- role sort off, or roster empty: drive the header with the group filter
-            SetHeaderAttribute(combinedHeader, "nameList", nil)
-            local shown
-            for i = 1, 8 do
-                if layout["groupFilter"][i] then
-                    shown = shown and (shown..","..i) or tostring(i)
-                end
+        local shown
+        for i = 1, 8 do
+            if layout["groupFilter"][i] then
+                shown = shown and (shown..","..i) or tostring(i)
             end
-            SetHeaderAttribute(combinedHeader, "groupFilter", shown)
+        end
+        SetHeaderAttribute(combinedHeader, "nameList", nil)
+        SetHeaderAttribute(combinedHeader, "groupFilter", shown or "1,2,3,4,5,6,7,8")
+        if sortByRole then
+            SetHeaderAttribute(combinedHeader, "groupBy", "ASSIGNEDROLE")
+            SetHeaderAttribute(combinedHeader, "groupingOrder", groupingOrder)
+            SetHeaderAttribute(combinedHeader, "sortMethod", "NAME")
+        else
+            SetHeaderAttribute(combinedHeader, "groupBy", nil)
+            SetHeaderAttribute(combinedHeader, "groupingOrder", "")
+            SetHeaderAttribute(combinedHeader, "sortMethod", "INDEX")
         end
     else
         for i = 1, 8 do
             if separatedHeaders[i] then
-                SetHeaderAttribute(separatedHeaders[i], "sortMethod", "INDEX")
-                SetHeaderAttribute(separatedHeaders[i], "groupingOrder", "")
-                SetHeaderAttribute(separatedHeaders[i], "groupBy", nil)
-
-                local list = sortByRole and BuildRoleSortedNameList(layout, i)
-                if list then
-                    SetHeaderAttribute(separatedHeaders[i], "groupFilter", nil)
-                    SetHeaderAttribute(separatedHeaders[i], "nameList", list)
+                SetHeaderAttribute(separatedHeaders[i], "nameList", nil)
+                SetHeaderAttribute(separatedHeaders[i], "groupFilter", tostring(i))
+                if sortByRole then
+                    SetHeaderAttribute(separatedHeaders[i], "groupBy", "ASSIGNEDROLE")
+                    SetHeaderAttribute(separatedHeaders[i], "groupingOrder", groupingOrder)
+                    SetHeaderAttribute(separatedHeaders[i], "sortMethod", "NAME")
                 else
-                    SetHeaderAttribute(separatedHeaders[i], "nameList", nil)
-                    SetHeaderAttribute(separatedHeaders[i], "groupFilter", tostring(i))
+                    SetHeaderAttribute(separatedHeaders[i], "groupBy", nil)
+                    SetHeaderAttribute(separatedHeaders[i], "groupingOrder", "")
+                    SetHeaderAttribute(separatedHeaders[i], "sortMethod", "INDEX")
                 end
             end
         end
