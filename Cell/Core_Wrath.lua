@@ -908,6 +908,14 @@ function SlashCmdList.CELL(msg, editbox)
     elseif command == "options" or command == "opt" then
         F.ShowOptionsFrame()
 
+    elseif command == "minimap" then
+        if type(CellDB["minimapButton"]) ~= "table" then
+            CellDB["minimapButton"] = {["shown"] = true, ["degree"] = 195}
+        end
+        CellDB["minimapButton"]["shown"] = not CellDB["minimapButton"]["shown"]
+        Cell.Fire("UpdateMinimapButton")
+        F.Print(CellDB["minimapButton"]["shown"] and L["Minimap button shown."] or L["Minimap button hidden. Use /cell minimap to show it again."])
+
     elseif command == "healers" then
         F.FirstRun()
 
@@ -989,6 +997,7 @@ function SlashCmdList.CELL(msg, editbox)
         F.Print(L["Available slash commands"]..":")
         print(" |cFFFFB5C5/cell debug|r: toggle debug mode or use subcommands (v, r, c, h).")
         print(" |cFFFFB5C5/cell options|r, |cFFFFB5C5/cell opt|r: "..L["show Cell options frame"]..".")
+        print(" |cFFFFB5C5/cell minimap|r: "..L["toggle the minimap button"]..".")
         print(" |cFFFFB5C5/cell healers|r: "..L["create a \"Healers\" indicator"]..".")
         print(" |cFFFFB5C5/cell rescale|r: "..strlower(L["Apply Recommended Scale"])..".")
         print(" |cFFFF7777"..L["These \"reset\" commands below affect all your characters in this account"]..".|r")
