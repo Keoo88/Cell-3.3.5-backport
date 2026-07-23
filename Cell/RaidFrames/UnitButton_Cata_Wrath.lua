@@ -2513,7 +2513,10 @@ cleu:SetScript("OnEvent", function(_, _, ...)
             lastHealTimeStamp[destGUID] = timestamp
 
             local amount
-            if arg17 then
+            --! WotLK fix: on native 3.3.5 SPELL_HEAL the crit flag is slot 15
+            --! (amount=12, overheal=13, absorbed=14, critical=15). arg17 does
+            --! not exist here, so crit glyph heals overestimated the shield.
+            if arg15 then
                 amount = arg12 / 1.5 / 0.2
             else
                 amount = arg12 / 0.2
@@ -2531,24 +2534,28 @@ cleu:SetScript("OnEvent", function(_, _, ...)
         end
 
         -- Divine Aegis (mine)
-        if sourceGUID == Cell.vars.playerGUID and Cell.vars.divineAegisMultiplier and arg18 then
+        --! WotLK fix: DA procs on CRITS - on native 3.3.5 the crit flag is
+        --! slot 15 and the heal amount is slot 12. The old arg18/arg15 pair
+        --! (retail-ordered payload) is nil/crit-flag here, so my Divine Aegis
+        --! was never accumulated from this path.
+        if sourceGUID == Cell.vars.playerGUID and Cell.vars.divineAegisMultiplier and arg15 then
             local maxDA = Cell.vars.guids[destGUID] and 125 * UnitLevel(Cell.vars.guids[destGUID]) or 10000
             if not absorbInfos[destGUID] then absorbInfos[destGUID] = {} end
-            
+
             local currentDA = absorbInfos[destGUID][DA_NAME] or 0
-            absorbInfos[destGUID][DA_NAME] = min(currentDA + arg15 * Cell.vars.divineAegisMultiplier, maxDA)
+            absorbInfos[destGUID][DA_NAME] = min(currentDA + arg12 * Cell.vars.divineAegisMultiplier, maxDA)
             
             UpdateShield(destGUID)
         end
 
         -- Val'anyr
         if sourceGUID == Cell.vars.playerGUID then
-            lastHealAmount = arg15
+            lastHealAmount = arg12 --! WotLK fix: heal amount is slot 12 on native 3.3.5 (slot 15 is the 1/nil crit flag - a non-crit heal during an active Val'anyr proc crashed on nil arithmetic)
             lastHealGUID = destGUID
             if blessing then
                 if not absorbInfos[destGUID] then absorbInfos[destGUID] = {} end
                 local currentPAK = absorbInfos[destGUID][PAK_NAME] or 0
-                absorbInfos[destGUID][PAK_NAME] = min(currentPAK + arg15 * 0.15, 20000)
+                absorbInfos[destGUID][PAK_NAME] = min(currentPAK + arg12 * 0.15, 20000) --! WotLK fix: amount is slot 12 (slot 15 = 1/nil crit flag -> nil arithmetic crash on non-crit heals)
                 
                 UpdateShield(destGUID)
             end
@@ -2557,12 +2564,12 @@ cleu:SetScript("OnEvent", function(_, _, ...)
     elseif subEvent == "SPELL_PERIODIC_HEAL" then
         -- Val'anyr
         if sourceGUID == Cell.vars.playerGUID then
-            lastHealAmount = arg15
+            lastHealAmount = arg12 --! WotLK fix: heal amount is slot 12 on native 3.3.5 (slot 15 is the 1/nil crit flag - a non-crit heal during an active Val'anyr proc crashed on nil arithmetic)
             lastHealGUID = destGUID
             if blessing then
                 if not absorbInfos[destGUID] then absorbInfos[destGUID] = {} end
                 local currentPAK = absorbInfos[destGUID][PAK_NAME] or 0
-                absorbInfos[destGUID][PAK_NAME] = min(currentPAK + arg15 * 0.15, 20000)
+                absorbInfos[destGUID][PAK_NAME] = min(currentPAK + arg12 * 0.15, 20000) --! WotLK fix: amount is slot 12 (slot 15 = 1/nil crit flag -> nil arithmetic crash on non-crit heals)
                 
                 UpdateShield(destGUID)
             end
@@ -2673,7 +2680,7 @@ cleu:SetScript("OnEvent", function(_, _, ...)
     -- SWING_MISSED / SPELL_MISSED
     elseif subEvent == "SWING_MISSED" then
         if arg9 == "ABSORB" then 
-             local amount = arg11 -- Amount
+             local amount = arg10 --! WotLK fix: SWING_MISSED payload is missType(9), amountMissed(10) - arg11 was always nil, so fully-absorbed swings never consumed the shield estimate
              if type(amount) == "number" and amount > 0 and absorbInfos[destGUID] then
                   local absorbed = amount
                   for spellName, amt in pairs(absorbInfos[destGUID]) do
@@ -2688,7 +2695,7 @@ cleu:SetScript("OnEvent", function(_, _, ...)
         end
     elseif subEvent == "SPELL_MISSED" or subEvent == "RANGE_MISSED" then
          if arg12 == "ABSORB" then 
-             local amount = arg14
+             local amount = arg13 --! WotLK fix: SPELL/RANGE_MISSED payload is spellId(9), spellName(10), school(11), missType(12), amountMissed(13) - arg14 was always nil
              if type(amount) == "number" and amount > 0 and absorbInfos[destGUID] then
                   local absorbed = amount
                   for spellName, amt in pairs(absorbInfos[destGUID]) do
@@ -2709,17 +2716,16 @@ end)
 -------------------------------------------------
 local cleuHealthUpdater = CreateFrame("Frame", "CellCleuHealthUpdater")
 cleuHealthUpdater:SetScript("OnEvent", function(self, event, ...)
-    -- WotLK 3.3.5a doesn't have CombatLogGetCurrentEventInfo; args passed directly in ...
-    -- WotLK 3.3.5a: sourceRaidFlags and destRaidFlags don't exist (added in 4.2.0)
-    local _, subEvent, _, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, arg12, arg13, arg14, arg15, arg16, arg17, arg18, arg19, arg20, arg21, arg22
-    if CombatLogGetCurrentEventInfo then
-        -- Retail/Cata+ has sourceRaidFlags and destRaidFlags
-        local sourceRaidFlags, destRaidFlags
-        _, subEvent, _, sourceGUID, sourceName, sourceFlags, sourceRaidFlags, destGUID, destName, destFlags, destRaidFlags, arg12, arg13, arg14, arg15, arg16, arg17, arg18, arg19, arg20, arg21, arg22 = CombatLogGetCurrentEventInfo()
-    else
-        -- WotLK 3.3.5a: No sourceRaidFlags/destRaidFlags
-        _, subEvent, _, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, arg12, arg13, arg14, arg15, arg16, arg17, arg18, arg19, arg20, arg21, arg22 = ...
-    end
+    --! WotLK fix: this handler was silently dead. CombatLogGetCurrentEventInfo
+    --! DOES exist here (the ClassicAPI shim, loaded first via the TOC), so the
+    --! old "retail" branch was always taken - but that shim is an argument
+    --! TRANSLATOR (native varargs in, retail order out) that returns nothing
+    --! when called with no arguments, leaving every field nil. The old
+    --! "native" fallback was misaligned as well (it skipped a hideCaster slot
+    --! that does not exist on 3.3.5). Feed the varargs to the translator and
+    --! parse its retail-ordered result: the payload starts at slot 12, so the
+    --! arg12/arg15 offsets used by the diff logic below stay correct.
+    local _, subEvent, _, sourceGUID, sourceName, sourceFlags, _, destGUID, destName, destFlags, _, arg12, arg13, arg14, arg15, arg16, arg17, arg18, arg19, arg20, arg21, arg22 = CombatLogGetCurrentEventInfo(...)
 
     if not F.IsFriend(destFlags) then return end
 
