@@ -372,6 +372,151 @@ end
 --     ]])
 -- end
 
+-------------------------------------------------
+-- sort by role (3.3.5)
+-------------------------------------------------
+--! WotLK fix: groupBy="ASSIGNEDROLE" does not exist in 3.3.5 SecureGroupHeaders -
+--! native groupBy only knows GROUP/CLASS/ROLE, and "ROLE" there means
+--! MAINTANK/MAINASSIST (FrameXML SecureTemplates.lua:594, 940-946), so "Sort By Role"
+--! silently did nothing. What 3.3.5 DOES support is the "nameList" attribute, and its
+--! fill branch preserves the list order as long as sortMethod is not "NAME"
+--! (SecureTemplates.lua:1004-1021). So: build a role-ordered name list from the raid
+--! roster (roles via the Cell_UnitGroupRolesAssigned polyfill -> LibGroupTalents) and
+--! feed it to the headers. groupFilter must be cleared while nameList drives a header
+--! (groupFilter takes precedence), and every attribute write happens out of combat
+--! only (roster/role refreshes are deferred to PLAYER_REGEN_ENABLED).
+
+local ROLE_ORDER_FALLBACK = {"TANK", "HEALER", "DAMAGER"}
+
+local function SetHeaderAttribute(header, name, value)
+    -- every SetAttribute triggers a full SecureGroupHeader_Update - skip no-ops
+    if header:GetAttribute(name) ~= value then
+        header:SetAttribute(name, value)
+    end
+end
+
+-- subgroup = number -> only that raid subgroup (separated headers)
+-- subgroup = nil    -> all subgroups enabled in layout["groupFilter"] (combined header)
+local function BuildRoleSortedNameList(layout, subgroup)
+    local total = GetNumRaidMembers()
+    if total == 0 then return end
+
+    local order = layout["main"]["roleOrder"] or ROLE_ORDER_FALLBACK
+    local prio = {}
+    for i, role in ipairs(order) do
+        prio[role] = i
+    end
+
+    local buckets = {{}, {}, {}, {}} -- roleOrder slots 1-3, 4 = NONE/unknown
+    for i = 1, total do
+        local name, _, sub = GetRaidRosterInfo(i)
+        if name then
+            local wanted
+            if subgroup then
+                wanted = (sub == subgroup)
+            else
+                wanted = layout["groupFilter"][sub]
+            end
+            if wanted then
+                local p = prio[Cell_UnitGroupRolesAssigned("raid"..i)] or 4
+                tinsert(buckets[p], name)
+            end
+        end
+    end
+
+    local list
+    for p = 1, 4 do
+        table.sort(buckets[p]) -- upstream used sortMethod="NAME": alphabetical within a role
+        for _, name in ipairs(buckets[p]) do
+            if list then
+                list = list..","..name
+            else
+                list = name
+            end
+        end
+    end
+    return list -- nil when no units matched
+end
+
+local function ApplyRoleSort(layout)
+    local sortByRole = layout["main"]["sortByRole"]
+
+    if layout["main"]["combineGroups"] then
+        -- nameList order is only preserved while sortMethod is not "NAME"
+        SetHeaderAttribute(combinedHeader, "sortMethod", "INDEX")
+        SetHeaderAttribute(combinedHeader, "groupingOrder", "")
+        SetHeaderAttribute(combinedHeader, "groupBy", nil)
+
+        local list = sortByRole and BuildRoleSortedNameList(layout)
+        if list then
+            SetHeaderAttribute(combinedHeader, "groupFilter", nil)
+            SetHeaderAttribute(combinedHeader, "nameList", list)
+        else -- role sort off, or roster empty: drive the header with the group filter
+            SetHeaderAttribute(combinedHeader, "nameList", nil)
+            local shown
+            for i = 1, 8 do
+                if layout["groupFilter"][i] then
+                    shown = shown and (shown..","..i) or tostring(i)
+                end
+            end
+            SetHeaderAttribute(combinedHeader, "groupFilter", shown)
+        end
+    else
+        for i = 1, 8 do
+            if separatedHeaders[i] then
+                SetHeaderAttribute(separatedHeaders[i], "sortMethod", "INDEX")
+                SetHeaderAttribute(separatedHeaders[i], "groupingOrder", "")
+                SetHeaderAttribute(separatedHeaders[i], "groupBy", nil)
+
+                local list = sortByRole and BuildRoleSortedNameList(layout, i)
+                if list then
+                    SetHeaderAttribute(separatedHeaders[i], "groupFilter", nil)
+                    SetHeaderAttribute(separatedHeaders[i], "nameList", list)
+                else
+                    SetHeaderAttribute(separatedHeaders[i], "nameList", nil)
+                    SetHeaderAttribute(separatedHeaders[i], "groupFilter", tostring(i))
+                end
+            end
+        end
+    end
+end
+
+-- refresh on roster/role changes (roles arrive asynchronously from LibGroupTalents inspects)
+local roleSortTimer
+local roleSortFrame = CreateFrame("Frame")
+roleSortFrame:RegisterEvent("RAID_ROSTER_UPDATE")
+roleSortFrame:RegisterEvent("PARTY_MEMBERS_CHANGED")
+roleSortFrame:RegisterEvent("PLAYER_ROLES_ASSIGNED") -- synthetic, ClassicAPI EventHandler
+roleSortFrame:SetScript("OnEvent", function(self, event)
+    if event == "PLAYER_REGEN_ENABLED" then
+        self:UnregisterEvent("PLAYER_REGEN_ENABLED")
+    end
+
+    local layout = Cell.vars.currentLayoutTable
+    if not layout or not layout["main"] or not layout["main"]["sortByRole"] then return end
+    if Cell.vars.groupType ~= "raid" or Cell.vars.isHidden then return end
+
+    if InCombatLockdown() then --! secure header attributes cannot change in combat
+        self:RegisterEvent("PLAYER_REGEN_ENABLED")
+        return
+    end
+
+    -- debounce: roster events arrive in bursts
+    if roleSortTimer then roleSortTimer:Cancel() end
+    roleSortTimer = C_Timer.NewTimer(0.2, function()
+        roleSortTimer = nil
+        local lo = Cell.vars.currentLayoutTable
+        if lo and lo["main"] and lo["main"]["sortByRole"]
+            and Cell.vars.groupType == "raid" and not Cell.vars.isHidden then
+            if InCombatLockdown() then
+                roleSortFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+            else
+                ApplyRoleSort(lo)
+            end
+        end
+    end)
+end)
+
 local function RaidFrame_UpdateLayout(layout, which)
     -- visibility
     if Cell.vars.groupType ~= "raid" or Cell.vars.isHidden then
@@ -478,20 +623,18 @@ local function RaidFrame_UpdateLayout(layout, which)
         end
 
         if not which or which == "header" or which == "sort" then
-            if layout["main"]["sortByRole"] then
-                combinedHeader:SetAttribute("sortMethod", "NAME")
-                local order = table.concat(layout["main"]["roleOrder"], ",")..",NONE"
-                combinedHeader:SetAttribute("groupingOrder", order)
-                combinedHeader:SetAttribute("groupBy", "ASSIGNEDROLE")
-            else
-                combinedHeader:SetAttribute("sortMethod", "INDEX")
-                combinedHeader:SetAttribute("groupingOrder", "")
-                combinedHeader:SetAttribute("groupBy", nil)
-            end
+            --! WotLK fix: was groupBy="ASSIGNEDROLE" - dead on 3.3.5, see ApplyRoleSort
+            ApplyRoleSort(layout)
         end
 
         if not which or which == "header" or which == "groupFilter" then
-            combinedHeader:SetAttribute("groupFilter", F.TableToString(shownGroups, ","))
+            if layout["main"]["sortByRole"] then
+                --! WotLK fix: while nameList drives the header, groupFilter must stay
+                --! cleared (it takes precedence) - rebuild the list for the new groups
+                ApplyRoleSort(layout)
+            else
+                combinedHeader:SetAttribute("groupFilter", F.TableToString(shownGroups, ","))
+            end
         end
 
     else
@@ -618,20 +761,9 @@ local function RaidFrame_UpdateLayout(layout, which)
         end
 
         if not which or which == "header" or which == "sort" then
-            if layout["main"]["sortByRole"] then
-                for i = 1, 8 do
-                    separatedHeaders[i]:SetAttribute("sortMethod", "NAME")
-                    local order = table.concat(layout["main"]["roleOrder"], ",")..",NONE"
-                    separatedHeaders[i]:SetAttribute("groupingOrder", order)
-                    separatedHeaders[i]:SetAttribute("groupBy", "ASSIGNEDROLE")
-                end
-            else
-                for i = 1, 8 do
-                    separatedHeaders[i]:SetAttribute("sortMethod", "INDEX")
-                    separatedHeaders[i]:SetAttribute("groupingOrder", "")
-                    separatedHeaders[i]:SetAttribute("groupBy", nil)
-                end
-            end
+            --! WotLK fix: was groupBy="ASSIGNEDROLE" - dead on 3.3.5, see ApplyRoleSort
+            --! (per-group nameList: sorts by role WITHIN each separated group header)
+            ApplyRoleSort(layout)
         end
 
         -- show/hide groups

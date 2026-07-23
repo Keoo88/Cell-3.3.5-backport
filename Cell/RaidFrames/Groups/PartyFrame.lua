@@ -116,6 +116,45 @@ end
 header:SetAttribute("startingIndex", 1)
 header:Show()
 
+-------------------------------------------------
+-- sort by role (3.3.5)
+-------------------------------------------------
+--! WotLK fix: "Sort By Role" was dead for party frames on 3.3.5 in TWO ways: the header
+--! sorting attributes (sortMethod/groupingOrder/groupBy) only affect header-MANAGED
+--! children, while this backport creates the 5 party buttons manually with fixed units
+--! (player/party1-4); and groupBy="ASSIGNEDROLE" does not exist in 3.3.5 anyway (native
+--! groupBy knows GROUP/CLASS/ROLE=MAINTANK/MAINASSIST only). Sort by re-anchoring the
+--! manual buttons in role order instead (roles via Cell_UnitGroupRolesAssigned ->
+--! LibGroupTalents). Re-anchoring protected frames happens out of combat only.
+local buttonOrder = {1, 2, 3, 4, 5}
+local ROLE_ORDER_FALLBACK = {"TANK", "HEALER", "DAMAGER"}
+
+local function UpdateButtonOrder(layout)
+    for i = 1, 5 do
+        buttonOrder[i] = i
+    end
+
+    if not layout["main"]["sortByRole"] then return end
+
+    local order = layout["main"]["roleOrder"] or ROLE_ORDER_FALLBACK
+    local prio = {}
+    for i, role in ipairs(order) do
+        prio[role] = i
+    end
+
+    -- sort by role priority, stable by original slot; empty slots and NONE go last
+    table.sort(buttonOrder, function(a, b)
+        local ua = manualButtons[a]:GetAttribute("unit")
+        local ub = manualButtons[b]:GetAttribute("unit")
+        local pa = (ua and UnitExists(ua) and prio[Cell_UnitGroupRolesAssigned(ua)]) or 10
+        local pb = (ub and UnitExists(ub) and prio[Cell_UnitGroupRolesAssigned(ub)]) or 10
+        if pa ~= pb then
+            return pa < pb
+        end
+        return a < b
+    end)
+end
+
 -- Ensure buttons know their unit attributes (OnAttributeChanged only fires on changes)
 local function ForceSyncPartyButtons()
     for i = 1, 5 do
@@ -210,7 +249,10 @@ local function PartyFrame_UpdateLayout(layout, which)
     end
 
     -- anchor
-    if not which or which == "main-arrangement" or which == "pet-arrangement" then
+    --! WotLK fix: "sort" and "hideSelf" also re-run this branch - role order and the
+    --! hidden player button change the anchor chain (see the loop below)
+    if not which or which == "main-arrangement" or which == "pet-arrangement" or which == "sort" or which == "hideSelf" then
+        UpdateButtonOrder(layout)
         local orientation = layout["main"]["orientation"]
         local anchor = layout["main"]["anchor"]
         local spacingX = layout["main"]["spacingX"]
@@ -278,29 +320,42 @@ local function PartyFrame_UpdateLayout(layout, which)
 
         --! WotLK 3.3.5a: SecureGroupHeaderTemplate doesn't position buttons automatically in WotLK
         --! Manually position each button
+        --! WotLK fix: iterate in buttonOrder (role sorting) and chain each button to the
+        --! previous CHAINED one; the player button leaves the chain when hideSelf is on,
+        --! so the remaining buttons collapse over its slot instead of leaving a gap
+        local last
         for j = 1, 5 do
-            if manualButtons[j] then
-                manualButtons[j]:ClearAllPoints()
+            local idx = buttonOrder[j]
+            local b = manualButtons[idx]
+            if b then
+                b:ClearAllPoints()
 
-                if j == 1 then
-                    -- First button anchors its corner to header
-                    manualButtons[j]:SetPoint(point, header, headerPoint, 0, 0)
+                if layout["main"]["hideSelf"] and idx == 1 then
+                    -- hidden via UnregisterUnitWatch (hideSelf branch below) - park it
+                    -- on the header and keep it out of the anchor chain
+                    b:SetPoint(point, header, headerPoint, 0, 0)
                 else
-                    -- Subsequent buttons anchor to previous button
-                    if orientation == "vertical" then
-                        manualButtons[j]:SetPoint(point, manualButtons[j-1], playerAnchorPoint, 0, P.Scale(playerSpacing))
+                    if not last then
+                        -- First chained button anchors its corner to header
+                        b:SetPoint(point, header, headerPoint, 0, 0)
                     else
-                        manualButtons[j]:SetPoint(point, manualButtons[j-1], playerAnchorPoint, P.Scale(playerSpacing), 0)
+                        -- Subsequent buttons anchor to the previous chained button
+                        if orientation == "vertical" then
+                            b:SetPoint(point, last, playerAnchorPoint, 0, P.Scale(playerSpacing))
+                        else
+                            b:SetPoint(point, last, playerAnchorPoint, P.Scale(playerSpacing), 0)
+                        end
                     end
+                    last = b
                 end
 
                 -- Position pet button
-                if manualButtons[j].petButton then
-                    manualButtons[j].petButton:ClearAllPoints()
+                if b.petButton then
+                    b.petButton:ClearAllPoints()
                     if orientation == "vertical" then
-                        manualButtons[j].petButton:SetPoint(point, manualButtons[j], petAnchorPoint, P.Scale(petSpacing), 0)
+                        b.petButton:SetPoint(point, b, petAnchorPoint, P.Scale(petSpacing), 0)
                     else
-                        manualButtons[j].petButton:SetPoint(point, manualButtons[j], petAnchorPoint, 0, P.Scale(petSpacing))
+                        b.petButton:SetPoint(point, b, petAnchorPoint, 0, P.Scale(petSpacing))
                     end
                 end
             end
@@ -396,6 +451,42 @@ local function PartyFrame_UpdateLayout(layout, which)
     -- F.Debug("|cffff8800=== PartyFrame_UpdateLayout END ===")
 end
 Cell.RegisterCallback("UpdateLayout", "PartyFrame_UpdateLayout", PartyFrame_UpdateLayout)
+
+--! WotLK fix: keep party role sorting fresh - roles arrive asynchronously from
+--! LibGroupTalents inspects and members join/leave. Re-anchor out of combat only.
+local partySortTimer
+local partySortFrame = CreateFrame("Frame")
+partySortFrame:RegisterEvent("PARTY_MEMBERS_CHANGED")
+partySortFrame:RegisterEvent("PLAYER_ROLES_ASSIGNED") -- synthetic, ClassicAPI EventHandler
+partySortFrame:SetScript("OnEvent", function(self, event)
+    if event == "PLAYER_REGEN_ENABLED" then
+        self:UnregisterEvent("PLAYER_REGEN_ENABLED")
+    end
+
+    local layout = Cell.vars.currentLayoutTable
+    if not layout or not layout["main"] or not layout["main"]["sortByRole"] then return end
+    if Cell.vars.groupType ~= "party" or Cell.vars.isHidden then return end
+
+    if InCombatLockdown() then --! protected frames cannot be re-anchored in combat
+        self:RegisterEvent("PLAYER_REGEN_ENABLED")
+        return
+    end
+
+    -- debounce: roster/role events arrive in bursts
+    if partySortTimer then partySortTimer:Cancel() end
+    partySortTimer = C_Timer.NewTimer(0.2, function()
+        partySortTimer = nil
+        local lo = Cell.vars.currentLayoutTable
+        if lo and lo["main"] and lo["main"]["sortByRole"]
+            and Cell.vars.groupType == "party" and not Cell.vars.isHidden then
+            if InCombatLockdown() then
+                partySortFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+            else
+                PartyFrame_UpdateLayout(Cell.vars.currentLayout, "sort")
+            end
+        end
+    end)
+end)
 
 -- local function PartyFrame_UpdateVisibility(which)
 --     if not which or which == "party" then

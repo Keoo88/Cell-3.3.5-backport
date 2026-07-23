@@ -99,12 +99,11 @@ function F.UpdateLayout(layoutGroupType)
             Cell.vars.currentLayoutTable = CellDB["layouts"][layout]
         end
 
-        -- keep raid groups separated now that combine option is removed
-        if Cell.vars.currentLayoutTable
-            and Cell.vars.currentLayoutTable["main"]
-            and Cell.vars.currentLayoutTable["main"]["combineGroups"] then
-            Cell.vars.currentLayoutTable["main"]["combineGroups"] = false
-        end
+        --! WotLK fix: removed the leftover force-disable of combineGroups here. Commit
+        --! 4c4cb05 restored the Combine Groups option in the Layouts UI and removed the
+        --! same force-disable from LoadLayoutDB, but missed this one - it silently reset
+        --! combineGroups=false in the ACTIVE layout on every login/group change, so the
+        --! option kept turning itself off.
 
         F.IterateAllUnitButtons(function(b)
             b._indicatorsReady = nil
