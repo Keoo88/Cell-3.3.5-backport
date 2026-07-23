@@ -1111,6 +1111,35 @@ end
 Cell.RegisterCallback("UpdateIndicators", "UnitButton_UpdateIndicators", UpdateIndicators)
 
 -------------------------------------------------
+-- aura instance key (3.3.5 auraInstanceID emulation)
+-------------------------------------------------
+--! WotLK fix/perf: the emulated auraInstanceID was '(source or "")..spellId' -
+--! ambiguous ("raid1"..56789 == "raid15"..6789), so different auras could collide
+--! in the _buffs/_debuffs caches, and it built a fresh throwaway string for EVERY
+--! aura of EVERY button on EVERY UNIT_AURA (thousands per minute of GC churn in a
+--! raid). Keys now carry a ":" separator (collisions gone: unit tokens contain no
+--! colons) and are memoized: sources are unit tokens (bounded set) and spellIds are
+--! bounded by auras actually seen, so the cache stays small and steady-state scans
+--! allocate no strings at all. The key is a pure cache key on 3.3.5 - the only
+--! other consumer (SetUnit*ByAuraInstanceID tooltip branch in Indicators/Built-in)
+--! is dead retail code, tooltips here go through the .index path.
+local auraKeyCache = {}
+local function GetAuraInstanceID(source, spellId)
+    source = source or ""
+    local bySource = auraKeyCache[source]
+    if not bySource then
+        bySource = {}
+        auraKeyCache[source] = bySource
+    end
+    local key = bySource[spellId]
+    if not key then
+        key = source..":"..spellId
+        bySource[spellId] = key
+    end
+    return key
+end
+
+-------------------------------------------------
 -- debuffs
 -------------------------------------------------
 local function UnitButton_UpdateDebuffs(self)
@@ -1137,7 +1166,7 @@ local function UnitButton_UpdateDebuffs(self)
             break
         end
 
-        local auraInstanceID = (source or "") .. spellId
+        local auraInstanceID = GetAuraInstanceID(source, spellId) --! WotLK fix/perf: was '(source or "")..spellId' - collision-prone + string churn
 
         -- check Bleed
         debuffType = I.CheckDebuffType(debuffType, spellId)
@@ -1414,7 +1443,7 @@ local function UnitButton_UpdateBuffs(self)
             break
         end
 
-        local auraInstanceID = (source or "") .. spellId
+        local auraInstanceID = GetAuraInstanceID(source, spellId) --! WotLK fix/perf: was '(source or "")..spellId' - collision-prone + string churn
 
         if duration then
             if Cell.vars.iconAnimation == "duration" then
@@ -2508,16 +2537,47 @@ local function GetShieldAmount(unit, spellName)
     return 0
 end
 
-local GetCLEU = function(...)
-    if CombatLogGetCurrentEventInfo then
-        local a = {CombatLogGetCurrentEventInfo()}
-        if a[2] ~= nil then return unpack(a) end
+--! WotLK fix/perf: the absorb scan used to be declared as a closure (plus a nested
+--! retry closure) INSIDE the CLEU handler below - a fresh allocation on every shield
+--! SPELL_AURA_APPLIED/REFRESH (dozens per second with a disc priest in a raid).
+--! File-scope functions with parameters instead: the immediate-success path (the
+--! common case) allocates nothing; a single retry closure is only built when the
+--! first tooltip scan races the aura update and fails. Retry schedule is unchanged:
+--! attempts at +0s, +0.1s, +0.3s.
+local function TryAbsorbScan(unit, spellName, destGUID)
+    local amount = GetShieldAmount(unit, spellName)
+    if amount and amount > 0 then
+        if not absorbInfos[destGUID] then absorbInfos[destGUID] = {} end
+        absorbInfos[destGUID][spellName] = amount
+        UpdateShield(destGUID, amount)
+        return true
     end
-    return ...
+    return false
 end
 
+local function AbsorbScanWithRetry(unit, spellName, destGUID)
+    if TryAbsorbScan(unit, spellName, destGUID) then return end
+    local tries = 0
+    local function retry()
+        tries = tries + 1
+        if not TryAbsorbScan(unit, spellName, destGUID) and tries < 2 then
+            C_Timer.After(0.2, retry)
+        end
+    end
+    C_Timer.After(0.1, retry)
+end
+
+--! WotLK fix/perf: the old GetCLEU wrapper called the ClassicAPI
+--! CombatLogGetCurrentEventInfo shim with NO arguments - but that shim is a
+--! pure argument TRANSLATOR (native varargs in, retail order out) and returns
+--! nothing when fed nothing. The retail branch could never be taken, yet it
+--! allocated a throwaway table on EVERY combat-log event (hundreds/sec in a
+--! raid = pure GC churn). Parse the native 3.3.5 payload directly instead:
+--! timestamp(1), subEvent(2), srcGUID(3), srcName(4), srcFlags(5), dstGUID(6),
+--! dstName(7), dstFlags(8), then the per-event payload from slot 9 (no
+--! hideCaster / raid-flag slots on 3.3.5).
 cleu:SetScript("OnEvent", function(_, _, ...)
-    local timestamp, subEvent, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, arg9, arg10, arg11, arg12, arg13, arg14, arg15, arg16, arg17, arg18, arg19, arg20 = GetCLEU(...)
+    local timestamp, subEvent, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, arg9, arg10, arg11, arg12, arg13, arg14, arg15, arg16, arg17, arg18, arg19, arg20 = ...
     local spellId, spellName, spellSchool = arg9, arg10, arg11
 
     if subEvent == "SPELL_HEAL" then
@@ -2599,32 +2659,12 @@ cleu:SetScript("OnEvent", function(_, _, ...)
              else
                   local unit = Cell.vars.guids[destGUID]
                   if unit then
-                      local function UpdateAbsorbScan()
-                           local amount = GetShieldAmount(unit, spellName)
-                           if amount and amount > 0 then
-                                if not absorbInfos[destGUID] then absorbInfos[destGUID] = {} end
-                                absorbInfos[destGUID][spellName] = amount
-                                UpdateShield(destGUID, amount)
-                                return true
-                           end
-                           return false
-                      end
-                      
-                      -- Try immediately
-                      if not UpdateAbsorbScan() then
-                           -- Retry in 0.1s (Race condition fix)
-                           C_Timer.After(0.1, function() 
-                                -- Re-check unit existence/guid match? 
-                                -- Minimal check: if shield is still expected.
-                                if not UpdateAbsorbScan() then
-                                     -- Final retry 0.3s?
-                                     C_Timer.After(0.2, UpdateAbsorbScan)
-                                end
-                           end)
-                      end
+                      --! WotLK perf: was a per-event closure declared right here -
+                      --! see TryAbsorbScan/AbsorbScanWithRetry at file scope
+                      AbsorbScanWithRetry(unit, spellName, destGUID)
                   end
              end
-             -- UpdateShield called inside UpdateAbsorbScan if successful
+             -- UpdateShield called inside TryAbsorbScan if successful
         elseif spellId == 64411 and sourceGUID == Cell.vars.playerGUID then
              -- Blessing of Ancient Kings (start)
              blessing = true
