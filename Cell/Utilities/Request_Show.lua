@@ -264,9 +264,12 @@ end
 
 SR:SetScript("OnEvent", function(self, event, ...)
     if event == "COMBAT_LOG_EVENT_UNFILTERED" then
-        -- WotLK 3.3.5a doesn't have CombatLogGetCurrentEventInfo; args passed directly in ...
+        --! WotLK fix: the ClassicAPI CombatLogGetCurrentEventInfo shim is a TRANSLATOR
+        --! (native varargs in -> retail layout out); called WITHOUT arguments it returns
+        --! nothing, so the handler saw only nils and the spell-request glow was never
+        --! hidden on SPELL_AURA_APPLIED. Pass the native varargs through.
         if CombatLogGetCurrentEventInfo then
-            self:COMBAT_LOG_EVENT_UNFILTERED(CombatLogGetCurrentEventInfo())
+            self:COMBAT_LOG_EVENT_UNFILTERED(CombatLogGetCurrentEventInfo(...))
         else
             self:COMBAT_LOG_EVENT_UNFILTERED(...)
         end
@@ -356,13 +359,14 @@ end
 -- hide glow if removed
 DR:SetScript("OnEvent", function(self, event, ...)
     if event == "COMBAT_LOG_EVENT_UNFILTERED" then
-        -- WotLK 3.3.5a doesn't have CombatLogGetCurrentEventInfo; args passed directly in ...
         -- WotLK 3.3.5a: sourceRaidFlags and destRaidFlags don't exist (added in 4.2.0)
+        --! WotLK fix: the translator shim called WITHOUT arguments returns nothing, so
+        --! the dispel-request glow was never hidden on SPELL_AURA_REMOVED. Pass varargs.
         local timestamp, subEvent, _, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, spellID
         if CombatLogGetCurrentEventInfo then
             -- Retail/Cata+ has sourceRaidFlags and destRaidFlags
             local sourceRaidFlags, destRaidFlags
-            timestamp, subEvent, _, sourceGUID, sourceName, sourceFlags, sourceRaidFlags, destGUID, destName, destFlags, destRaidFlags, spellID = CombatLogGetCurrentEventInfo()
+            timestamp, subEvent, _, sourceGUID, sourceName, sourceFlags, sourceRaidFlags, destGUID, destName, destFlags, destRaidFlags, spellID = CombatLogGetCurrentEventInfo(...)
         else
             -- WotLK 3.3.5a: No sourceRaidFlags/destRaidFlags
             timestamp, subEvent, _, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, spellID = ...

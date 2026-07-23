@@ -62,6 +62,10 @@ eventFrame:SetScript("OnEvent", function(self, event, unit, arg2, arg3)
     end
 end)
 
+--! WotLK note: if this debug block is ever revived, the ClassicAPI shim of
+--! CombatLogGetCurrentEventInfo is a TRANSLATOR and MUST receive the native varargs:
+--! use `function(_, _, ...)` + `CombatLogGetCurrentEventInfo(...)` - called without
+--! arguments it returns nothing (see AoEHealing.lua GetCLEUInfo for the pattern).
 -- local CombatLogGetCurrentEventInfo = CombatLogGetCurrentEventInfo
 -- eventFrame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
 -- eventFrame:SetScript("OnEvent", function()

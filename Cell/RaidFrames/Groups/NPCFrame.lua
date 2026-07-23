@@ -284,13 +284,15 @@ local boss678_buttonToGuid = {}
 
 local cleu = CreateFrame("Frame")
 cleu:SetScript("OnEvent", function(self, event, ...)
-    -- WotLK 3.3.5a doesn't have CombatLogGetCurrentEventInfo; args passed directly in ...
     -- WotLK 3.3.5a: sourceRaidFlags and destRaidFlags don't exist (added in 4.2.0)
+    --! WotLK fix: the translator shim called WITHOUT arguments returns nothing, so
+    --! destGUID was always nil and the boss6-8 CLEU health updater was dead (health
+    --! only refreshed via the 5s poll). Pass the native varargs through.
     local timestamp, subEvent, _, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags
     if CombatLogGetCurrentEventInfo then
         -- Retail/Cata+ has sourceRaidFlags and destRaidFlags
         local sourceRaidFlags, destRaidFlags
-        timestamp, subEvent, _, sourceGUID, sourceName, sourceFlags, sourceRaidFlags, destGUID, destName, destFlags, destRaidFlags = CombatLogGetCurrentEventInfo()
+        timestamp, subEvent, _, sourceGUID, sourceName, sourceFlags, sourceRaidFlags, destGUID, destName, destFlags, destRaidFlags = CombatLogGetCurrentEventInfo(...)
     else
         -- WotLK 3.3.5a: No sourceRaidFlags/destRaidFlags
         timestamp, subEvent, _, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags = ...

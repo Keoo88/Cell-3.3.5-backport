@@ -186,8 +186,13 @@ function frame:ENCOUNTER_START()
 end
 
 function frame:COMBAT_LOG_EVENT_UNFILTERED(...)
-    -- WotLK 3.3.5a: sourceRaidFlags and destRaidFlags don't exist (added in 4.2.0)
-    local timestamp, event, hideCaster, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, arg12, arg13, arg14 = ...
+    --! WotLK fix: this handler receives the TRANSLATED retail layout from the ClassicAPI
+    --! CombatLogGetCurrentEventInfo shim (see the dispatcher below) - i.e. WITH the
+    --! hideCaster AND both raidFlags slots. The old unpack dropped the two raidFlags
+    --! slots, so destGUID landed on sourceRaidFlags and every branch below misfired.
+    --! The select() offsets (13 ENVIRONMENTAL / 12 SWING / 15 SPELL) are retail offsets
+    --! and are correct for the translated payload - they stay as they are.
+    local timestamp, event, hideCaster, sourceGUID, sourceName, sourceFlags, sourceRaidFlags, destGUID, destName, destFlags, destRaidFlags, arg12, arg13, arg14 = ...
     local amount, overkill, school, resisted, blocked, absorbed, critical -- glancing, crushing
 
     -- arg12, arg13, arg14,
@@ -241,9 +246,12 @@ end
 
 frame:SetScript("OnEvent", function(self, event, ...)
     if event == "COMBAT_LOG_EVENT_UNFILTERED" then
-        -- WotLK 3.3.5a doesn't have CombatLogGetCurrentEventInfo; args passed directly in ...
+        --! WotLK fix: the ClassicAPI CombatLogGetCurrentEventInfo shim is a TRANSLATOR
+        --! (native varargs in -> retail layout out); called WITHOUT arguments it returns
+        --! nothing, so every field was nil and string.find(destGUID) errored on the very
+        --! first combat log event. Pass the native varargs through (AoEHealing pattern).
         if CombatLogGetCurrentEventInfo then
-            self:COMBAT_LOG_EVENT_UNFILTERED(CombatLogGetCurrentEventInfo())
+            self:COMBAT_LOG_EVENT_UNFILTERED(CombatLogGetCurrentEventInfo(...))
         else
             self:COMBAT_LOG_EVENT_UNFILTERED(...)
         end
