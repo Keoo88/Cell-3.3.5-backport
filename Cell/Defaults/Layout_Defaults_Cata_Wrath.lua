@@ -54,6 +54,10 @@ Cell.defaults.layout = {
         ["groupSpacing"] = 0,
     },
     ["pet"] = {
+        --! WotLK fix: the key existed in the code but not in the defaults, so a
+        --! brand new layout had no soloEnabled at all and every reader had to
+        --! treat nil as "off" by luck. Declare it explicitly, matching raidEnabled.
+        ["soloEnabled"] = false,
         ["partyEnabled"] = true,
         ["raidEnabled"] = false,
         ["sameSizeAsMain"] = true,

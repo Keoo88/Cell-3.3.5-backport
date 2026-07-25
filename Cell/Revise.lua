@@ -3261,8 +3261,15 @@ function F.Revise()
     -- r246-release
     if CellDB["revise"] and dbRevision < 246 then
         for _, layout in pairs(CellDB["layouts"]) do
+            --! WotLK fix: this used to seed true, which silently switched the solo
+            --! pet ON for every existing profile on upgrade. Upstream Cell has no
+            --! such key in the layout defaults and ships raid pets off, so people
+            --! got a pet frame they never asked for - and could not turn it off via
+            --! "Show Raid Pets", which is a different setting entirely. Seed false
+            --! and let the user opt in. Profiles that already stored a boolean keep
+            --! whatever they have; only missing/corrupt values are touched.
             if type(layout.pet.soloEnabled) ~= "boolean" then
-                layout.pet.soloEnabled = true
+                layout.pet.soloEnabled = false
             end
 
             for _, i in pairs(layout["indicators"]) do

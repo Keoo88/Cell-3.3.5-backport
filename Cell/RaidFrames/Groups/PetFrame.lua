@@ -52,6 +52,8 @@ dumb:HookScript("OnLeave", function()
     CellTooltip:Hide()
 end)
 
+local CollectButtons
+
 local function UpdateAnchor()
     -- Layout not initialized yet? Turn off mouse + hide dummy and bail.
     if not Cell.vars.currentLayoutTable
@@ -64,8 +66,20 @@ local function UpdateAnchor()
     local show
     local layoutPet = Cell.vars.currentLayoutTable["pet"]
 
+    --! WotLK fix: the solo case was missing, so with "Show Solo Pet" + Detached
+    --! the separate frame appeared with no mover and no menu button at all.
     if layoutPet["raidEnabled"]
-       or (layoutPet["partyEnabled"] and layoutPet["partyDetached"]) then
+       or (layoutPet["partyEnabled"] and layoutPet["partyDetached"])
+       or (layoutPet["soloEnabled"] and layoutPet["partyDetached"]) then
+        --! WotLK fix: the button array used to be filled exactly once at load,
+        --! when the secure header has usually not created its children yet. When
+        --! that happened the array stayed empty forever, pinning show to false,
+        --! which is why the menu button vanished for good - hover included,
+        --! since hoverFrame:EnableMouse(show) goes with it. Retry here.
+        if not Cell.unitButtons.pet[1] then
+            CollectButtons()
+        end
+
         local firstPetButton = Cell.unitButtons.pet[1]
         if firstPetButton and firstPetButton:IsShown() then
             show = true
@@ -140,16 +154,28 @@ header:SetAttribute("startingIndex", 1)
 --! sized (stayed 2x2 px - invisible), never got bar orientation/power size,
 --! and Cell.unitButtons.pet was left empty. Collect them into the array
 --! part of header once, restoring the upstream iteration contract.
-for i = 1, 25 do
-    local b = header:GetAttribute("child" .. i) or _G["CellPetFrameHeaderUnitButton" .. i]
-    if not b then break end
-    header[i] = b
-end
+--! WotLK fix: made re-runnable, and every collected button now refreshes the
+--! mover when it appears or disappears. A pet button only becomes shown after
+--! the secure header assigns it a unit, which happens *after* the option toggle
+--! that triggered UpdateAnchor, so the old one-shot IsShown() check ran too
+--! early and latched the menu button into the hidden state.
+function CollectButtons()
+    for i = 1, 25 do
+        local b = header:GetAttribute("child" .. i) or _G["CellPetFrameHeaderUnitButton" .. i]
+        if not b then break end
+        header[i] = b
+    end
 
-for i, b in ipairs(header) do
-    Cell.unitButtons.pet[i] = b
-    -- b.type = "pet" -- layout setup
+    for i, b in ipairs(header) do
+        if not Cell.unitButtons.pet[i] then
+            Cell.unitButtons.pet[i] = b
+            -- b.type = "pet" -- layout setup
+            b:HookScript("OnShow", UpdateAnchor)
+            b:HookScript("OnHide", UpdateAnchor)
+        end
+    end
 end
+CollectButtons()
 
 -- update mover
 header:HookScript("OnShow", function()
@@ -263,8 +289,12 @@ local function PetFrame_UpdateLayout(layout, which)
         petFrame:Hide()
         return
     end
+    --! WotLK fix: the solo clause must also respect "Detached". This driver is a
+    --! secure state-visibility driver, so it wins over any petFrame:Hide() done
+    --! from Lua - leaving it ungated made the separate pet frame pop back up on
+    --! the next state change even when the frame had just been hidden below.
     local driver = "[target=raid1,exists] show;[target=party1,exists] show;"
-    if layout["pet"]["soloEnabled"] then
+    if layout["pet"]["soloEnabled"] and layout["pet"]["partyDetached"] then
         driver = driver .. "[target=pet,exists] show;"
     end
     RegisterAttributeDriver(petFrame, "state-visibility", driver .. "hide")
@@ -382,12 +412,19 @@ local function PetFrame_UpdateLayout(layout, which)
     end
 
     if not which or which == "pet" then
-        if Cell.vars.groupType == "solo" and layout["pet"]["soloEnabled"] then
+        if Cell.vars.groupType == "solo" and layout["pet"]["soloEnabled"] and layout["pet"]["partyDetached"] then
             --! WotLK fix: solo was unconditionally hidden (fell into the else
             --! branch), so the "Show Solo Pet" (soloEnabled) checkbox did
             --! nothing. Native 3.3.5 GetGroupHeaderType supports type "SOLO"
             --! via the showSolo attribute (implies showPlayer -> shows "pet"),
             --! so the player's own pet displays without any group.
+            --! "partyDetached" is required as well: it is the single "show pets in
+            --! a separate frame" switch, and the party branch below already honours
+            --! it. Without it a solo player got the detached frame on top of the
+            --! attached pet button that SoloFrame.lua already shows for
+            --! soloEnabled, so turning Detached off changed nothing while solo.
+            --! When it is off the pet is not lost - SoloFrame renders it next to
+            --! the player button.
             header:SetAttribute("showSolo", true)
             header:SetAttribute("showParty", false)
             header:SetAttribute("showRaid", false)
@@ -419,6 +456,13 @@ local function PetFrame_UpdateLayout(layout, which)
             header:SetAttribute("showRaid", false)
             petFrame:Hide()
         end
+
+        --! WotLK fix: nothing refreshed the mover after a pet option toggle.
+        --! UpdateAnchor only ran from UpdatePosition (arrangement changes) and
+        --! from the header's OnShow/OnHide, and the header itself is always
+        --! shown - only petFrame is toggled - so flipping the party/raid
+        --! checkboxes left the menu button in whatever state it last latched.
+        UpdateAnchor()
     end
 end
 Cell.RegisterCallback("UpdateLayout", "PetFrame_UpdateLayout", PetFrame_UpdateLayout)

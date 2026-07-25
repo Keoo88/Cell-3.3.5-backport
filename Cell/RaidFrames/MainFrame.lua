@@ -45,30 +45,87 @@ P.Size(anchorFrame, 20, 10)
 anchorFrame:SetMovable(true)
 anchorFrame:SetClampedToScreen(true)
 
+--! WotLK fix: the menu buttons used to move the frames from OnDragStart only.
+--! The client does not fire OnDragStart on the first pixel of movement - it
+--! waits until the cursor has travelled its internal drag threshold, which is
+--! why the pointer visibly ran away from the button before the frames began to
+--! follow. StartMoving() keeps the grab offset, so nothing jumped afterwards,
+--! it simply engaged late. Drive the move from OnMouseDown instead so it starts
+--! on the very first pixel, and keep the drag scripts as a fallback. A flag
+--! keeps the two paths from starting or stopping the move twice.
+local isMoving
+--! The move is driven from OnMouseDown, but the button still receives its normal
+--! OnClick on release, so finishing a drag also opened the Options window. Track
+--! whether the anchor actually travelled and swallow exactly that one click.
+local movedWhileDown
+local moveStartX, moveStartY
+
+local function ConsumeDragClick()
+    if movedWhileDown then
+        movedWhileDown = false
+        return true
+    end
+    return false
+end
+
+local function StartMove()
+    if isMoving then return end
+    if InCombatLockdown() then return end
+    --! Honour the "lock" option here too. Locking used to work by clearing
+    --! RegisterForDrag, which no longer covers the OnMouseDown path.
+    if CellDB["general"]["locked"] then return end
+    isMoving = true
+    moveStartX, moveStartY = anchorFrame:GetLeft(), anchorFrame:GetBottom()
+    anchorFrame:StartMoving()
+    anchorFrame:SetUserPlaced(false)
+end
+
+local function StopMove()
+    if not isMoving then return end
+    isMoving = false
+    -- Combat fix: ALWAYS stop moving, even in combat. anchorFrame is a plain
+    -- (non-secure) frame, so StopMovingOrSizing is NOT combat-protected. The
+    -- previous InCombatLockdown() early-return meant that if combat started
+    -- mid-drag, releasing the mouse never stopped movement and the frame
+    -- stayed stuck to the cursor until /reload.
+    anchorFrame:StopMovingOrSizing()
+
+    --! Only treat this as a drag if the anchor really moved. A plain click keeps
+    --! working, while a drag of more than a pixel suppresses the click that ends it.
+    local x, y = anchorFrame:GetLeft(), anchorFrame:GetBottom()
+    if moveStartX and moveStartY and x and y then
+        if abs(x - moveStartX) > 1 or abs(y - moveStartY) > 1 then
+            movedWhileDown = true
+        end
+    end
+
+    P.SavePosition(anchorFrame, Cell.vars.currentLayoutTable["main"]["position"])
+end
+
 -- Combat fix: if combat starts while the anchor is being dragged, abort the
 -- drag immediately so the frame does not stay stuck to the cursor. OnDragStop
 -- only fires on mouse release, which can be much later.
 anchorFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
 anchorFrame:SetScript("OnEvent", function(self)
+    isMoving = false
     self:StopMovingOrSizing()
 end)
 
 local function RegisterButtonEvents(frame)
     -- frame:RegisterForDrag("LeftButton")
-    frame:SetScript("OnDragStart", function()
-        if InCombatLockdown() then return end
-        anchorFrame:StartMoving()
-        anchorFrame:SetUserPlaced(false)
+    frame:HookScript("OnMouseDown", function(self, button)
+        --! Clear the flag on every fresh press so a drag that ended off the button
+        --! (no OnClick fired) cannot swallow the next genuine click.
+        movedWhileDown = false
+        if button == "LeftButton" then
+            StartMove()
+        end
     end)
-    frame:SetScript("OnDragStop", function()
-        -- Combat fix: ALWAYS stop moving, even in combat. anchorFrame is a plain
-        -- (non-secure) frame, so StopMovingOrSizing is NOT combat-protected. The
-        -- previous InCombatLockdown() early-return meant that if combat started
-        -- mid-drag, releasing the mouse never stopped movement and the frame
-        -- stayed stuck to the cursor until /reload.
-        anchorFrame:StopMovingOrSizing()
-        P.SavePosition(anchorFrame, Cell.vars.currentLayoutTable["main"]["position"])
+    frame:HookScript("OnMouseUp", function()
+        StopMove()
     end)
+    frame:SetScript("OnDragStart", StartMove)
+    frame:SetScript("OnDragStop", StopMove)
 
     frame:HookScript("OnEnter", function()
         hoverFrame:GetScript("OnEnter")(hoverFrame)
@@ -97,6 +154,7 @@ P.Point(options, "TOPLEFT", menuFrame)
 RegisterButtonEvents(options)
 options:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 options:SetScript("OnClick", function(self, button)
+    if ConsumeDragClick() then return end
     if button == "LeftButton" then
         F.ShowOptionsFrame()
     elseif button == "RightButton" then
@@ -119,6 +177,7 @@ local raid = Cell.CreateButton(menuFrame, "", "blue", {20, 10}, false, true)
 P.Point(raid, "LEFT", options, "RIGHT", 1, 0)
 RegisterButtonEvents(raid)
 raid:SetScript("OnClick", function()
+    if ConsumeDragClick() then return end
     F.ShowRaidRosterFrame()
 end)
 
