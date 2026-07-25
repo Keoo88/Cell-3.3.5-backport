@@ -34,11 +34,18 @@ local P = Cell.pixelPerfectFuncs
 local L = Cell.L
 
 -- sharing version check
-Cell.MIN_VERSION = 277
-Cell.MIN_CLICKCASTINGS_VERSION = 277
-Cell.MIN_LAYOUTS_VERSION = 277
-Cell.MIN_INDICATORS_VERSION = 277
-Cell.MIN_DEBUFFS_VERSION = 277
+--! WotLK fix: these floors used to equal this build's own version (277), which made
+--! the accepted window exactly one version wide, so every import string exported by
+--! any other Cell build (e.g. anything from wago.io) was rejected as "Incompatible
+--! Version". The floor is now the last schema-changing revision in Revise.lua (269).
+--! Anything older than that relies on Revise.lua migrations, and those only ever run
+--! against the local saved DB - never against imported data - so importing an older
+--! payload would inject an outdated shape and error out later at runtime.
+Cell.MIN_VERSION = 269
+Cell.MIN_CLICKCASTINGS_VERSION = 269
+Cell.MIN_LAYOUTS_VERSION = 269
+Cell.MIN_INDICATORS_VERSION = 269
+Cell.MIN_DEBUFFS_VERSION = 269
 
 --[==[@debug@
 --@end-debug@]==]
@@ -75,7 +82,15 @@ local delayedLayoutGroupType
 local delayedFrame = CreateFrame("Frame")
 delayedFrame:SetScript("OnEvent", function()
     delayedFrame:UnregisterEvent("PLAYER_REGEN_ENABLED")
-    F.UpdateLayout(delayedLayoutGroupType)
+    --! Freeze fix: leaving combat is when every deferred job wakes up at once - the
+    --! layout rebuild here, role sorting in RaidFrame/PartyFrame, the buff tracker,
+    --! marks and any pending button updates - so the end of a boss fight lands them
+    --! all in one frame. This one is the heaviest (it broadcasts UpdateLayout,
+    --! UpdateIndicators, UpdateAppearance, UpdateRaidDebuffs and more), so move it off
+    --! that frame. The two sort jobs already debounce themselves by 0.2s.
+    C_Timer.After(0.05, function()
+        F.UpdateLayout(delayedLayoutGroupType)
+    end)
 end)
 
 function F.UpdateLayout(layoutGroupType)
@@ -546,27 +561,8 @@ Cell.vars.raidSetup = {
     ["DAMAGER"]={["ALL"]=0},
 }
 
-function eventFrame:GROUP_ROSTER_UPDATE()
-    --! WotLK 3.3.5a soloq: solo-queue arena puts your team into a RAID group
-    --! (IsInRaid() == true), so Cell registered the group as "raid" and showed
-    --! raid frames. An arena must always use the party (arena) frame like a
-    --! normal 2s/3s. Force party group type while inside an arena instance.
-    --! NOTE: do NOT write instanceType here - PLAYER_ENTERING_WORLD owns it and
-    --! resets it on zone change; writing it here left the layout stuck on arena.
-    local _, _iType = IsInInstance()
-    if _iType == "arena" then
-        if Cell.vars.groupType ~= "party" then
-            Cell.vars.groupType = "party"
-            Cell.Fire("GroupTypeChanged", "party")
-            -- Layout update will be triggered by GroupTypeChanged callback -> PreUpdateLayout
-        end
-
-        -- arena shows the party frame: clear stale raid unit buttons
-        for i = 1, 40 do
-            Cell.unitButtons.raid.units["raid"..i] = nil
-            _G["CellRaidFrameMember"..i] = nil
-        end
-    elseif IsInRaid() then
+local function DoGroupRosterUpdate()
+    if IsInRaid() then
         if Cell.vars.groupType ~= "raid" then
             Cell.vars.groupType = "raid"
             Cell.Fire("GroupTypeChanged", "raid")
@@ -663,6 +659,21 @@ function eventFrame:GROUP_ROSTER_UPDATE()
     end
 end
 
+--! Freeze fix: on 3.3.5 a single roster change reaches Cell up to three times - once
+--! via the GROUP_ROSTER_UPDATE proxy in Polyfills.lua, and once via each of the
+--! PARTY_MEMBERS_CHANGED / RAID_ROSTER_UPDATE handlers that re-call this function.
+--! Every pass walks the roster, clears 40 raid slots and can fire a full layout
+--! rebuild, which is what makes forming a group stutter. Collapse the duplicates that
+--! land in the same frame; GetTime() is constant within a frame, so this drops only
+--! genuine repeats. Callers that must recompute synchronously pass force.
+local lastRosterFrame
+function eventFrame:GROUP_ROSTER_UPDATE(force)
+    local now = GetTime()
+    if not force and lastRosterFrame == now then return end
+    lastRosterFrame = now
+    DoGroupRosterUpdate()
+end
+
 local inInstance
 function eventFrame:PLAYER_ENTERING_WORLD()
     local isIn, iType = IsInInstance()
@@ -697,25 +708,35 @@ function eventFrame:PLAYER_ENTERING_WORLD()
             end)
         end
 
-    elseif inInstance then -- left insntance
+    elseif inInstance then -- left instance
+        --! WotLK fix: leaving an instance (e.g. arena) can leave Cell.vars.groupType
+        --! stale ("party") for a moment, so layout auto-switch applied the wrong (group)
+        --! profile. Recompute the real group type from the live API before applying the
+        --! layout, and re-check shortly after in case the arena party is torn down later.
+        eventFrame:GROUP_ROSTER_UPDATE(true) --! force: the layout below depends on it
         PreUpdateLayout()
         inInstance = false
         Cell.Fire("LeaveInstance")
+        C_Timer.After(0.3, function() eventFrame:GROUP_ROSTER_UPDATE() end)
+        C_Timer.After(1, function() eventFrame:GROUP_ROSTER_UPDATE() end)
 
+        --! Freeze fix: collectgarbage("collect") is a synchronous full sweep of the
+        --! entire Lua heap (~180MB with a loaded UI). It stops the client dead for a
+        --! noticeable fraction of a second at exactly the moment an RDF teleport pulls
+        --! you out of the instance. Reclaim the same memory with bounded incremental
+        --! steps spread over the next second instead, so no single frame pays for it.
         if not InCombatLockdown() and not UnitAffectingCombat("player") then
-            collectgarbage("collect")
+            C_Timer.NewTicker(0.1, function()
+                collectgarbage("step", 200)
+            end, 10)
         end
     end
 
-    if CellDB["firstRun"] then
-        F.FirstRun()
-    end
-
-    --! Merged from the duplicate PLAYER_ENTERING_WORLD that used to be defined
-    --! below and silently overwrote this handler (which disabled layout auto-
-    --! switching entirely - arena/bg layouts never applied). On reload/login/
-    --! zone-in, force a roster refresh if we're already grouped so names and
-    --! indicators populate.
+    --! WotLK fix: merged from a duplicate PLAYER_ENTERING_WORLD handler that used to
+    --! silently overwrite this one (Lua keeps only the last definition), which disabled
+    --! all instanceType-based layout switching (arena/bg/raid) and the leave-instance
+    --! profile refresh. On reload/login force a roster refresh if already grouped so
+    --! names/indicators populate.
     if IsInRaid() or IsInGroup() then
         C_Timer.After(0.1, function() eventFrame:GROUP_ROSTER_UPDATE() end)
         C_Timer.After(0.5, function() eventFrame:GROUP_ROSTER_UPDATE() end)
@@ -726,6 +747,10 @@ function eventFrame:PLAYER_ENTERING_WORLD()
                 end
             end
         end)
+    end
+
+    if CellDB["firstRun"] then
+        F.FirstRun()
     end
 end
 
@@ -889,6 +914,11 @@ function eventFrame:PLAYER_TALENT_UPDATE()
     -- UpdateSpecVars(true)
     F.UpdateClickCastingProfileLabel()
 end
+
+--! WotLK fix: this duplicate PLAYER_ENTERING_WORLD handler was overwriting the real one
+--! above (Lua keeps only the last definition assigned to eventFrame.PLAYER_ENTERING_WORLD),
+--! which disabled instanceType-based layout switching and the leave-instance profile
+--! refresh. Its grouped-roster-refresh logic has been merged into the handler above.
 
 eventFrame:SetScript("OnEvent", function(self, event, ...)
     self[event](self, ...)
