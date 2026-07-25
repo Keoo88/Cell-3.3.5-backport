@@ -4,6 +4,30 @@ _G.Cell = _G.Cell or ns or {}
 local Cell = _G.Cell
 
 -------------------------------------------------
+-- GetClassInfo contract shim
+-- The global has two different contracts depending on which copy of ClassicAPI
+-- owns it: Cell's fork returns a tuple, the standalone !!!ClassicAPI addon
+-- aliases it to the ClassInfo *table*. Always read it through this helper so
+-- Cell works no matter which one loaded.
+-------------------------------------------------
+function Cell.GetClassInfoTuple(classID)
+    local info
+    if C_CreatureInfo and C_CreatureInfo.GetClassInfo then
+        info = C_CreatureInfo.GetClassInfo(classID)
+    end
+    if type(info) == "table" then
+        return info.className, info.classFile, info.classID
+    end
+    if GetClassInfo then
+        local a, b, c = GetClassInfo(classID)
+        if type(a) == "table" then
+            return a.className, a.classFile, a.classID
+        end
+        return a, b, c
+    end
+end
+
+-------------------------------------------------
 -- securecallfunction polyfill
 -- Some 3.3.5 builds lack this helper; Ace libraries expect it.
 -------------------------------------------------
@@ -2780,7 +2804,7 @@ if not LocalizedClassList then
     function LocalizedClassList(gender)
         local t = {}
         for i = 1, GetNumClasses() do
-            local name, tag, id = GetClassInfo(i)
+            local name, tag, id = Cell.GetClassInfoTuple(i)
             if tag then
                 t[tag] = name
             end

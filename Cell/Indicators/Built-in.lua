@@ -2011,22 +2011,23 @@ function I.CreateAggroBlink(parent)
     aggroBlink:SetBackdropBorderColor(0, 0, 0, 1)
     aggroBlink:Hide()
 
-    local blink = aggroBlink:CreateAnimationGroup()
-    aggroBlink.blink = blink
-    blink:SetLooping("REPEAT")
-
-    local alpha = blink:CreateAnimation("Alpha")
-    blink.alpha = alpha
-    alpha:SetFromAlpha(1)
-    alpha:SetToAlpha(0)
-    alpha:SetDuration(0.5)
+    -- smooth alpha pulse via OnUpdate.
+    -- The Animation API is only partial on this 3.3.5 client (eased looping is
+    -- unreliable, FlipBook absent), so drive the blink manually: safe + smooth.
+    local PULSE_MIN, PULSE_MAX, PULSE_SPEED = 0.1, 1, 12.5 -- period = 2*pi/SPEED ~ 0.5s (matches original tempo)
 
     aggroBlink:SetScript("OnShow", function(self)
-        self.blink:Play()
+        self.pulseElapsed = 0
+        self:SetAlpha(PULSE_MAX)
+    end)
+
+    aggroBlink:SetScript("OnUpdate", function(self, elapsed)
+        self.pulseElapsed = (self.pulseElapsed or 0) + elapsed
+        self:SetAlpha(PULSE_MIN + (PULSE_MAX - PULSE_MIN) * (math.sin(self.pulseElapsed * PULSE_SPEED) * 0.5 + 0.5))
     end)
 
     aggroBlink:SetScript("OnHide", function(self)
-        self.blink:Stop()
+        self:SetAlpha(1)
     end)
 
     function aggroBlink:ShowAggro(r, g, b)

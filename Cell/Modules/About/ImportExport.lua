@@ -42,6 +42,25 @@ local function DoImport(noReload)
                 builtInFound[indicatorName] = true
                 if not Cell.defaults.indicatorIndices[indicatorName] then
                     tremove(layout["indicators"], i)
+                else
+                    --! WotLK fix: repair built-in indicator fields whose type doesn't match
+                    --! the current schema. Import strings from older Cell builds carry an
+                    --! outdated shape (e.g. healthText "format" used to be a plain string and
+                    --! is now a table), which later errors in HealthText_SetFormat. Revise.lua
+                    --! migrations only run against the local saved DB, never against imported
+                    --! data, so the repair has to happen here. Same idea as powerFilters below.
+                    local d = Cell.defaults.layout.indicators[Cell.defaults.indicatorIndices[indicatorName]]
+                    if type(d) == "table" then
+                        for k, v in pairs(d) do
+                            if type(layout["indicators"][i][k]) ~= type(v) then
+                                if type(v) == "table" then
+                                    layout["indicators"][i][k] = F.Copy(v)
+                                else
+                                    layout["indicators"][i][k] = v
+                                end
+                            end
+                        end
+                    end
                 end
             else -- remove invalid spells from custom indicators
                 F.FilterInvalidSpells(layout["indicators"][i]["auras"])
@@ -68,6 +87,19 @@ local function DoImport(noReload)
                     tinsert(layout["indicators"], index, Cell.defaults.layout.indicators[index])
                 end
             end
+        end
+    end
+
+    --! WotLK fix: general settings whose type changed across revisions. framePriority
+    --! used to be a string ("normal_spotlight") and became a table in r237; an older
+    --! imported payload makes F.UpdateFramePriority call pairs() on a string and error.
+    if type(imported["general"]) == "table" then
+        if type(imported["general"]["framePriority"]) ~= "table" then
+            imported["general"]["framePriority"] = {
+                {"Main", true},
+                {"Spotlight", false},
+                {"Quick Assist", false},
+            }
         end
     end
 
@@ -419,7 +451,7 @@ local function CreateImportExportFrame()
                 version = tonumber(version)
 
                 if version and data then
-                    if version >= Cell.MIN_VERSION and version <= Cell.versionNum then
+                    if version >= Cell.MIN_VERSION then --! WotLK fix: removed the "version <= Cell.versionNum" upper clamp (profile import used to accept only this exact build's strings)
                         local success
                         data = LibDeflate:DecodeForPrint(data) -- decode
                         success, data = pcall(LibDeflate.DecompressDeflate, LibDeflate, data) -- decompress
@@ -548,7 +580,7 @@ function Cell.ImportProfile(profileString, profileName, ignoredIndicesExternal)
     version = tonumber(version)
 
     if version and data then
-        if version >= Cell.MIN_VERSION and version <= Cell.versionNum then
+        if version >= Cell.MIN_VERSION then --! WotLK fix: removed the "version <= Cell.versionNum" upper clamp (profile import used to accept only this exact build's strings)
             local success
             data = LibDeflate:DecodeForPrint(data) -- decode
             success, data = pcall(LibDeflate.DecompressDeflate, LibDeflate, data) -- decompress

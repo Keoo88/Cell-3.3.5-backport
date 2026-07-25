@@ -1,3 +1,9 @@
+--! Cell: this is a private, trimmed fork of Tsoukie's ClassicAPI.
+--! If the standalone !!!ClassicAPI addon is installed (Gladdy requires it), it
+--! loads first and owns these globals. Overwriting them with this older subset
+--! mixes two incompatible halves of the same library, so bail out instead.
+if IsAddOnLoaded and IsAddOnLoaded("!!!ClassicAPI") then return end
+
 --[[
 	Queries some data retrieval API (specifically where the data may not be currently available) and when it becomes available
 	calls a user-supplied function.  The callback can be canceled if necessary (e.g. the frame that would use the data becomes

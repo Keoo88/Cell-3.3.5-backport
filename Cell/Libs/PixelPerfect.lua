@@ -30,6 +30,17 @@ local P = addon.pixelPerfectFuncs
 
 function P.GetResolution()
     -- return string.match(({GetScreenResolutions()})[GetCurrentResolution()], "(%d+)x(%d+)")
+    --! Read the real physical resolution ourselves instead of trusting the global.
+    --! GetPhysicalScreenSize may be owned by the standalone !!!ClassicAPI addon,
+    --! whose version returns UI units (~1024x768) rather than pixels, which
+    --! collapses every pixel-perfect calculation in Cell to scale 1.
+    local resolution = GetCVar and GetCVar("gxResolution")
+    if resolution then
+        local w, h = string.match(resolution, "(%d+)x(%d+)")
+        if w and h then
+            return tonumber(w), tonumber(h)
+        end
+    end
     return GetPhysicalScreenSize()
 end
 
