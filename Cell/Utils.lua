@@ -66,7 +66,7 @@ do
     --! WotLK: Cap at 11 (DRUID is highest class in WotLK)
     local highestClassID = 11
     for i = 1, highestClassID do
-        local classFile, classID = select(2, GetClassInfo(i))
+        local classFile, classID = select(2, Cell.GetClassInfoTuple(i))
         if classFile and classID == i then
             tinsert(sortedClasses, classFile)
             classFileToID[classFile] = i

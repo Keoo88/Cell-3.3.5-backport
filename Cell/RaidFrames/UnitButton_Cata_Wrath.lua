@@ -392,28 +392,35 @@ local function HandleIndicators(b)
         if t["speed"] then
             indicator:SetSpeed(t["speed"])
         end
+        --! WotLK fix: every call below is driven by an optional config key, but the
+        --! matching method only exists on some indicators (e.g. SetHideIfEmptyOrFull is
+        --! defined for powerText only). A profile imported from an older Cell build can
+        --! leave a stale top-level key on an indicator that never supported it -
+        --! healthText used to carry "hideIfEmptyOrFull" before it moved inside "format" -
+        --! and calling the missing method errors on every button refresh. Check the
+        --! method exists before invoking it.
         -- update fadeOut
-        if type(t["fadeOut"]) == "boolean" then
+        if type(t["fadeOut"]) == "boolean" and indicator.SetFadeOut then
             indicator:SetFadeOut(t["fadeOut"])
         end
         -- update shape
-        if t["shape"] then
+        if t["shape"] and indicator.SetShape then
             indicator:SetShape(t["shape"])
         end
         -- update glow
-        if t["glowOptions"] then
+        if t["glowOptions"] and indicator.SetupGlow then
             indicator:SetupGlow(t["glowOptions"])
         end
         -- update smooth
-        if type(t["smooth"]) == "boolean" then
+        if type(t["smooth"]) == "boolean" and indicator.EnableSmooth then
             indicator:EnableSmooth(t["smooth"])
         end
         -- max value
-        if t["maxValue"] then
+        if t["maxValue"] and indicator.SetMaxValue then
             indicator:SetMaxValue(t["maxValue"])
         end
         -- update hideIfEmptyOrFull
-        if type(t["hideIfEmptyOrFull"]) == "boolean" then
+        if type(t["hideIfEmptyOrFull"]) == "boolean" and indicator.SetHideIfEmptyOrFull then
             indicator:SetHideIfEmptyOrFull(t["hideIfEmptyOrFull"])
         end
 

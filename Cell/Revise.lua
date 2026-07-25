@@ -3515,6 +3515,101 @@ function F.Revise()
         end
     end
 
+    --! WotLK fix: heal schema drift left behind by an imported profile.
+    --! Revise.lua's versioned migrations only fire when dbRevision is low enough, so a
+    --! profile imported from an older Cell build writes an outdated shape straight into
+    --! a DB that is already marked current, and nothing ever repairs it. Two known
+    --! casualties: general.framePriority was a string before r237 and is now a table
+    --! (F.UpdateFramePriority calls pairs() on it), and built-in indicator fields such
+    --! as healthText "format" changed from a plain string to a table
+    --! (HealthText_SetFormat indexes format.health1). Compare types against the current
+    --! defaults and restore the default whenever they disagree. Idempotent, runs every
+    --! load, and leaves custom indicators plus any correctly-typed user value untouched.
+    if type(CellDB["general"]) == "table" then
+        if type(CellDB["general"]["framePriority"]) ~= "table" then
+            CellDB["general"]["framePriority"] = {
+                {"Main", true},
+                {"Spotlight", false},
+                {"Quick Assist", false},
+            }
+        end
+    end
+
+    --! Restore anything the imported payload is missing or holds in the wrong shape.
+    --! Only three situations are touched, so correctly-shaped user settings survive:
+    --!   1. key absent, or present with a different Lua type -> take the default
+    --!   2. array-like value of the wrong length -> take the default. Positions grew from
+    --!      {point, relativePoint, x, y} to {point, relativeTo, relativePoint, x, y}, and a
+    --!      short array leaves positionTable[5] nil, which errors in slider SetValue.
+    --!   3. plain key/value sub-table -> recurse
+    local function RepairAgainstDefaults(t, d)
+        if type(t) ~= "table" or type(d) ~= "table" then return end
+        for k, v in pairs(d) do
+            if t[k] == nil or type(t[k]) ~= type(v) then
+                if type(v) == "table" then
+                    t[k] = F.Copy(v)
+                else
+                    t[k] = v
+                end
+            elseif type(v) == "table" then
+                if v[1] ~= nil then
+                    if #t[k] ~= #v then
+                        t[k] = F.Copy(v)
+                    end
+                else
+                    RepairAgainstDefaults(t[k], v)
+                end
+            end
+        end
+    end
+
+    --! appearance: colorThresholds/colorThresholdsLoss replaced gradientColors in r241, so
+    --! an older payload leaves them nil and the appearance tab errors indexing them.
+    RepairAgainstDefaults(CellDB["appearance"], Cell.defaults.appearance)
+
+    --! tools has no Cell.defaults entry, so mirror the table Core_Wrath seeds it with.
+    --! A payload without battleResTimer errors as soon as the utilities pane is opened.
+    if type(CellDB["tools"]) == "table" then
+        RepairAgainstDefaults(CellDB["tools"], {
+            ["battleResTimer"] = {true, false, {}},
+            ["buffTracker"] = {false, "left-to-right", 27, {}, {}},
+            ["deathReport"] = {false, 10},
+            ["readyAndPull"] = {false, "text_button", {"default", 7}, {}},
+            ["marks"] = {false, false, "target_h", {}},
+            ["fadeOut"] = false,
+        })
+    end
+
+    local staleIndicatorKeys = {"hideIfEmptyOrFull"}
+    if type(CellDB["layouts"]) == "table" then
+        for _, layout in pairs(CellDB["layouts"]) do
+            if type(layout) == "table" and type(layout["indicators"]) == "table" then
+                for _, t in pairs(layout["indicators"]) do
+                    if type(t) == "table" and t["type"] == "built-in" then
+                        local index = Cell.defaults.indicatorIndices[t["indicatorName"]]
+                        local d = index and Cell.defaults.layout.indicators[index]
+                        if type(d) == "table" then
+                            RepairAgainstDefaults(t, d)
+
+                            --! Drop settings that moved elsewhere in the schema. Kept to a
+                            --! known list on purpose: blindly deleting every key missing
+                            --! from the defaults would wipe legitimate optional config.
+                            --! "hideIfEmptyOrFull" sat on the healthText indicator itself in
+                            --! older builds and now lives inside format.health1/health2, so
+                            --! the leftover key makes UnitButton call a method that only
+                            --! powerText implements.
+                            for _, stale in pairs(staleIndicatorKeys) do
+                                if t[stale] ~= nil and d[stale] == nil then
+                                    t[stale] = nil
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
     CellDB["revise"] = Cell.version
     if CellCharacterDB then
         CellCharacterDB["revise"] = Cell.version
