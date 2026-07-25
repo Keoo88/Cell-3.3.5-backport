@@ -221,6 +221,12 @@ RegisterStateDriver(wrapFrame, "mouseoverstate", "[@mouseover, exists] true; fal
 --! update togglemenu_nocombat
 wrapFrame:SetAttribute("_onstate-combatstate", [[
     -- print("combatstate", newstate)
+    --! WotLK fix: keep the combat state in this restricted environment. The OnEnter
+    --! wrapper below shares these variables (same way mouseoverbutton is shared) and
+    --! needs to know whether we are in combat, but no secure snippet on 3.3.5 can ask
+    --! the game directly. RegisterStateDriver fires once on registration, so this is
+    --! populated from load onwards.
+    combatstate = newstate
     if mouseoverbutton then
         local menuKey = mouseoverbutton:GetAttribute("menu")
         if menuKey then
@@ -352,14 +358,13 @@ else
             end
 
             --! update togglemenu
-            local menuKey = self:GetAttribute("menu")
-            if menuKey then
-                if PlayerInCombat() then
-                    self:SetAttribute(menuKey, nil)
-                else
-                    self:SetAttribute(menuKey, "menu") --! WotLK: was "togglemenu" (4.x+ only)
-                end
-            end
+            --! WotLK fix: this used to call PlayerInCombat(), which does not exist -
+            --! neither in the restricted environment of 3.3.5 nor anywhere in Cell - so
+            --! the whole snippet aborted here and the menu binding was never applied.
+            --! The combat check now lives in the OnEnter wrapper below, which runs in
+            --! wrapFrame's environment where the combat state is available. Doing it
+            --! from insecure code instead is not an option: SetAttribute on a secure
+            --! button is blocked once PLAYER_REGEN_DISABLED fires.
         ]])
 
         if not b._cellOnEnterWrapped then
@@ -377,6 +382,16 @@ else
                     end
                 end
                 mouseoverbutton = self
+
+                --! update togglemenu / togglemenu_nocombat
+                local menuKey = self:GetAttribute("menu")
+                if menuKey then
+                    if combatstate == "true" then
+                        self:SetAttribute(menuKey, nil)
+                    else
+                        self:SetAttribute(menuKey, "menu")
+                    end
+                end
             ]])
 
             --! Clear the tracked button on hide so a later poke cannot hit a
@@ -586,6 +601,10 @@ local function ApplyClickCastings(b)
 
         if t[2] == "togglemenu_nocombat" then
             b:SetAttribute("menu", bindKey)
+            --! WotLK fix: only the key was remembered, the button never got a secure
+            --! action type, so "Menu (not in combat)" did nothing at all. Seed "menu"
+            --! here; the combat state driver clears it again while in combat.
+            b:SetAttribute(bindKey, "menu")
         ------------------------------------------------------------------
         --* 已修复：实际上载具（宠物按钮）无法选中的原因是没有 SetAttribute("toggleForVehicle", false)
         -- elseif Cell.isCata and t[2] == "target" then
