@@ -117,12 +117,12 @@ local function CreateDRPane()
     drMacroEB = Cell.CreateEditBox(drPane, 412, 20)
     drMacroEB:SetPoint("TOPLEFT", drResponseDD, "BOTTOMLEFT", 0, -27)
 
-    drMacroEB:SetText("/run C_ChatInfo.SendAddonMessage(\"CELL_REQ_D\",\"D\",\"RAID\")")
+    drMacroEB:SetText("/run SendAddonMessage(\"CELL_REQ_D\",\"D\",\"RAID\")")
     drMacroEB:SetCursorPosition(0)
 
     drMacroEB:SetScript("OnTextChanged", function(self, userChanged)
         if userChanged then
-            drMacroEB:SetText("/run C_ChatInfo.SendAddonMessage(\"CELL_REQ_D\",\"D\",\"RAID\")")
+            drMacroEB:SetText("/run SendAddonMessage(\"CELL_REQ_D\",\"D\",\"RAID\")")
             drMacroEB:SetCursorPosition(0)
             drMacroEB:HighlightText()
         end
