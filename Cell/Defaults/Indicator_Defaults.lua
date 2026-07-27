@@ -251,11 +251,7 @@ function I.GetDefaultCustomIndicatorTable(name, indicatorName, type, auraType)
 
     if auraType == "buff" then
         t["castBy"] = "me"
-        if Cell.isRetail then
-            t["trackByName"] = false
-        else
-            t["trackByName"] = true
-        end
+        t["trackByName"] = true
     else
         t["castBy"] = "anyone"
     end

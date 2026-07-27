@@ -441,21 +441,13 @@ local function Debuffs_ShowTooltip(debuffs, show)
 
             -- https://warcraft.wiki.gg/wiki/API_ScriptRegion_EnableMouse
             if not debuffs.enableBlacklistShortcut then
-                if Cell.isWrath or Cell.isVanilla or Cell.isCata then
-                    debuffs[i]:EnableMouse(true)
-                else
-                    debuffs[i]:SetMouseClickEnabled(false)
-                end
+                debuffs[i]:EnableMouse(true)
             end
         else
             debuffs[i]:SetScript("OnEnter", nil)
             debuffs[i]:SetScript("OnLeave", nil)
             if debuffs.enableBlacklistShortcut then
-                if Cell.isWrath or Cell.isVanilla or Cell.isCata then
-                     debuffs[i]:EnableMouse(false)
-                else
-                     debuffs[i]:SetMouseMotionEnabled(false)
-                end
+                debuffs[i]:EnableMouse(false)
             else
                 debuffs[i]:EnableMouse(false)
             end
@@ -487,7 +479,14 @@ local function Debuffs_EnableBlacklistShortcut(debuffs, enabled)
         else
             debuffs[i]:SetScript("OnMouseUp", nil)
             if debuffs.showTooltip then
-                debuffs[i]:SetMouseClickEnabled(false)
+                --! WotLK fix: 3.3.5 has no SetMouseClickEnabled, and the shim maps it to
+                --! EnableMouse(false), which kills hover as well -- the debuff tooltip
+                --! would stop showing. Mouse must stay enabled for OnEnter to fire.
+                if Cell.isWrath or Cell.isVanilla or Cell.isCata then
+                    debuffs[i]:EnableMouse(true)
+                else
+                    debuffs[i]:SetMouseClickEnabled(false)
+                end
             else
                 debuffs[i]:EnableMouse(false)
             end
@@ -609,7 +608,10 @@ local function Dispels_SetDispels(self, dispelTypes)
                     self.highlight:SetVertexColor(r, g, b, 1)
                 elseif self.highlightType == "gradient" or self.highlightType == "gradient-half" then
                     self.highlight:SetTexture(Cell.vars.whiteTexture)
-                    self.highlight:SetGradient("VERTICAL", CreateColor(r, g, b, 1), CreateColor(r, g, b, 0))
+                    --! WotLK fix: native SetGradientAlpha instead of the shimmed retail
+                    --! two-colour SetGradient. This runs from UnitButton_UpdateDebuffs on
+                    --! every UNIT_AURA, so two CreateColor tables per frame add up fast.
+                    self.highlight:SetGradientAlpha("VERTICAL", r, g, b, 1, r, g, b, 0)
                 end
                 self.highlight:Show()
             end
@@ -952,72 +954,6 @@ function I.CreateRaidDebuffs(parent)
 end
 
 -------------------------------------------------
--- private auras
--------------------------------------------------
-local function PrivateAuras_UpdatePrivateAuraAnchor(self, unit)
-    -- remove old
-    if self.auraAnchorID then
-        C_UnitAuras.RemovePrivateAuraAnchor(self.auraAnchorID)
-        self.unit = nil
-        self.auraAnchorID = nil
-    end
-
-    -- add new
-    if unit then
-        local _showCountdownFrame, _showCountdownNumbers = true, false
-        if type(self.showCountdownFrame) == "boolean" then _showCountdownFrame = self.showCountdownFrame end
-        if type(self.showCountdownNumbers) == "boolean" then _showCountdownNumbers = self.showCountdownNumbers end
-
-        self.unit = unit
-        self.auraAnchorID = C_UnitAuras.AddPrivateAuraAnchor({
-            unitToken = unit,
-            auraIndex = 1,
-            parent = self,
-            showCountdownFrame = _showCountdownFrame,
-            showCountdownNumbers = _showCountdownNumbers,
-            iconInfo = {
-                iconWidth = self:GetWidth(),
-                iconHeight = self:GetHeight(),
-                iconAnchor = {
-                    point = "CENTER",
-                    relativeTo = self,
-                    relativePoint = "CENTER",
-                    offsetX = 0,
-                    offsetY = 0,
-                },
-            },
-            -- durationAnchor = {
-            --     point = "BOTTOMRIGHT",
-            --     relativeTo = self,
-            --     relativePoint = "BOTTOMRIGHT",
-            --     offsetX = 0,
-            --     offsetY = 0,
-            -- },
-        })
-    end
-end
-
-function I.CreatePrivateAuras(parent)
-    local privateAuras = CreateFrame("Frame", parent:GetName().."PrivateAuraParent", parent.widgets.indicatorFrame)
-    parent.indicators.privateAuras = privateAuras
-    privateAuras:Hide()
-
-    privateAuras.UpdatePrivateAuraAnchor = PrivateAuras_UpdatePrivateAuraAnchor
-    privateAuras._SetSize = privateAuras.SetSize
-
-    function privateAuras:SetSize(width, height)
-        privateAuras:_SetSize(width, height)
-        privateAuras:UpdatePrivateAuraAnchor(privateAuras.unit)
-    end
-
-    function privateAuras:UpdateOptions(t)
-        self.showCountdownFrame = t[1]
-        self.showCountdownNumbers = t[2]
-        privateAuras:UpdatePrivateAuraAnchor(privateAuras.unit)
-    end
-end
-
--------------------------------------------------
 -- player raid icon
 -------------------------------------------------
 function I.CreatePlayerRaidIcon(parent)
@@ -1191,9 +1127,14 @@ function I.CreateNameText(parent)
                 if IsInRaid() and nameText.showGroupNumber then
                     local raidIndex = UnitInRaid(parent.states.unit)
                     if raidIndex then
-                        local subgroup = select(3, GetRaidRosterInfo(raidIndex))
-                        -- nameText.name:SetText("|TInterface\\AddOns\\Cell\\Media\\Icons\\group"..subgroup..":0:0:0:-1:64:64:6:58:6:58|t"..nameText.name:GetText())
-                        nameText.name:SetText("|cffbbbbbb"..subgroup.."-|r"..nameText.name:GetText())
+                        --! WotLK fix: UnitInRaid is 0-based on 3.3.5 (raid1 -> 0), so
+                        --! GetRaidRosterInfo needs +1. Without it raid1 returned nil
+                        --! (error on concat) and everyone else got the previous
+                        --! player's subgroup number.
+                        local subgroup = select(3, GetRaidRosterInfo(raidIndex + 1))
+                        if subgroup then
+                            nameText.name:SetText("|cffbbbbbb"..subgroup.."-|r"..nameText.name:GetText())
+                        end
                     end
                 end
             end
@@ -1973,16 +1914,25 @@ function I.CreateAggroBorder(parent)
     right:SetPoint("BOTTOMRIGHT")
     right:SetWidth(5)
 
-    top:SetGradient("VERTICAL", CreateColor(1, 0.1, 0.1, 0.2), CreateColor(1, 0.1, 0.1, 1))
-    bottom:SetGradient("VERTICAL", CreateColor(1, 0.1, 0.1, 1), CreateColor(1, 0.1, 0.1, 0.2))
-    left:SetGradient("HORIZONTAL", CreateColor(1, 0.1, 0.1, 1), CreateColor(1, 0.1, 0.1, 0.2))
-    right:SetGradient("HORIZONTAL", CreateColor(1, 0.1, 0.1, 0.2), CreateColor(1, 0.1, 0.1, 1))
+    --! WotLK fix: Texture:SetGradientAlpha(orientation, r,g,b,a, r,g,b,a) is the native
+    --! 3.3.5 call. The retail two-colour SetGradient form only works through a shim and
+    --! needs a CreateColor table per stop, both of which are polyfills here.
+    top:SetGradientAlpha("VERTICAL", 1, 0.1, 0.1, 0.2, 1, 0.1, 0.1, 1)
+    bottom:SetGradientAlpha("VERTICAL", 1, 0.1, 0.1, 1, 1, 0.1, 0.1, 0.2)
+    left:SetGradientAlpha("HORIZONTAL", 1, 0.1, 0.1, 1, 1, 0.1, 0.1, 0.2)
+    right:SetGradientAlpha("HORIZONTAL", 1, 0.1, 0.1, 0.2, 1, 0.1, 0.1, 1)
 
     function aggroBorder:ShowAggro(r, g, b)
-        top:SetGradient("VERTICAL", CreateColor(r, g, b, 0.2), CreateColor(r, g, b, 1))
-        bottom:SetGradient("VERTICAL", CreateColor(r, g, b, 1), CreateColor(r, g, b, 0.2))
-        left:SetGradient("HORIZONTAL", CreateColor(r, g, b, 1), CreateColor(r, g, b, 0.2))
-        right:SetGradient("HORIZONTAL", CreateColor(r, g, b, 0.2), CreateColor(r, g, b, 1))
+        --! WotLK fix: native SetGradientAlpha here too, plus a colour guard --
+        --! ShowAggro fires on every UNIT_THREAT_SITUATION_UPDATE, and the gradient
+        --! survives Hide/Show, so re-setting it for an unchanged colour is pure waste.
+        if aggroBorder._r ~= r or aggroBorder._g ~= g or aggroBorder._b ~= b then
+            aggroBorder._r, aggroBorder._g, aggroBorder._b = r, g, b
+            top:SetGradientAlpha("VERTICAL", r, g, b, 0.2, r, g, b, 1)
+            bottom:SetGradientAlpha("VERTICAL", r, g, b, 1, r, g, b, 0.2)
+            left:SetGradientAlpha("HORIZONTAL", r, g, b, 1, r, g, b, 0.2)
+            right:SetGradientAlpha("HORIZONTAL", r, g, b, 0.2, r, g, b, 1)
+        end
         aggroBorder:Show()
     end
 

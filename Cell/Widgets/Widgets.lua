@@ -614,20 +614,13 @@ function Cell.CreateButton(parent, text, buttonColor, size, noBorder, noBackgrou
     end
 
     -- click sound
-    if not Cell.isVanilla then
-        b:SetScript("PostClick", function(self, button, down)
-            if template and strfind(template, "SecureActionButtonTemplate") then
-                -- NOTE: ActionButtonUseKeyDown will affect OnClick
-                if down == GetCVarBool("ActionButtonUseKeyDown") then
-                    PlaySound(SOUNDKIT.U_CHAT_SCROLL_BUTTON)
-                end
-            else
-                PlaySound(SOUNDKIT.U_CHAT_SCROLL_BUTTON)
-            end
-        end)
-    else
-        b:SetScript("PostClick", function() PlaySound(SOUNDKIT.U_CHAT_SCROLL_BUTTON) end)
-    end
+    b:SetScript("PostClick", function(self, button, down)
+        --! WotLK fix: the ActionButtonUseKeyDown CVar does not exist on 3.3.5,
+        --! so GetCVarBool returns nil and the comparison is false for both
+        --! down == true and down == false - the click sound was never played
+        --! on SecureActionButtonTemplate buttons (click-casting bindings).
+        PlaySound(SOUNDKIT.U_CHAT_SCROLL_BUTTON)
+    end)
 
     Cell.SetTooltips(b, "ANCHOR_TOPLEFT", 0, 3, ...)
 

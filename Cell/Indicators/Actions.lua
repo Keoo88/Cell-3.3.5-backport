@@ -30,15 +30,6 @@ eventFrame:SetScript("OnEvent", function(self, event, unit, arg2, arg3)
 
     local spellID
     
-    if Cell.isRetail then
-        -- Retail: unit, castGUID, spellID
-        spellID = arg3
-        
-        if Cell.vars.actionsDebugModeEnabled then
-            local name = F.GetSpellInfo(spellID)
-            print("|cFFFF3030[Cell]|r |cFFB2B2B2" .. event .. ":|r", unit, "|cFF00FF00" .. (spellID or "nil") .. "|r", name)
-        end
-    else
         -- WotLK/Cata/Vanilla: unit, spellName, rank
         local spellName = arg2
         -- Try to resolve spellID by matching name against configured actions
@@ -55,7 +46,6 @@ eventFrame:SetScript("OnEvent", function(self, event, unit, arg2, arg3)
         if Cell.vars.actionsDebugModeEnabled then
             print("|cFFFF3030[Cell]|r |cFFB2B2B2" .. event .. ":|r", unit, "|cFF00FF00" .. (spellName or "nil") .. "|r", "-> ID:", spellID or "Not Found")
         end
-    end
 
     if spellID and Cell.vars.actions[spellID] then
         F.HandleUnitButton("unit", unit, Display, unpack(Cell.vars.actions[spellID]))

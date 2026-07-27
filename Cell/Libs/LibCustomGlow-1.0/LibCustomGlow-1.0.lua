@@ -12,7 +12,6 @@ local lib, oldversion = LibStub:NewLibrary(MAJOR_VERSION, MINOR_VERSION)
 if not lib then return end
 local Masque = LibStub("Masque", true)
 
-local isRetail = WOW_PROJECT_ID == WOW_PROJECT_MAINLINE
 local textureList = {
     empty = [[Interface\AdventureMap\BrokenIsles\AM_29]],
     white = [[Interface\BUTTONS\WHITE8X8]],
@@ -20,10 +19,6 @@ local textureList = {
 }
 
 local shineCoords = {0.3984375, 0.4453125, 0.40234375, 0.44921875}
-if isRetail then
-    textureList.shine = [[Interface\Artifacts\Artifacts]]
-    shineCoords = {0.8115234375,0.9169921875,0.8798828125,0.9853515625}
-end
 
 --! WotLK fix: bundled textures for glows whose retail art does not exist on 3.3.5.
 --! Interface\SpellActivationOverlay\IconAlert(+Ants) was added in 4.0 and the proc
@@ -218,7 +213,7 @@ local function addFrameAndTex(r,color,name,key,N,xOffset,yOffset,texture,texCoor
             f.textures[i]:SetDesaturated(desaturated)
             f.textures[i]:SetParent(f)
             f.textures[i]:SetDrawLayer("ARTWORK",7)
-            if not isRetail and name == "_AutoCastGlow" then
+            if name == "_AutoCastGlow" then
                 f.textures[i]:SetBlendMode("ADD")
             end
         end

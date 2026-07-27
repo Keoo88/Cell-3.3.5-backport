@@ -1,10 +1,13 @@
---! Cell: this is a private, trimmed fork of Tsoukie's ClassicAPI.
---! If the standalone !!!ClassicAPI addon is installed (Gladdy requires it), it
---! loads first and owns these globals. Overwriting them with this older subset
---! mixes two incompatible halves of the same library, so bail out instead.
-if IsAddOnLoaded and IsAddOnLoaded("!!!ClassicAPI") then return end
+--! Cell: private, trimmed fork of Tsoukie's ClassicAPI.
+--! Coexistence rules live in Util/Coexist.lua: never bail out of a file, never
+--! overwrite a global somebody else owns (gap-fill only), keep our own copy in the
+--! private CellClassicAPI namespace. Names published here are not native to 3.3.5a
+--! (verified against milkyway-codex).
 
-local C_CreatureInfo = C_CreatureInfo or {}
+local _, Private = ...
+
+-- Own table: filling a foreign C_CreatureInfo in place would overwrite its methods.
+local C_CreatureInfo = {}
 
 local C_CreatureInfo_RaceData
 local C_CreatureInfo_ClassData
@@ -109,7 +112,7 @@ function C_CreatureInfo.GetRaceInfo(RaceID, RaceIndex)
 end
 
 -- Global
-_G.C_CreatureInfo = C_CreatureInfo
+Private.Merge("C_CreatureInfo", C_CreatureInfo)
 -- NOTE: the retail/Cata global GetClassInfo(classID) returns a TUPLE
 -- (className, classFile, classID), whereas C_CreatureInfo.GetClassInfo returns a
 -- ClassInfo TABLE. Aliasing the global straight to the table-returning function broke
@@ -117,8 +120,10 @@ _G.C_CreatureInfo = C_CreatureInfo
 -- polyfill). With classFileToID empty, F.GetClassID/Cell.vars.playerClassID became nil,
 -- so I.CanDispel returned nil for every type and the Dispels indicator never colored
 -- frames on 3.3.5a. Wrap it to expose the retail tuple contract.
-function _G.GetClassInfo(classID)
+local function GetClassInfo(classID)
 	local info = C_CreatureInfo.GetClassInfo(classID)
 	if not info then return end
 	return info.className, info.classFile, info.classID
 end
+
+Private.Provide("GetClassInfo", GetClassInfo)

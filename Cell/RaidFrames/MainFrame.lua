@@ -1,4 +1,11 @@
 local _, Cell = ...
+
+--! WotLK fix (coexistence): our PixelUtil (Cell.PixelUtil, built in Polyfills.lua)
+--! is the one whose GetNearestPixelSize/SetPoint use the real gxResolution based
+--! screen size. The global may belong to the standalone !!!ClassicAPI, so read ours
+--! first and fall back to the global only if Polyfills has not run yet.
+local PixelUtil = (Cell and Cell.PixelUtil) or _G.PixelUtil
+
 local L = Cell.L
 local F = Cell.funcs
 local B = Cell.bFuncs

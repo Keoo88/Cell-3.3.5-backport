@@ -5,145 +5,20 @@ local F = Cell.funcs
 ---@class CellIndicatorFuncs
 local I = Cell.iFuncs
 
-local UnitGUID = UnitGUID
-local UnitCanAttack = UnitCanAttack
-local UnitIsOtherPlayersPet = UnitIsOtherPlayersPet
-
 -------------------------------------------------
 -- events
 -------------------------------------------------
-local nameplates = {
-    -- nameplateUnitId = true,
-}
-
-local nameplateTargets = {
-    -- nameplateUnitId = targetGUID,
-}
-
-local counter = {
-    -- friendGUID = {enemyGUID=true, ...},
-}
-
-local eventFrame = CreateFrame("Frame")
-eventFrame:SetScript("OnEvent", function(self, event, ...)
-    self[event](self, ...)
-end)
-
-
-function eventFrame:NAME_PLATE_UNIT_REMOVED(unit)
-    nameplates[unit] = nil
-    nameplateTargets[unit] = nil
-end
-
-function eventFrame:NAME_PLATE_UNIT_ADDED(unit)
-    if not unit or not UnitCanAttack(unit, "player") or UnitIsOtherPlayersPet(unit) then return end
-    nameplates[unit] = true
-end
-
-local function ScanNameplates()
-    for _, nameplate in pairs(C_NamePlate.GetNamePlates()) do
-        eventFrame:NAME_PLATE_UNIT_ADDED(nameplate.namePlateUnitToken)
-    end
-end
-
-local function SetCount(b, count)
-    b.indicators.targetCounter:SetCount(count)
-end
-
-local ticker
-local function StartTicker()
-    if ticker then ticker:Cancel() end
-    ticker = C_Timer.NewTicker(0.25, function()
-        -- reset
-        for _, ct in pairs(counter) do
-            wipe(ct)
-        end
-
-        -- check & calculate
-        for unit in pairs(nameplates) do
-            local target = UnitGUID(unit.."target")
-
-            if not target then -- no target
-                nameplateTargets[unit] = nil
-            elseif not Cell.vars.guids[target] then -- target doesn't exists in player's group
-                nameplateTargets[unit] = nil
-                counter[target] = nil
-            else
-                nameplateTargets[unit] = target
-            end
-
-            target = nameplateTargets[unit]
-            if target and Cell.vars.guids[target] then -- valid target exists
-                if not counter[target] then counter[target] = {} end -- init
-                counter[target][unit] = true
-            end
-        end
-
-        -- update indicator
-        for guid in pairs(Cell.vars.guids) do
-            F.HandleUnitButton("guid", guid, SetCount, counter[guid] and F.Getn(counter[guid]) or 0)
-        end
-    end)
-end
-
-local function StopTicker()
-    if ticker then ticker:Cancel() end
-    ticker = nil
-end
-
-local counterEnabled, zoneFilters = false, {}
-function eventFrame:PLAYER_ENTERING_WORLD()
-    -- reset
-    wipe(nameplates)
-    wipe(counter)
-    F.IterateAllUnitButtons(function(b)
-        b.indicators.targetCounter:SetCount(0)
-    end, true)
-
-    local isIn, iType = IsInInstance()
-
-    local isValidZone
-    if not isIn or iType == "none" then
-        isValidZone = zoneFilters["outdoor"]
-    elseif iType == "pvp" or iType == "arena" then
-        isValidZone = zoneFilters["pvp"]
-    else -- party, raid, scenario
-        isValidZone = zoneFilters["pve"]
-    end
-
-    --! WotLK perf fix: C_NamePlate here is a stub polyfill (3.3.5 has
-    --! no nameplate unit API), so nameplates{} can never be populated.
-    --! The 0.25s ticker would burn CPU iterating the whole group 4x/sec
-    --! while always reporting 0 - don't start it at all.
-    if counterEnabled and isValidZone and not (C_NamePlate and C_NamePlate._cellPolyfill) then
-        eventFrame:RegisterEvent("NAME_PLATE_UNIT_ADDED")
-        eventFrame:RegisterEvent("NAME_PLATE_UNIT_REMOVED")
-        ScanNameplates()
-        StartTicker()
-    else
-        eventFrame:UnregisterEvent("NAME_PLATE_UNIT_ADDED")
-        eventFrame:UnregisterEvent("NAME_PLATE_UNIT_REMOVED")
-        StopTicker()
-    end
-end
-
+--! WotLK: the whole counting engine is removed. It was driven by
+--! NAME_PLATE_UNIT_ADDED / NAME_PLATE_UNIT_REMOVED and C_NamePlate.GetNamePlates(),
+--! none of which exist on 3.3.5 (C_NamePlate is only a stub polyfill returning {}).
+--! The nameplate table could never be populated, so the 0.25s ticker only burned
+--! CPU iterating the whole group 4x/sec while always reporting 0.
+--! Only the no-op entry points remain - they are still called from
+--! UnitButton_Cata_Wrath.lua. The indicator itself is created hidden below.
 function I.EnableTargetCounter(enabled)
-    if enabled then
-        eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
-        counterEnabled = true
-    else
-        eventFrame:UnregisterEvent("PLAYER_ENTERING_WORLD")
-        counterEnabled = false
-    end
-    eventFrame:PLAYER_ENTERING_WORLD() -- check now
-    -- texplore(nameplateTargets)
 end
 
 function I.UpdateTargetCounterFilters(filters, noUpdate)
-    if filters then zoneFilters = filters end
-    if not noUpdate and counterEnabled then
-        eventFrame:PLAYER_ENTERING_WORLD()
-    end
 end
 
 -------------------------------------------------

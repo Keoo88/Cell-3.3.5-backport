@@ -1,10 +1,16 @@
---! Cell: this is a private, trimmed fork of Tsoukie's ClassicAPI.
---! If the standalone !!!ClassicAPI addon is installed (Gladdy requires it), it
---! loads first and owns these globals. Overwriting them with this older subset
---! mixes two incompatible halves of the same library, so bail out instead.
-if IsAddOnLoaded and IsAddOnLoaded("!!!ClassicAPI") then return end
+--! Cell: private, trimmed fork of Tsoukie's ClassicAPI.
+--! Coexistence rules live in Util/Coexist.lua: never bail out of a file, never
+--! overwrite a global somebody else owns (gap-fill only), keep our own copy in the
+--! private CellClassicAPI namespace. Names published here are not native to 3.3.5a
+--! (verified against milkyway-codex).
 
 local _, Private = ...
+
+-- Forward-declared as locals: the definitions below fill these locals, not globals.
+-- Publishing happens at the bottom through Private.Provide / Private.Merge, which
+-- only write a global when nobody else owns that name.
+local UnitGetIncomingHeals, UnitHasIncomingResurrection, UnitGetTotalAbsorbs,
+      UnitGetTotalHealAbsorbs
 
 local Select = select
 local BitBand = bit.band
@@ -180,3 +186,9 @@ end
 EventHandler_Define("Event", "INCOMING_RESURRECT_CHANGED")
 EventHandler_Define("OnRegister", "INCOMING_RESURRECT_CHANGED", INCOMING_RESURRECT_CHANGED_EH)
 EventHandler_Define("OnUnregister", "INCOMING_RESURRECT_CHANGED", INCOMING_RESURRECT_CHANGED_EH)
+
+-- Publish: gap-fill only, ours stays reachable via CellClassicAPI.<name>
+Private.Provide("UnitGetIncomingHeals", UnitGetIncomingHeals)
+Private.Provide("UnitHasIncomingResurrection", UnitHasIncomingResurrection)
+Private.Provide("UnitGetTotalAbsorbs", UnitGetTotalAbsorbs)
+Private.Provide("UnitGetTotalHealAbsorbs", UnitGetTotalHealAbsorbs)

@@ -1,4 +1,11 @@
 local _, Cell = ...
+
+--! WotLK fix (coexistence): our PixelUtil (Cell.PixelUtil, built in Polyfills.lua)
+--! is the one whose GetNearestPixelSize/SetPoint use the real gxResolution based
+--! screen size. The global may belong to the standalone !!!ClassicAPI, so read ours
+--! first and fall back to the global only if Polyfills has not run yet.
+local PixelUtil = (Cell and Cell.PixelUtil) or _G.PixelUtil
+
 local L = Cell.L
 local F = Cell.funcs
 local B = Cell.bFuncs
@@ -142,9 +149,13 @@ local function CreateAssignmentButton(index)
             menu:GetFrameRef("assignment"..index):SetAttribute("text", nil)
             menu:Hide()
 
-            menu:CallMethod("Save", index, nil)
+            control:CallMethod("Save", index, nil)
         end
     ]])
+    --! WotLK fix: CallMethod exists only on the control handle in the 3.3.5
+    --! restricted environment, and it calls the method on the snippet's OWN
+    --! frame - so proxy it through to the menu.
+    function b:Save(index, unit) menu:Save(index, unit) end
 
     b:SetScript("OnAttributeChanged", function(self, name, value)
         if name ~= "text" then return end
@@ -324,8 +335,12 @@ target:SetAttribute("_onclick", [[
     menu:GetFrameRef("assignment"..index):SetAttribute("text", "target")
     menu:Hide()
 
-    menu:CallMethod("Save", index, "target")
+    control:CallMethod("Save", index, "target")
 ]])
+--! WotLK fix: CallMethod exists only on the control handle in the 3.3.5
+--! restricted environment, and it calls the method on the snippet's OWN
+--! frame - so proxy it through to the menu.
+function target:Save(index, unit) menu:Save(index, unit) end
 
 -- NOTE: no EVENT for this kind of targets， use OnUpdate
 targettarget = Cell.CreateButton(menu, L["Target of Target"], "transparent-accent", {20, 20}, true, false, nil, nil, "SecureHandlerAttributeTemplate,SecureHandlerClickTemplate")
@@ -342,8 +357,12 @@ targettarget:SetAttribute("_onclick", [[
     menu:GetFrameRef("assignment"..index):SetAttribute("text", "targettarget")
     menu:Hide()
 
-    menu:CallMethod("Save", index, "targettarget")
+    control:CallMethod("Save", index, "targettarget")
 ]])
+--! WotLK fix: CallMethod exists only on the control handle in the 3.3.5
+--! restricted environment, and it calls the method on the snippet's OWN
+--! frame - so proxy it through to the menu.
+function targettarget:Save(index, unit) menu:Save(index, unit) end
 
 focus = Cell.CreateButton(menu, L["Focus"], "transparent-accent", {20, 20}, true, false, nil, nil, "SecureHandlerAttributeTemplate,SecureHandlerClickTemplate")
 P.Point(focus, "TOPLEFT", targettarget, "BOTTOMLEFT")
@@ -359,8 +378,12 @@ focus:SetAttribute("_onclick", [[
     menu:GetFrameRef("assignment"..index):SetAttribute("text", "focus")
     menu:Hide()
 
-    menu:CallMethod("Save", index, "focus")
+    control:CallMethod("Save", index, "focus")
 ]])
+--! WotLK fix: CallMethod exists only on the control handle in the 3.3.5
+--! restricted environment, and it calls the method on the snippet's OWN
+--! frame - so proxy it through to the menu.
+function focus:Save(index, unit) menu:Save(index, unit) end
 
 focustarget = Cell.CreateButton(menu, L["Focus Target"], "transparent-accent", {20, 20}, true, false, nil, nil, "SecureHandlerAttributeTemplate,SecureHandlerClickTemplate")
 P.Point(focustarget, "TOPLEFT", focus, "BOTTOMLEFT")
@@ -376,8 +399,12 @@ focustarget:SetAttribute("_onclick", [[
     menu:GetFrameRef("assignment"..index):SetAttribute("text", "focustarget")
     menu:Hide()
 
-    menu:CallMethod("Save", index, "focustarget")
+    control:CallMethod("Save", index, "focustarget")
 ]])
+--! WotLK fix: CallMethod exists only on the control handle in the 3.3.5
+--! restricted environment, and it calls the method on the snippet's OWN
+--! frame - so proxy it through to the menu.
+function focustarget:Save(index, unit) menu:Save(index, unit) end
 
 unit = Cell.CreateButton(menu, L["Unit"], "transparent-accent", {20, 20}, true, false, nil, nil, "SecureHandlerAttributeTemplate,SecureHandlerClickTemplate")
 P.Point(unit, "TOPLEFT", focustarget, "BOTTOMLEFT")
@@ -389,7 +416,7 @@ unit:SetAttribute("_onclick", [[
     spotlight:SetAttribute("specialUnit", nil)
     spotlight:SetAttribute("refreshOnUpdate", nil)
     spotlight:SetAttribute("updateOnTargetChanged", nil)
-    self:CallMethod("SetUnit", index, "target")
+    control:CallMethod("SetUnit", index, "target") --! WotLK fix: CallMethod is control-only on 3.3.5
     menu:Hide()
 ]])
 function unit:SetUnit(index, target)
@@ -413,7 +440,7 @@ unitname:SetAttribute("_onclick", [[
     spotlight:SetAttribute("specialUnit", nil)
     spotlight:SetAttribute("refreshOnUpdate", nil)
     spotlight:SetAttribute("updateOnTargetChanged", nil)
-    self:CallMethod("SetUnit", index, "target")
+    control:CallMethod("SetUnit", index, "target") --! WotLK fix: CallMethod is control-only on 3.3.5
     menu:Hide()
 ]])
 function unitname:SetUnit(index, target)
@@ -450,7 +477,7 @@ unitpet:SetAttribute("_onclick", [[
     spotlight:SetAttribute("specialUnit", nil)
     spotlight:SetAttribute("refreshOnUpdate", nil)
     spotlight:SetAttribute("updateOnTargetChanged", nil)
-    self:CallMethod("SetUnit", index, "target")
+    control:CallMethod("SetUnit", index, "target") --! WotLK fix: CallMethod is control-only on 3.3.5
     menu:Hide()
 ]])
 function unitpet:SetUnit(index, target)
@@ -470,7 +497,7 @@ P.Point(unittarget, "TOPRIGHT", unitpet, "BOTTOMRIGHT")
 unittarget:SetAttribute("_onclick", [[
     local menu = self:GetParent()
     local index = menu:GetAttribute("index")
-    self:CallMethod("SetUnit", index, "target")
+    control:CallMethod("SetUnit", index, "target") --! WotLK fix: CallMethod is control-only on 3.3.5
     menu:Hide()
 ]])
 function unittarget:SetUnit(index, target)
@@ -506,7 +533,7 @@ tank:SetAttribute("_onclick", [[
     spotlight:SetAttribute("refreshOnUpdate", nil)
     spotlight:SetAttribute("updateOnTargetChanged", nil)
     menu:GetFrameRef("assignment"..index):SetAttribute("text", "tank")
-    self:CallMethod("SetUnit", index)
+    control:CallMethod("SetUnit", index) --! WotLK fix: CallMethod is control-only on 3.3.5
     menu:Hide()
 ]])
 function tank:SetUnit(index)
@@ -527,7 +554,7 @@ healer:SetAttribute("_onclick", [[
     spotlight:SetAttribute("refreshOnUpdate", nil)
     spotlight:SetAttribute("updateOnTargetChanged", nil)
     menu:GetFrameRef("assignment"..index):SetAttribute("text", "healer")
-    self:CallMethod("SetUnit", index)
+    control:CallMethod("SetUnit", index) --! WotLK fix: CallMethod is control-only on 3.3.5
     menu:Hide()
 ]])
 function healer:SetUnit(index)
@@ -552,8 +579,12 @@ boss1target:SetAttribute("_onclick", [[
     menu:GetFrameRef("assignment"..index):SetAttribute("text", "boss1target")
     menu:Hide()
 
-    menu:CallMethod("Save", index, "boss1target")
+    control:CallMethod("Save", index, "boss1target")
 ]])
+--! WotLK fix: CallMethod exists only on the control handle in the 3.3.5
+--! restricted environment, and it calls the method on the snippet's OWN
+--! frame - so proxy it through to the menu.
+function boss1target:Save(index, unit) menu:Save(index, unit) end
 
 clear = Cell.CreateButton(menu, L["Clear"], "transparent-accent", {20, 20}, true, false, nil, nil, "SecureHandlerAttributeTemplate,SecureHandlerClickTemplate")
 P.Point(clear, "TOPLEFT", boss1target, "BOTTOMLEFT")
@@ -569,8 +600,12 @@ clear:SetAttribute("_onclick", [[
     menu:GetFrameRef("assignment"..index):SetAttribute("text", nil)
     menu:Hide()
 
-    menu:CallMethod("Save", index, nil)
+    control:CallMethod("Save", index, nil)
 ]])
+--! WotLK fix: CallMethod exists only on the control handle in the 3.3.5
+--! restricted environment, and it calls the method on the snippet's OWN
+--! frame - so proxy it through to the menu.
+function clear:Save(index, unit) menu:Save(index, unit) end
 
 -------------------------------------------------
 -- functions

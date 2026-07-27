@@ -1,61 +1,68 @@
---! Cell: this is a private, trimmed fork of Tsoukie's ClassicAPI.
---! If the standalone !!!ClassicAPI addon is installed (Gladdy requires it), it
---! loads first and owns these globals. Overwriting them with this older subset
---! mixes two incompatible halves of the same library, so bail out instead.
-if IsAddOnLoaded and IsAddOnLoaded("!!!ClassicAPI") then return end
+--! Cell: private, trimmed fork of Tsoukie's ClassicAPI.
+--! Coexistence rules live in Util/Coexist.lua: never bail out, never overwrite a
+--! global somebody else owns, keep our own copy in CellClassicAPI.
+local _, Private = ...
+local Provide = Private.Provide
 
+local Pairs = pairs
 local ExpansionLevel = GetAccountExpansionLevel()
 
-	WOW_PROJECT_MAINLINE = 1
-	WOW_PROJECT_CLASSIC = 2
-	WOW_PROJECT_BURNING_CRUSADE_CLASSIC = 5
-	WOW_PROJECT_WRATH_CLASSIC = 11
-WOW_PROJECT_ID = WOW_PROJECT_WRATH_CLASSIC
+local Constants = {
+	WOW_PROJECT_MAINLINE = 1,
+	WOW_PROJECT_CLASSIC = 2,
+	WOW_PROJECT_BURNING_CRUSADE_CLASSIC = 5,
+	WOW_PROJECT_WRATH_CLASSIC = 11,
+	WOW_PROJECT_ID = 11, -- WOW_PROJECT_WRATH_CLASSIC
 
-	LE_EXPANSION_CLASSIC = 0
-	LE_EXPANSION_BURNING_CRUSADE = 1
-	LE_EXPANSION_WRATH_OF_THE_LICH_KING = 2
-	LE_EXPANSION_CATACLYSM = 3
-	LE_EXPANSION_MISTS_OF_PANDARIA = 4
-	LE_EXPANSION_WARLORDS_OF_DRAENOR = 5
-	LE_EXPANSION_LEGION = 6
-	LE_EXPANSION_BATTLE_FOR_AZEROTH = 7
-	LE_EXPANSION_SHADOWLANDS = 8
-	LE_EXPANSION_DRAGONFLIGHT = 9
-	LE_EXPANSION_WAR_WITHIN = 10
-LE_EXPANSION_LEVEL_CURRENT = ExpansionLevel
+	LE_EXPANSION_CLASSIC = 0,
+	LE_EXPANSION_BURNING_CRUSADE = 1,
+	LE_EXPANSION_WRATH_OF_THE_LICH_KING = 2,
+	LE_EXPANSION_CATACLYSM = 3,
+	LE_EXPANSION_MISTS_OF_PANDARIA = 4,
+	LE_EXPANSION_WARLORDS_OF_DRAENOR = 5,
+	LE_EXPANSION_LEGION = 6,
+	LE_EXPANSION_BATTLE_FOR_AZEROTH = 7,
+	LE_EXPANSION_SHADOWLANDS = 8,
+	LE_EXPANSION_DRAGONFLIGHT = 9,
+	LE_EXPANSION_WAR_WITHIN = 10,
+	LE_EXPANSION_LEVEL_CURRENT = ExpansionLevel,
+
+	INVTYPE_NON_EQUIP = "Non-equippable",
+
+	LE_PARTY_CATEGORY_HOME = 1,
+	LE_PARTY_CATEGORY_INSTANCE = 2,
+
+	-- Panel Positions
+	PANEL_INSET_LEFT_OFFSET = 4,
+	PANEL_INSET_RIGHT_OFFSET = -6,
+	PANEL_INSET_BOTTOM_OFFSET = 4,
+	PANEL_INSET_BOTTOM_BUTTON_OFFSET = 26,
+	PANEL_INSET_TOP_OFFSET = -24,
+	PANEL_INSET_ATTIC_OFFSET = -60,
+
+	-- Panel default size
+	PANEL_DEFAULT_WIDTH = 338,
+	PANEL_DEFAULT_HEIGHT = 424,
+
+	-- Role icons
+	INLINE_TANK_ICON = "|TInterface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES.blp:16:16:0:0:64:64:0:19:22:41|t",
+	INLINE_HEALER_ICON = "|TInterface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES.blp:16:16:0:0:64:64:20:39:1:20|t",
+	INLINE_DAMAGER_ICON = "|TInterface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES.blp:16:16:0:0:64:64:20:39:22:41|t",
+
+	-- GlobalString (enUS): the client ships localized values, so these are gap fills only.
+	LARGE_NUMBER_SEPERATOR = ",",
+	DECIMAL_SEPERATOR = ".",
+}
 
 -- RCE Expansion: Use instead of "WOW_PROJECT_ID" for (3.3.5a) multi-expansion.
 if ( ExpansionLevel == 0 ) then
-	WOW_PROJECT_ID_RCE = WOW_PROJECT_CLASSIC
+	Constants.WOW_PROJECT_ID_RCE = Constants.WOW_PROJECT_CLASSIC
 elseif ( ExpansionLevel == 1 ) then
-	WOW_PROJECT_ID_RCE = WOW_PROJECT_BURNING_CRUSADE_CLASSIC
+	Constants.WOW_PROJECT_ID_RCE = Constants.WOW_PROJECT_BURNING_CRUSADE_CLASSIC
 else
-	WOW_PROJECT_ID_RCE = WOW_PROJECT_WRATH_CLASSIC
+	Constants.WOW_PROJECT_ID_RCE = Constants.WOW_PROJECT_WRATH_CLASSIC
 end
 
-INVTYPE_NON_EQUIP = "Non-equippable"
-
-LE_PARTY_CATEGORY_HOME = 1
-LE_PARTY_CATEGORY_INSTANCE = 2
-
--- Panel Positions
-PANEL_INSET_LEFT_OFFSET = 4
-PANEL_INSET_RIGHT_OFFSET = -6
-PANEL_INSET_BOTTOM_OFFSET = 4
-PANEL_INSET_BOTTOM_BUTTON_OFFSET = 26
-PANEL_INSET_TOP_OFFSET = -24
-PANEL_INSET_ATTIC_OFFSET = -60
-
--- Panel default size
-PANEL_DEFAULT_WIDTH = 338
-PANEL_DEFAULT_HEIGHT = 424
-
--- Role icons
-INLINE_TANK_ICON = "|TInterface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES.blp:16:16:0:0:64:64:0:19:22:41|t"
-INLINE_HEALER_ICON = "|TInterface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES.blp:16:16:0:0:64:64:20:39:1:20|t"
-INLINE_DAMAGER_ICON = "|TInterface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES.blp:16:16:0:0:64:64:20:39:22:41|t"
-
--- GlobalString (enUS)
-LARGE_NUMBER_SEPERATOR = ","
-DECIMAL_SEPERATOR = "."
+for Name, Value in Pairs(Constants) do
+	Provide(Name, Value)
+end

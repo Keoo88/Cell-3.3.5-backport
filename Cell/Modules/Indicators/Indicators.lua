@@ -449,43 +449,6 @@ local function InitIndicator(indicatorName)
             end)
         end
 
-    elseif indicatorName == "privateAuras" then
-        indicator.isPrivateAuras = true
-
-        indicator.mask = indicator:CreateMaskTexture()
-        indicator.mask:SetTexture("interface/framegeneral/uiframeiconmask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
-        indicator.mask:SetAllPoints(indicator)
-
-        indicator.icon = indicator:CreateTexture(nil, "ARTWORK")
-        indicator.icon:SetAllPoints(indicator)
-        indicator.icon:SetTexture("Interface\\Icons\\Spell_Shadow_Possession")
-        indicator.icon:AddMaskTexture(indicator.mask)
-
-        indicator.border = indicator:CreateTexture(nil, "BORDER")
-        indicator.border:SetPoint("TOPLEFT", indicator.icon, -1, 0)
-        indicator.border:SetPoint("BOTTOMRIGHT", indicator.icon, 1, 0)
-        indicator.border:SetTexture([[Interface\Buttons\UI-Debuff-Overlays]])
-        indicator.border:SetTexCoord(0.296875, 0.5703125, 0, 0.515625)
-        indicator.border:SetVertexColor(0.8, 0, 0)
-
-        indicator.cooldown = CreateFrame("Cooldown", nil, indicator, "CooldownFrameTemplate")
-        indicator.cooldown:SetAllPoints(indicator)
-        indicator.cooldown:SetReverse(true)
-        indicator.cooldown:SetDrawEdge(false)
-        indicator.cooldown:SetDrawBling(false)
-
-        local timer
-        indicator:HookScript("OnShow", function()
-            if timer then timer:Cancel() end
-            indicator.cooldown:SetCooldown(GetTime(), 15)
-            timer = C_Timer.NewTicker(15, function()
-                indicator.cooldown:SetCooldown(GetTime(), 15)
-            end)
-        end)
-        indicator:HookScript("OnHide", function()
-            if timer then timer:Cancel() end
-        end)
-
     elseif indicatorName == "targetedSpells" then
         indicator.isTargetedSpells = true
         for _, f in ipairs(indicator) do
@@ -1870,12 +1833,22 @@ local function ShowIndicatorSettings(id)
         -- bigDebuffs
         elseif currentSetting == "bigDebuffs" then
             w:SetDBValue(L["Big Debuffs"], CellDB["bigDebuffs"], true)
-            w.func = function(value)
+            --! WotLK fix: this was the only branch in the whole dispatcher that
+            --! assigned w.func directly instead of calling w:SetFunc(). The aura
+            --! list widget stores its callback on widget.frame (SetFunc does
+            --! widget.frame.func = func) and every list action calls
+            --! parent.func(auraTable) - so parent.func was nil here and the call
+            --! errored. The delete button had already done tremove() by then, so
+            --! the spell was dropped from CellDB while the list never rebuilt:
+            --! clicking X looked like nothing happened, and the deletions only
+            --! became visible after a relog. Add/edit/move/clear/import in the
+            --! Big Debuffs list were broken the same way.
+            w:SetFunc(function(value)
                 CellDB["bigDebuffs"] = value
                 Cell.vars.bigDebuffs = F.ConvertTable(CellDB["bigDebuffs"])
                 Cell.vars.bigDebuffNames = F.GetSpellNames(CellDB["bigDebuffs"])
                 Cell.Fire("UpdateIndicators", notifiedLayout, "", "bigDebuffs")
-            end
+            end)
 
         -- actionsPreview
         elseif currentSetting == "actionsPreview" then

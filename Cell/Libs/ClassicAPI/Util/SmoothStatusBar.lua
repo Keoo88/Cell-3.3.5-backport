@@ -1,15 +1,20 @@
---! Cell: this is a private, trimmed fork of Tsoukie's ClassicAPI.
---! If the standalone !!!ClassicAPI addon is installed (Gladdy requires it), it
---! loads first and owns these globals. Overwriting them with this older subset
---! mixes two incompatible halves of the same library, so bail out instead.
-if IsAddOnLoaded and IsAddOnLoaded("!!!ClassicAPI") then return end
+--! Cell: private, trimmed fork of Tsoukie's ClassicAPI.
+--! Coexistence rules live in Util/Coexist.lua: never bail out of a file, never
+--! overwrite a global somebody else owns (gap-fill only), keep our own copy in the
+--! private CellClassicAPI namespace. Names published here are not native to 3.3.5a
+--! (verified against milkyway-codex).
+
+local _, Private = ...
 
 -- https://github.com/tomrus88/BlizzardInterfaceCode/blob/master/Interface/SharedXML/SmoothStatusBar.lua
-if ( not SmoothStatusBarMixin ) then
+--! WotLK fix (coexistence): was `if ( not SmoothStatusBarMixin )` - with the
+--! standalone !!!ClassicAPI loaded our mixin was never built, so Cell's status
+--! bars ran on a foreign one. Build ours always; the global gets it only when free.
+do
 	local Pairs = pairs
 	local Abs = math.abs
-	local Clamp = Clamp
-	local FrameDeltaLerp = FrameDeltaLerp
+	local Clamp = Private.Own.Clamp or Clamp
+	local FrameDeltaLerp = Private.Own.FrameDeltaLerp or FrameDeltaLerp
 
 	local Bars = CreateFrame("Frame")
 	local BarsActive
@@ -86,5 +91,5 @@ if ( not SmoothStatusBarMixin ) then
 		self.lastSmoothedMax = Max
 	end
 
-	_G.SmoothStatusBarMixin = SmoothStatusBarMixin
+	Private.Provide("SmoothStatusBarMixin", SmoothStatusBarMixin)
 end

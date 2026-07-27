@@ -1,8 +1,8 @@
---! Cell: this is a private, trimmed fork of Tsoukie's ClassicAPI.
---! If the standalone !!!ClassicAPI addon is installed (Gladdy requires it), it
---! loads first and owns these globals. Overwriting them with this older subset
---! mixes two incompatible halves of the same library, so bail out instead.
-if IsAddOnLoaded and IsAddOnLoaded("!!!ClassicAPI") then return end
+--! Cell: private, trimmed fork of Tsoukie's ClassicAPI.
+--! Coexistence rules live in Util/Coexist.lua: never bail out of a file, never
+--! overwrite a global somebody else owns (gap-fill only), keep our own copy in the
+--! private CellClassicAPI namespace. Names published here are not native to 3.3.5a
+--! (verified against milkyway-codex).
 
 --[[
 	Queries some data retrieval API (specifically where the data may not be currently available) and when it becomes available
@@ -14,12 +14,17 @@ if IsAddOnLoaded and IsAddOnLoaded("!!!ClassicAPI") then return end
 
 local _, Private = ...
 
+-- Forward-declared as locals: the definitions below fill these locals, not globals.
+-- Publishing happens at the bottom through Private.Provide / Private.Merge, which
+-- only write a global when nobody else owns that name.
+local ItemEventListener, SpellEventListener
+
 local Next = next
 local Pairs = pairs
-local Mixin = Mixin
+local Mixin = Private.Own.Mixin or Mixin
 local XPCall = xpcall
 local Format = string.format
-local CallErrorHandler = CallErrorHandler
+local CallErrorHandler = Private.Own.CallErrorHandler or CallErrorHandler
 
 local Tooltip = Private.Tooltip
 local EventHandler = Private.EventHandler
@@ -208,5 +213,9 @@ function Private.AsyncCallbackSystemReady()
 end
 
 -- Global
-_G.AsyncCallbackAPIType = AsyncCallbackAPIType
-_G.AsyncCallbackSystemMixin = AsyncCallbackSystemMixin
+Private.Merge("AsyncCallbackAPIType", AsyncCallbackAPIType)
+Private.Merge("AsyncCallbackSystemMixin", AsyncCallbackSystemMixin)
+
+-- Publish: gap-fill only, ours stays reachable via CellClassicAPI.<name>
+Private.Provide("ItemEventListener", ItemEventListener)
+Private.Provide("SpellEventListener", SpellEventListener)

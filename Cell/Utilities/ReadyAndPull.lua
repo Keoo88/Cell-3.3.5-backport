@@ -1,4 +1,11 @@
 local _, Cell = ...
+
+--! WotLK fix (coexistence): our PixelUtil (Cell.PixelUtil, built in Polyfills.lua)
+--! is the one whose GetNearestPixelSize/SetPoint use the real gxResolution based
+--! screen size. The global may belong to the standalone !!!ClassicAPI, so read ours
+--! first and fall back to the global only if Polyfills has not run yet.
+local PixelUtil = (Cell and Cell.PixelUtil) or _G.PixelUtil
+
 local L = Cell.L
 local F = Cell.funcs
 local P = Cell.pixelPerfectFuncs
@@ -140,14 +147,6 @@ function pullBtn:CHAT_MSG_ADDON(prefix, text)
     end
 end
 
-function pullBtn:START_TIMER(timerType, timeRemaining, totalTime)
-    if totalTime > 0 then
-        Start(totalTime)
-    else
-        Stop()
-    end
-end
-
 -------------------------------------------------
 -- ready
 -------------------------------------------------
@@ -165,25 +164,34 @@ readyBtn:SetScript("OnClick", function(self, button)
     end
 end)
 
-local ready = {}
+local ready = {} -- [unitID] = true
+local readyCount = 0
 readyBtn:SetScript("OnEvent", function(self, event, arg1, arg2)
     if event == "READY_CHECK" then
-        readyBtn:SetMaxValue(arg2)
+        --! WotLK fix: READY_CHECK carries only the initiator name on 3.3.5;
+        --! readyCheckTimeLeft (arg2) was added in 4.0. SetMaxValue(nil) reaches
+        --! bar:SetMinMaxValues(0, nil) -> Lua error on every ready check.
+        --! 35s is the client's fixed ready-check timeout on this build.
+        readyBtn:SetMaxValue(arg2 or 35)
         readyBtn:Start()
         wipe(ready)
-        tinsert(ready, "player")
+        readyCount = 1 -- self
         readyBtn:SetText("1 / "..GetNumGroupMembers())
     elseif event == "READY_CHECK_FINISHED" then
         readyBtn:Stop()
         readyBtn:SetText(L["Ready"])
     else
         if arg2 then -- isReady
-            if IsInRaid() then
-                if string.find(arg1, "raid") then tinsert(ready, arg1) end
-            else
-                tinsert(ready, arg1)
+            --! WotLK fix: READY_CHECK_CONFIRM arg1 is a NUMBER (unit index without
+            --! the raid/party prefix) on 3.3.5, not a unitID like on retail.
+            --! string.find(5, "raid") is nil, so the raid counter froze at "1 / N";
+            --! keying a set by unitID also drops duplicate confirmations.
+            local unit = (IsInRaid() and "raid" or "party")..arg1
+            if not ready[unit] then
+                ready[unit] = true
+                readyCount = readyCount + 1
+                readyBtn:SetText(readyCount.." / "..GetNumGroupMembers())
             end
-            readyBtn:SetText(#ready.." / "..GetNumGroupMembers())
         end
     end
 end)
@@ -335,12 +343,6 @@ local function UpdateTools(which)
             pullBtn:SetAttribute("macrotext1", "/pull "..CellDB["tools"]["readyAndPull"][3][2])
             pullBtn:SetAttribute("macrotext2", "/pull 0")
         else -- default
-            if Cell.isRetail then
-                -- C_PartyInfo.DoCountdown(CellDB["tools"]["readyAndPull"][3][2])
-                pullBtn:RegisterEvent("START_TIMER")
-                pullBtn:SetAttribute("macrotext1", "/cd "..CellDB["tools"]["readyAndPull"][3][2])
-                pullBtn:SetAttribute("macrotext2", "/cd 0")
-            else
                 pullBtn:SetAttribute("type1", nil)
                 pullBtn:SetAttribute("type2", nil)
                 pullBtn:SetScript("OnMouseUp", function(self, button)
@@ -355,7 +357,6 @@ local function UpdateTools(which)
                     end
                     pullBtn.onMouseUp()
                 end)
-            end
         end
 
         UpdateStyle()

@@ -1,7 +1,10 @@
 <Ui xmlns="http://www.blizzard.com/wow/ui/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.blizzard.com/wow/ui/
 ..\FrameXML\UI.xsd">
-	<!-- ClassicAPI by Tsoukie, embedded as a library for Cell (no standalone !!!ClassicAPI addon required) -->
+	<!-- ClassicAPI by Tsoukie, embedded as a library for Cell; coexists with the standalone !!!ClassicAPI addon (works with it and without it) -->
 	<!-- Trimmed to the modules used by Cell; load order matches the original !!!ClassicAPI.toc -->
+	<!-- Coexistence layer: must load first (see Util\Coexist.lua) -->
+	<Script file="Util\Coexist.lua" />
+
 	<Script file="Lib\ChatThrottleLib.lua" />
 
 	<Script file="Util\ErrorUtil.lua" />

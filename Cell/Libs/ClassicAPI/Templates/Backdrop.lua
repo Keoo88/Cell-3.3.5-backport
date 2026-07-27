@@ -1,16 +1,23 @@
---! Cell: this is a private, trimmed fork of Tsoukie's ClassicAPI.
---! If the standalone !!!ClassicAPI addon is installed (Gladdy requires it), it
---! loads first and owns these globals. Overwriting them with this older subset
---! mixes two incompatible halves of the same library, so bail out instead.
-if IsAddOnLoaded and IsAddOnLoaded("!!!ClassicAPI") then return end
+--! Cell: private, trimmed fork of Tsoukie's ClassicAPI.
+--! Coexistence rules live in Util/Coexist.lua: never bail out of a file, never
+--! overwrite a global somebody else owns (gap-fill only), keep our own copy in the
+--! private CellClassicAPI namespace. Names published here are not native to 3.3.5a
+--! (verified against milkyway-codex).
 
-BACKDROP_ACHIEVEMENTS_0_64 = {
+local _, Private = ...
+
+-- Forward-declared as locals: the definitions below fill these locals, not globals.
+-- Publishing happens at the bottom through Private.Provide / Private.Merge, which
+-- only write a global when nobody else owns that name.
+local BACKDROP_TOOLTIP_8_12_1111, BackdropTemplateMixin
+
+local BACKDROP_ACHIEVEMENTS_0_64 = {
 	edgeFile = "Interface\\AchievementFrame\\UI-Achievement-WoodBorder",
 	edgeSize = 64,
 	tileEdge = true,
 }
 
-BACKDROP_ARENA_32_32 = {
+local BACKDROP_ARENA_32_32 = {
 	bgFile = "Interface\\CharacterFrame\\UI-Party-Background",
 	edgeFile = "Interface\\ArenaEnemyFrame\\UI-Arena-Border",
 	tile = true,
@@ -20,7 +27,7 @@ BACKDROP_ARENA_32_32 = {
 	insets = { left = 32, right = 32, top = 32, bottom = 32 },
 }
 
-BACKDROP_DIALOG_32_32 = {
+local BACKDROP_DIALOG_32_32 = {
 	bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
 	edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
 	tile = true,
@@ -30,7 +37,7 @@ BACKDROP_DIALOG_32_32 = {
 	insets = { left = 11, right = 12, top = 12, bottom = 11 },
 }
 
-BACKDROP_DARK_DIALOG_32_32 = {
+local BACKDROP_DARK_DIALOG_32_32 = {
 	bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
 	edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
 	tile = true,
@@ -46,7 +53,7 @@ BACKDROP_DIALOG_EDGE_32  = {
 	edgeSize = 32,
 }
 
-BACKDROP_GOLD_DIALOG_32_32 = {
+local BACKDROP_GOLD_DIALOG_32_32 = {
 	bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
 	edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Gold-Border",
 	tile = true,
@@ -56,13 +63,13 @@ BACKDROP_GOLD_DIALOG_32_32 = {
 	insets = { left = 11, right = 12, top = 12, bottom = 11 },
 }
 
-BACKDROP_WATERMARK_DIALOG_0_16 = {
+local BACKDROP_WATERMARK_DIALOG_0_16 = {
 	edgeFile = "Interface\\DialogFrame\\UI-DialogBox-TestWatermark-Border",
 	tileEdge = true,
 	edgeSize = 16,
 }
 
-BACKDROP_SLIDER_8_8 = {
+local BACKDROP_SLIDER_8_8 = {
 	bgFile = "Interface\\Buttons\\UI-SliderBar-Background",
 	edgeFile = "Interface\\Buttons\\UI-SliderBar-Border",
 	tile = true,
@@ -72,7 +79,7 @@ BACKDROP_SLIDER_8_8 = {
 	insets = { left = 3, right = 3, top = 6, bottom = 6 },
 }
 
-BACKDROP_PARTY_32_32 = {
+local BACKDROP_PARTY_32_32 = {
 	bgFile = "Interface\\CharacterFrame\\UI-Party-Background",
 	edgeFile = "Interface\\CharacterFrame\\UI-Party-Border",
 	tile = true,
@@ -82,7 +89,7 @@ BACKDROP_PARTY_32_32 = {
 	insets = { left = 32, right = 32, top = 32, bottom = 32 },
 }
 
-BACKDROP_TOAST_12_12 = {
+local BACKDROP_TOAST_12_12 = {
 	bgFile = "Interface\\FriendsFrame\\UI-Toast-Background",
 	edgeFile = "Interface\\FriendsFrame\\UI-Toast-Border",
 	tile = true,
@@ -92,25 +99,25 @@ BACKDROP_TOAST_12_12 = {
 	insets = { left = 5, right = 5, top = 5, bottom = 5 },
 }
 
-BACKDROP_CALLOUT_GLOW_0_16 = {
+local BACKDROP_CALLOUT_GLOW_0_16 = {
 	edgeFile = "Interface\\TutorialFrame\\UI-TutorialFrame-CalloutGlow",
 	edgeSize = 16,
 	tileEdge = true,
 }
 
-BACKDROP_CALLOUT_GLOW_0_20 = {
+local BACKDROP_CALLOUT_GLOW_0_20 = {
 	edgeFile = "Interface\\TutorialFrame\\UI-TutorialFrame-CalloutGlow",
 	edgeSize = 20,
 	tileEdge = true,
 }
 
-BACKDROP_TEXT_PANEL_0_16 = {
+local BACKDROP_TEXT_PANEL_0_16 = {
 	edgeFile = "Interface\\Glues\\Common\\TextPanel-Border",
 	tileEdge = true,
 	edgeSize = 16,
 }
 
-BACKDROP_CHARACTER_CREATE_TOOLTIP_32_32 = {
+local BACKDROP_CHARACTER_CREATE_TOOLTIP_32_32 = {
 	bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
 	edgeFile = "Interface\\Glues\\Common\\TextPanel-Border",
 	tile = true,
@@ -120,14 +127,14 @@ BACKDROP_CHARACTER_CREATE_TOOLTIP_32_32 = {
 	insets = { left = 8, right = 4, top = 4, bottom = 8 },
 }
 
-BACKDROP_WRATH_CHARACTER_CREATE_TOOLTIP_32_32 = {
+local BACKDROP_WRATH_CHARACTER_CREATE_TOOLTIP_32_32 = {
 	bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
 	tile = true,
 	tileSize = 32,
 	insets = { left = 10, right = 0, top = 10, bottom = 6 },
 }
 
-BACKDROP_MISTS_CHARACTER_CREATE_TOOLTIP_32_32 = {
+local BACKDROP_MISTS_CHARACTER_CREATE_TOOLTIP_32_32 = {
 	bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
 	tile = true,
 	tileSize = 32,
@@ -135,7 +142,7 @@ BACKDROP_MISTS_CHARACTER_CREATE_TOOLTIP_32_32 = {
 }
 
 
-BACKDROP_TUTORIAL_16_16 = {
+local BACKDROP_TUTORIAL_16_16 = {
 	bgFile = "Interface\\TutorialFrame\\TutorialFrameBackground",
 	edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
 	tile = true,
@@ -158,7 +165,7 @@ BACKDROP_TOOLTIP_8_12_1111 = { -- Removed, forced to support.
 BackdropTemplateMixin = BackdropTemplateMixin or {}
 
 local max = math.max
-local NineSliceUtil = NineSliceUtil
+local NineSliceUtil = Private.Own.NineSliceUtil or NineSliceUtil
 
 local coordStart = 0.0625
 local coordEnd = 1 - coordStart
@@ -393,3 +400,23 @@ function BackdropTemplateMixin:SetBackdropBorderColor(r, g, b, a)
         if region then region:SetVertexColor(r, g, b, a) end
     end
 end
+
+-- Publish: gap-fill only, ours stays reachable via CellClassicAPI.<name>
+Private.Provide("BACKDROP_TOOLTIP_8_12_1111", BACKDROP_TOOLTIP_8_12_1111)
+Private.Provide("BackdropTemplateMixin", BackdropTemplateMixin)
+Private.Provide("BACKDROP_ACHIEVEMENTS_0_64", BACKDROP_ACHIEVEMENTS_0_64)
+Private.Provide("BACKDROP_ARENA_32_32", BACKDROP_ARENA_32_32)
+Private.Provide("BACKDROP_DIALOG_32_32", BACKDROP_DIALOG_32_32)
+Private.Provide("BACKDROP_DARK_DIALOG_32_32", BACKDROP_DARK_DIALOG_32_32)
+Private.Provide("BACKDROP_GOLD_DIALOG_32_32", BACKDROP_GOLD_DIALOG_32_32)
+Private.Provide("BACKDROP_WATERMARK_DIALOG_0_16", BACKDROP_WATERMARK_DIALOG_0_16)
+Private.Provide("BACKDROP_SLIDER_8_8", BACKDROP_SLIDER_8_8)
+Private.Provide("BACKDROP_PARTY_32_32", BACKDROP_PARTY_32_32)
+Private.Provide("BACKDROP_TOAST_12_12", BACKDROP_TOAST_12_12)
+Private.Provide("BACKDROP_CALLOUT_GLOW_0_16", BACKDROP_CALLOUT_GLOW_0_16)
+Private.Provide("BACKDROP_CALLOUT_GLOW_0_20", BACKDROP_CALLOUT_GLOW_0_20)
+Private.Provide("BACKDROP_TEXT_PANEL_0_16", BACKDROP_TEXT_PANEL_0_16)
+Private.Provide("BACKDROP_CHARACTER_CREATE_TOOLTIP_32_32", BACKDROP_CHARACTER_CREATE_TOOLTIP_32_32)
+Private.Provide("BACKDROP_WRATH_CHARACTER_CREATE_TOOLTIP_32_32", BACKDROP_WRATH_CHARACTER_CREATE_TOOLTIP_32_32)
+Private.Provide("BACKDROP_MISTS_CHARACTER_CREATE_TOOLTIP_32_32", BACKDROP_MISTS_CHARACTER_CREATE_TOOLTIP_32_32)
+Private.Provide("BACKDROP_TUTORIAL_16_16", BACKDROP_TUTORIAL_16_16)

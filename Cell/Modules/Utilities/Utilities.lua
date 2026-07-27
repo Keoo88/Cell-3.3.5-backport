@@ -53,20 +53,7 @@ function F.CreateUtilityList(anchor)
     buttons["dispelRequest"]:SetPoint("TOPLEFT", buttons["spellRequest"], "BOTTOMLEFT")
     buttons["dispelRequest"]:SetPoint("TOPRIGHT", buttons["spellRequest"], "BOTTOMRIGHT")
 
-    if Cell.isRetail then
-        buttons["quickAssist"] = Cell.CreateButton(listFrame, L["Quick Assist"], "transparent-accent", {20, 20}, true)
-        buttons["quickAssist"].id = "quickAssist"
-        buttons["quickAssist"]:SetPoint("TOPLEFT", buttons["dispelRequest"], "BOTTOMLEFT")
-        buttons["quickAssist"]:SetPoint("TOPRIGHT", buttons["dispelRequest"], "BOTTOMRIGHT")
-
-        buttons["quickCast"] = Cell.CreateButton(listFrame, L["Quick Cast"], "transparent-accent", {20, 20}, true)
-        buttons["quickCast"].id = "quickCast"
-        buttons["quickCast"]:SetPoint("TOPLEFT", buttons["quickAssist"], "BOTTOMLEFT")
-        buttons["quickCast"]:SetPoint("TOPRIGHT", buttons["quickAssist"], "BOTTOMRIGHT")
-        P.Size(listFrame, ceil(max(dumbFS1:GetStringWidth(), dumbFS2:GetStringWidth())) + 13, 20*5)
-    else
-        P.Size(listFrame, ceil(max(dumbFS1:GetStringWidth(), dumbFS2:GetStringWidth())) + 13, 20*3)
-    end
+    P.Size(listFrame, ceil(max(dumbFS1:GetStringWidth(), dumbFS2:GetStringWidth())) + 13, 20*3)
 
     local highlight = Cell.CreateButtonGroup(buttons, function(id)
         lastShown = id
@@ -97,8 +84,6 @@ local utilityHeight = {
     ["raidTools"] = 340,
     ["spellRequest"] = 400,
     ["dispelRequest"] = 420,
-    ["quickAssist"] = 510,
-    ["quickCast"] = 510,
 }
 
 local init
@@ -119,7 +104,3 @@ Cell.RegisterCallback("ShowOptionsTab", "UtilitiesTab_ShowTab", ShowTab)
 Cell.RegisterCallback("ShowUtilitySettings", "UtilitiesTab_ShowUtilitySettings", function(which)
     P.Height(Cell.frames.optionsFrame, utilityHeight[which])
 end)
-
-function F.ShowQuickAssistTab()
-    buttons["quickAssist"]:Click()
-end

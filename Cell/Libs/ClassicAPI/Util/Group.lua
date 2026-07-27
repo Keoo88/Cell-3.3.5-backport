@@ -1,8 +1,9 @@
---! Cell: this is a private, trimmed fork of Tsoukie's ClassicAPI.
---! If the standalone !!!ClassicAPI addon is installed (Gladdy requires it), it
---! loads first and owns these globals. Overwriting them with this older subset
---! mixes two incompatible halves of the same library, so bail out instead.
-if IsAddOnLoaded and IsAddOnLoaded("!!!ClassicAPI") then return end
+--! Cell: private, trimmed fork of Tsoukie's ClassicAPI.
+--! Coexistence rules live in Util/Coexist.lua: never bail out of a file, never
+--! overwrite a global somebody else owns (gap-fill only), keep our own copy in the
+--! private CellClassicAPI namespace. Names published here are not native to 3.3.5a
+--! (verified against milkyway-codex).
+--! The C-1/C-2 fixes (leader/assistant without the O(N) roster walk) live here.
 
 local _, Private = ...
 
@@ -10,7 +11,8 @@ local UnitName = UnitName
 local UnitExists = UnitExists
 local UnitIsEnemy = UnitIsEnemy
 local UnitIsPlayer = UnitIsPlayer
-local NewTicker = C_Timer.NewTicker
+--! Use OUR timer implementation: a foreign C_Timer may ship a different NewTicker.
+local NewTicker = Private.Own.C_Timer.NewTicker
 local DemoteAssistant = DemoteAssistant
 local UnitIsConnected = UnitIsConnected
 local UnitIsRaidOfficer = UnitIsRaidOfficer
@@ -25,25 +27,25 @@ local LE_PARTY_CATEGORY_INSTANCE = LE_PARTY_CATEGORY_INSTANCE
 local EventHandler = Private.EventHandler
 local EventHandler_Define = EventHandler.Define
 
-function IsInGroup(LE_CATEGORY)
+local function IsInGroup(LE_CATEGORY)
 	if ( LE_CATEGORY and LE_CATEGORY == LE_PARTY_CATEGORY_INSTANCE ) then
 		return false
 	end
 	return GetNumRaidMembers() > 0 or GetNumPartyMembers() > 0
 end
 
-function IsInRaid(LE_CATEGORY)
+local function IsInRaid(LE_CATEGORY)
 	if ( LE_CATEGORY and LE_CATEGORY == LE_PARTY_CATEGORY_INSTANCE ) then
 		return false
 	end
 	return GetNumRaidMembers() > 0
 end
 
-function GetNumSubgroupMembers()
+local function GetNumSubgroupMembers()
 	return GetNumPartyMembers()
 end
 
-function GetNumGroupMembers()
+local function GetNumGroupMembers()
 	local Total = GetNumRaidMembers()
 
 	-- If in a raid, GetNumRaidMembers() is always the total count.
@@ -59,7 +61,7 @@ function GetNumGroupMembers()
 	return (Total > 0) and (Total + 1) or 0
 end
 
-function UnitIsGroupLeader(Unit)
+local function UnitIsGroupLeader(Unit)
 	local NumRaid = GetNumRaidMembers()
 	local NumParty = GetNumPartyMembers()
 
@@ -73,12 +75,15 @@ function UnitIsGroupLeader(Unit)
 	end
 
 	if ( NumRaid > 0 ) then
-		for i = 1, NumRaid do
-			local _, Rank = GetRaidRosterInfo(i)
-			if ( Rank == 2 and UnitIsUnit(Unit, "raid"..i) ) then
-				return true
-			end
+		--! WotLK fix: UnitInRaid hands back the roster index directly (0-based on 3.3.5,
+		--! see FrameXML TargetFrame.lua: "id = UnitInRaid('target'); GetRaidRosterInfo(id + 1)"),
+		--! so one lookup replaces the whole roster walk that ran per unit button.
+		local Index = UnitInRaid(Unit)
+		if ( Index ) then
+			local _, Rank = GetRaidRosterInfo(Index + 1)
+			return Rank == 2
 		end
+		return false
 	elseif ( NumParty > 0 ) then
 		return UnitIsPartyLeader(Unit)
 	end
@@ -86,25 +91,22 @@ function UnitIsGroupLeader(Unit)
 	return false
 end
 
-function UnitIsGroupAssistant(Unit)
-	local NumRaid = GetNumRaidMembers()
-
-	if ( NumRaid == 0 ) then
-		return false
-	end
-
-	for i = 1, NumRaid do
-		local _, Rank = GetRaidRosterInfo(i)
-		if ( Rank == 1 and UnitIsUnit(Unit, "raid"..i) ) then
-			return true
-		end
+local function UnitIsGroupAssistant(Unit)
+	--! WotLK fix: 3.3.5 answers this in O(1) natively, so drop the full roster scan
+	--! (40 GetRaidRosterInfo + 40 UnitIsUnit + 40 temp strings per call, once per unit
+	--! button on every roster/leader update). UnitIsRaidOfficer is truthy for the raid
+	--! LEADER too on this client (FrameXML UnitPopup.lua RAID_DEMOTE and ElvUI's
+	--! oUF assistantindicator both filter the leader out separately), so keep the old
+	--! "rank == 1" semantics by excluding the leader; UnitInRaid keeps party/solo false.
+	if ( UnitInRaid(Unit) and UnitIsRaidOfficer(Unit) and not UnitIsPartyLeader(Unit) ) then
+		return true
 	end
 
 	return false
 end
 
 local IsAllAssistant, AssistantTicker
-function SetEveryoneIsAssistant(Enable)
+local function SetEveryoneIsAssistant(Enable)
 	local NumMembers = GetNumRaidMembers()
 
 	if ( NumMembers <= 0 ) then return end
@@ -142,11 +144,11 @@ function SetEveryoneIsAssistant(Enable)
 	AssistantTicker.Index = 1
 end
 
-function IsEveryoneAssistant()
+local function IsEveryoneAssistant()
 	return IsAllAssistant
 end
 
-function CanBeRaidTarget(Unit)
+local function CanBeRaidTarget(Unit)
 	if ( not Unit or not UnitExists(Unit) or not UnitIsConnected(Unit) ) then
 		return false
 	end
@@ -158,8 +160,8 @@ function CanBeRaidTarget(Unit)
 	return true
 end
 
-_G.UnitInOtherParty = Private.False
-_G.GetDisplayedAllyFrames = Private.Void
+Private.Provide("UnitInOtherParty", Private.False)
+Private.Provide("GetDisplayedAllyFrames", Private.Void)
 
 --[[
 	EventHandler: GROUP_ROSTER_UPDATE / GROUP_JOINED / GROUP_LEFT
@@ -171,3 +173,15 @@ EventHandler_Define("OnEvent", "GROUP_ROSTER_UPDATE", function(_, Event)
 		return false
 	end
 end)
+
+-- Publish: gap-fill only, ours stays reachable via CellClassicAPI.<name>
+local Provide = Private.Provide
+Provide("IsInGroup", IsInGroup)
+Provide("IsInRaid", IsInRaid)
+Provide("GetNumSubgroupMembers", GetNumSubgroupMembers)
+Provide("GetNumGroupMembers", GetNumGroupMembers)
+Provide("UnitIsGroupLeader", UnitIsGroupLeader)
+Provide("UnitIsGroupAssistant", UnitIsGroupAssistant)
+Provide("SetEveryoneIsAssistant", SetEveryoneIsAssistant)
+Provide("IsEveryoneAssistant", IsEveryoneAssistant)
+Provide("CanBeRaidTarget", CanBeRaidTarget)

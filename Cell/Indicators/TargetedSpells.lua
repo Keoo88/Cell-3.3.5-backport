@@ -221,7 +221,6 @@ local function CheckUnitCast(sourceUnit, isRecheck)
         -- update spell target
         casts[sourceGUID]["targetUnit"] = targetUnit
         casts[sourceGUID]["targetGUID"] = targetGUID
-        casts[sourceGUID]["nonNameplate"] = not strfind(sourceUnit, "^nameplate")
 
         UpdateCastsOnUnit(targetGUID)
 
@@ -277,31 +276,17 @@ end)
 -- events
 -------------------------------------------------
 eventFrame:SetScript("OnEvent", function(_, event, sourceUnit)
-    if event == "ENCOUNTER_END" then
-        Reset()
-        F.IterateAllUnitButtons(HideCasts, true)
-        return
-    end
-
     if sourceUnit and strfind(sourceUnit, "^soft") then return end
 
     if event == "PLAYER_TARGET_CHANGED" then
         CheckUnitCast("target")
 
-    elseif event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_CHANNEL_START" or event == "UNIT_SPELLCAST_DELAYED" or event == "UNIT_SPELLCAST_CHANNEL_UPDATE" or event == "NAME_PLATE_UNIT_ADDED" then
+    elseif event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_CHANNEL_START" or event == "UNIT_SPELLCAST_DELAYED" or event == "UNIT_SPELLCAST_CHANNEL_UPDATE" then
         CheckUnitCast(sourceUnit)
 
     elseif event == "UNIT_SPELLCAST_STOP" or event == "UNIT_SPELLCAST_INTERRUPTED" or event == "UNIT_SPELLCAST_FAILED" or event == "UNIT_SPELLCAST_CHANNEL_STOP" then
         local sourceGUID = UnitGUID(sourceUnit)
         if casts[sourceGUID] then
-            previousTarget = casts[sourceGUID]["targetGUID"]
-            casts[sourceGUID] = nil
-            UpdateCastsOnUnit(previousTarget)
-        end
-
-    elseif event == "NAME_PLATE_UNIT_REMOVED" then
-        local sourceGUID = UnitGUID(sourceUnit)
-        if casts[sourceGUID] and not casts[sourceGUID]["nonNameplate"] then
             previousTarget = casts[sourceGUID]["targetGUID"]
             casts[sourceGUID] = nil
             UpdateCastsOnUnit(previousTarget)

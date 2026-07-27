@@ -1,8 +1,14 @@
---! Cell: this is a private, trimmed fork of Tsoukie's ClassicAPI.
---! If the standalone !!!ClassicAPI addon is installed (Gladdy requires it), it
---! loads first and owns these globals. Overwriting them with this older subset
---! mixes two incompatible halves of the same library, so bail out instead.
-if IsAddOnLoaded and IsAddOnLoaded("!!!ClassicAPI") then return end
+--! Cell: private, trimmed fork of Tsoukie's ClassicAPI.
+--! Coexistence rules live in Util/Coexist.lua: never bail out of a file, never
+--! overwrite what somebody else owns, keep our own copy private.
+--! This file injects retail widget methods that 3.3.5a lacks (SetShown, cooldown
+--! capture, ...). Two rules follow from coexistence:
+--!   1) a method is only added when the widget does not have it yet - replacing an
+--!      existing method would break both us and whoever relies on it (native or a
+--!      foreign ClassicAPI, which is the same upstream code base);
+--!   2) PreHook/PostHook chains are installed only when no foreign ClassicAPI is
+--!      loaded - it already installed the equivalent hooks, and hooking twice would
+--!      run the cooldown capture / wrappers twice per call.
 
 local _, Private = ...
 
@@ -1338,14 +1344,26 @@ local function Hook(Type, Metatable, Hooks)
 end
 
 -- Process classes and direct inject our own methods.
+--! Coexistence: a foreign ClassicAPI (Gladdy pulls it in) has already injected its
+--! own copy of these methods and hooks. Adding a second hook chain would duplicate
+--! every wrapped call, so hooks are skipped there; missing methods are still filled.
+local HasForeignClassicAPI = Private.Own.__meta.standalone
+local InjectedCount, SkippedCount = 0, 0
+
 local function Process(Metatable)
 	for Class, Data in Pairs(UIObject) do
 		if ( Data ~= true and ObjectSignature(Class, Metatable) ) then
 			for Method, Function in Pairs(Data) do
 				if ( Method == "PreHook" or Method == "PostHook" ) then
-					Hook(Method, Metatable, Function)
-				else
+					if ( not HasForeignClassicAPI ) then
+						Hook(Method, Metatable, Function)
+					end
+				elseif ( Metatable[Method] == nil ) then
+					-- Gap fill only: never replace an existing widget method.
 					Metatable[Method] = Function
+					InjectedCount = InjectedCount + 1
+				else
+					SkippedCount = SkippedCount + 1
 				end
 			end
 		end
@@ -1362,3 +1380,8 @@ for Class in Pairs(UIObject) do
 		end
 	end
 end
+
+-- Diagnostics for /cell debug shims: how much of the widget surface we own here.
+Private.Own.__meta.widgetMethodsInjected = InjectedCount
+Private.Own.__meta.widgetMethodsLeftAlone = SkippedCount
+Private.Own.UIObject = UIObject

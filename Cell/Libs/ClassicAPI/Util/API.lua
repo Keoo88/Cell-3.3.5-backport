@@ -1,8 +1,12 @@
---! Cell: this is a private, trimmed fork of Tsoukie's ClassicAPI.
---! If the standalone !!!ClassicAPI addon is installed (Gladdy requires it), it
---! loads first and owns these globals. Overwriting them with this older subset
---! mixes two incompatible halves of the same library, so bail out instead.
-if IsAddOnLoaded and IsAddOnLoaded("!!!ClassicAPI") then return end
+--! Cell: private, trimmed fork of Tsoukie's ClassicAPI.
+--! Coexistence rules live in Util/Coexist.lua: never bail out, never overwrite a
+--! global somebody else owns, keep our own copy in CellClassicAPI.
+--! Nothing here is native to 3.3.5a (checked against milkyway-codex), so every
+--! function is built as a local and only published into _G when the name is free.
+--! CombatLogGetCurrentEventInfo is a TRANSLATOR of the native COMBAT_LOG_EVENT
+--! varargs (not a retail-style getter): Cell's CLEU code depends on exactly these
+--! semantics, so Cell must call CellClassicAPI.CombatLogGetCurrentEventInfo and
+--! never the possibly foreign global.
 
 local _, Private = ...
 
@@ -22,11 +26,14 @@ local Reverse = string.reverse
 local GetRealmName = GetRealmName
 local GetInstanceInfo = GetInstanceInfo
 
-local FIRST_NUMBER_CAP = FIRST_NUMBER_CAP
-local SECOND_NUMBER_CAP = SECOND_NUMBER_CAP
-local LARGE_NUMBER_SEPERATOR = LARGE_NUMBER_SEPERATOR
+--! WotLK fix (coexistence): prefer our own copies. The standalone !!!ClassicAPI may
+--! own these globals, and its values are not guaranteed to match what our number
+--! formatting below expects; fall back to the global only when we have nothing.
+local FIRST_NUMBER_CAP = Private.Own.FIRST_NUMBER_CAP or FIRST_NUMBER_CAP
+local SECOND_NUMBER_CAP = Private.Own.SECOND_NUMBER_CAP or SECOND_NUMBER_CAP
+local LARGE_NUMBER_SEPERATOR = Private.Own.LARGE_NUMBER_SEPERATOR or LARGE_NUMBER_SEPERATOR
 
-function AnimateTexCoords(Self, Width, Height, FrameW, FrameH, NumFrames, Elapsed, Throttle)
+local function AnimateTexCoords(Self, Width, Height, FrameW, FrameH, NumFrames, Elapsed, Throttle)
 	-- This exists, we just optimize it.
 	Throttle = Throttle or 0.1
 
@@ -59,7 +66,7 @@ function AnimateTexCoords(Self, Width, Height, FrameW, FrameH, NumFrames, Elapse
 	end
 end
 
-function GetTexCoordsForRoleSmallCircle(Role)
+local function GetTexCoordsForRoleSmallCircle(Role)
 	if ( Role == "TANK" ) then
 		return 0, 19/64, 22/64, 41/64
 	elseif ( Role == "HEALER" ) then
@@ -77,28 +84,28 @@ local function secureexecutenext(Table, Prev, Func, ...)
 	return Key
 end
 
-function secureexecuterange(Table, Func, ...)
+local function secureexecuterange(Table, Func, ...)
 	local Key = nil
 	repeat
 		Key = SecureCall(secureexecutenext, Table, Key, Func, ...)
 	until Key == nil
 end
 
-function securecallfunction(Func, ...)
+local function securecallfunction(Func, ...)
 	return SecureCall(Func, ...)
 end
 
-function HasOverrideActionBar()
+local function HasOverrideActionBar()
 	-- Move to C_ActionBar
 	return IsPossessBarVisible()
 end
 
-function HasVehicleActionBar()
+local function HasVehicleActionBar()
 	-- Move to C_ActionBar
 	return UnitHasVehicleUI("player")
 end
 
-function C_GetInstanceInfo()
+local function C_GetInstanceInfo()
 	local InstanceName, InstanceType, DifficultyIndex, DifficultyName, MaxPlayers, DynamicDifficulty, IsDynamic = GetInstanceInfo()
 
 	if ( InstanceType == "pvp"  ) then
@@ -115,15 +122,15 @@ function C_GetInstanceInfo()
 	return InstanceName, InstanceType, DifficultyIndex, DifficultyName, MaxPlayers, DynamicDifficulty, IsDynamic
 end
 
-function GetServerTime()
+local function GetServerTime()
 	return GetTime() -- Sadly, we have to still use client time.
 end
 
-function GetNormalizedRealmName()
+local function GetNormalizedRealmName()
 	return (GSub(GetRealmName(), "[-%s]", ""))
 end
 
-function Ambiguate(FullName, Context)
+local function Ambiguate(FullName, Context)
 	if ( Type(FullName) ~= "string" or not FullName:find("-") ) then
 		return FullName
 	end
@@ -145,7 +152,7 @@ function Ambiguate(FullName, Context)
 	return FullName
 end
 
-function CombatLogGetCurrentEventInfo(Timestamp, SubEvent, SrcGUID, SrcName, SrcFlag, DstGUID, DstName, DstFlag, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12)
+local function CombatLogGetCurrentEventInfo(Timestamp, SubEvent, SrcGUID, SrcName, SrcFlag, DstGUID, DstName, DstFlag, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12)
 	if ( not Timestamp ) then return end
 
 	-- Modern payload (Missing)
@@ -155,7 +162,7 @@ function CombatLogGetCurrentEventInfo(Timestamp, SubEvent, SrcGUID, SrcName, Src
 	return Timestamp, SubEvent, HideCaster, SrcGUID, SrcName, SrcFlag, SrcRaidFlag, DstGUID, DstName, DstFlag, DstRaidFlag, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12
 end
 
-function FormatLargeNumber(Amount)
+local function FormatLargeNumber(Amount)
 	if ( Amount < 1000 ) then
 		return Amount
 	end
@@ -171,7 +178,7 @@ function FormatLargeNumber(Amount)
 	return Formatted
 end
 
-function BreakUpLargeNumbers(Value, Breakup)
+local function BreakUpLargeNumbers(Value, Breakup)
 	if ( Value < 1000 ) then
 		if ( Value % 1 == 0 ) then
 			return Value
@@ -188,7 +195,7 @@ function BreakUpLargeNumbers(Value, Breakup)
 	end
 end
 
-function AbbreviateLargeNumbers(Value, Breakup)
+local function AbbreviateLargeNumbers(Value, Breakup)
 	if ( Value >= 100000000 ) then
 		return Floor(Value / 1000000) .. SECOND_NUMBER_CAP
 	elseif ( Value >= 100000 ) then
@@ -201,7 +208,7 @@ function AbbreviateLargeNumbers(Value, Breakup)
 end
 
 local InitialGTPSCall
-function GetTimePreciseSec()
+local function GetTimePreciseSec()
 	local Time = debugprofilestop() / 1000
 	if ( InitialGTPSCall == nil ) then
 		InitialGTPSCall = Time
@@ -209,30 +216,56 @@ function GetTimePreciseSec()
 	return Time - InitialGTPSCall
 end
 
-function BankFrame_Open()
+local function BankFrame_Open()
 	BankFrame_OnEvent(_G["BankFrame"], "BANKFRAME_OPENED")
 end
 
-function MerchantFrame_MerchantShow()
+local function MerchantFrame_MerchantShow()
 	MerchantFrame_OnEvent(_G["MerchantFrame"], "MERCHANT_SHOW")
 end
 
-function MerchantFrame_MerchantClosed()
+local function MerchantFrame_MerchantClosed()
 	MerchantFrame_OnEvent(_G["MerchantFrame"], "MERCHANT_CLOSED")
 end
 
-function TabardFrame_Open()
+local function TabardFrame_Open()
 	TabardFrame_OnEvent(_G["TabardFrame"], "OPEN_TABARD_FRAME")
 end
 
-function MailFrame_Show()
+local function MailFrame_Show()
 	MailFrame_OnEvent(_G["MailFrame"], "MAIL_SHOW")
 end
 
-function MailFrame_Hide()
+local function MailFrame_Hide()
 	MailFrame_OnEvent(_G["MailFrame"], "MAIL_CLOSED")
 end
 
-InGlue = Private.False
-PassClickToParent = Private.Void
-GetDifficultyInfo = Private.Void -- "Normal", "party", false, false, false, false, nil
+Private.Provide("InGlue", Private.False)
+Private.Provide("PassClickToParent", Private.Void)
+--! WotLK fix (coexistence): was a direct global write, which would have clobbered
+--! whatever the standalone !!!ClassicAPI (or any other addon) put there.
+Private.Provide("GetDifficultyInfo", Private.Void) -- "Normal", "party", false, false, false, false, nil
+
+-- Publish: gap-fill only, ours always stays reachable via CellClassicAPI.<name>
+local Provide = Private.Provide
+Provide("AnimateTexCoords", AnimateTexCoords)
+Provide("GetTexCoordsForRoleSmallCircle", GetTexCoordsForRoleSmallCircle)
+Provide("secureexecuterange", secureexecuterange)
+Provide("securecallfunction", securecallfunction)
+Provide("HasOverrideActionBar", HasOverrideActionBar)
+Provide("HasVehicleActionBar", HasVehicleActionBar)
+Provide("C_GetInstanceInfo", C_GetInstanceInfo)
+Provide("GetServerTime", GetServerTime)
+Provide("GetNormalizedRealmName", GetNormalizedRealmName)
+Provide("Ambiguate", Ambiguate)
+Provide("CombatLogGetCurrentEventInfo", CombatLogGetCurrentEventInfo)
+Provide("FormatLargeNumber", FormatLargeNumber)
+Provide("BreakUpLargeNumbers", BreakUpLargeNumbers)
+Provide("AbbreviateLargeNumbers", AbbreviateLargeNumbers)
+Provide("GetTimePreciseSec", GetTimePreciseSec)
+Provide("BankFrame_Open", BankFrame_Open)
+Provide("MerchantFrame_MerchantShow", MerchantFrame_MerchantShow)
+Provide("MerchantFrame_MerchantClosed", MerchantFrame_MerchantClosed)
+Provide("TabardFrame_Open", TabardFrame_Open)
+Provide("MailFrame_Show", MailFrame_Show)
+Provide("MailFrame_Hide", MailFrame_Hide)

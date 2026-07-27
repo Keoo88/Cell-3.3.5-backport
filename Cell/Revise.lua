@@ -1322,29 +1322,11 @@ function F.Revise()
         Cell.vars.bigDebuffs = F.ConvertTable(CellDB["bigDebuffs"])
     end
 
-    -- r117-release
-    if CellDB["revise"] and dbRevision < 117 then
-        -- enable shield in WotLK
-        if Cell.isCata then
-            CellDB["appearance"]["shield"] = true
-            CellDB["appearance"]["overshield"] = true
-        end
-    end
-
     -- r118-release
     if CellDB["revise"] and dbRevision < 118 then
-        -- fix default value in Wrath Classic
-        if Cell.isCata and CellDB["tools"]["marks"][2] == "both_h" then
-            CellDB["tools"]["marks"][2] = "target_h"
-        end
-
         -- add size
         if not CellDB["tools"]["buffTracker"][3] then
-            if Cell.isRetail then
-                CellDB["tools"]["buffTracker"][3] = 32
-            else
-                CellDB["tools"]["buffTracker"][3] = 27
-            end
+            CellDB["tools"]["buffTracker"][3] = 27
         end
     end
 
@@ -1468,14 +1450,6 @@ function F.Revise()
 
     -- r138-release
     if CellDB["revise"] and dbRevision < 138 then
-        if Cell.isRetail then
-            -- 邪甲术
-            if not F.TContains(CellDB["debuffBlacklist"], 387847) then
-                tinsert(CellDB["debuffBlacklist"], 387847)
-                Cell.vars.debuffBlacklist = F.ConvertTable(CellDB["debuffBlacklist"])
-            end
-        end
-
         for _, layout in pairs(CellDB["layouts"]) do
             if layout["spacing"] then
                 layout["spacingX"] = layout["spacing"]
@@ -1488,53 +1462,8 @@ function F.Revise()
         end
     end
 
-    -- r139-release
-    if CellDB["revise"] and dbRevision < 139 then
-        if Cell.isRetail then
-            -- 筋疲力尽
-            if not F.TContains(CellDB["debuffBlacklist"], 390435) then
-                tinsert(CellDB["debuffBlacklist"], 390435)
-                Cell.vars.debuffBlacklist = F.ConvertTable(CellDB["debuffBlacklist"])
-            end
-        end
-    end
-
-    -- r146-release
-    if CellDB["revise"] and dbRevision < 146 then
-        if Cell.isRetail then
-            -- add "Initials"
-            for class, t in pairs(CellDB["clickCastings"]) do
-                -- fix alwaysTargeting
-                if not t["alwaysTargeting"] then
-                    t["alwaysTargeting"] = {["common"] = "disabled"}
-                end
-                -- set up initial spec
-                local specID = GetSpecializationInfoForClassID(F.GetClassID(class), 5)
-                t["alwaysTargeting"][specID] = "disabled"
-                t[specID] = {
-                    {"type1", "target"},
-                    {"type2", "togglemenu"},
-                }
-            end
-        end
-    end
-
     -- r147-release
     if CellDB["revise"] and dbRevision < 147 then
-        if Cell.isRetail then
-            for role, t in pairs(CellDB["layoutAutoSwitch"]) do
-                if t["raid"] then
-                    t["raid_outdoor"] = t["raid"]
-                    t["raid_instance"] = t["raid"]
-                    t["raid"] = nil
-                end
-                if t["mythic"] then
-                    t["raid_mythic"] = t["mythic"]
-                    t["mythic"] = nil
-                end
-            end
-        end
-
         -- appearance
         if type(CellDB["appearance"]["healPrediction"]) == "boolean" then
             CellDB["appearance"]["healPrediction"] = {CellDB["appearance"]["healPrediction"], false, {1, 1, 1, 0.4}}
@@ -1593,7 +1522,6 @@ function F.Revise()
     if CellDB["revise"] and dbRevision < 150 then
         local healthThresholds = Cell.defaults.indicatorIndices["healthThresholds"]
         local dispels = Cell.defaults.indicatorIndices["dispels"]
-        local mitigation = Cell.defaults.indicatorIndices["tankActiveMitigation"]
         local aggroBar = Cell.defaults.indicatorIndices["aggroBar"]
 
         for _, layout in pairs(CellDB["layouts"]) do
@@ -1615,14 +1543,6 @@ function F.Revise()
                 layout["indicators"][dispels]["orientation"] = "right-to-left"
             end
             -- update bars
-            if Cell.isRetail and mitigation and layout["indicators"][mitigation] then
-                layout["indicators"][mitigation]["size"][1] = layout["indicators"][mitigation]["size"][1] + 2
-                layout["indicators"][mitigation]["size"][2] = layout["indicators"][mitigation]["size"][2] + 2
-                if layout["indicators"][mitigation]["position"][3] == 10 and layout["indicators"][mitigation]["position"][4] == -1 then
-                    layout["indicators"][mitigation]["position"][3] = 9
-                    layout["indicators"][mitigation]["position"][4] = 0
-                end
-            end
             if layout["indicators"][aggroBar] then
                 layout["indicators"][aggroBar]["size"][1] = layout["indicators"][aggroBar]["size"][1] + 2
                 layout["indicators"][aggroBar]["size"][2] = layout["indicators"][aggroBar]["size"][2] + 2
@@ -1632,78 +1552,10 @@ function F.Revise()
                 end
             end
         end
-
-        if Cell.isRetail then
-            -- targetedSpells
-            -- 红玉新生法池
-            if not F.TContains(CellDB["targetedSpellsList"], 372858) then -- 灼热打击
-                tinsert(CellDB["targetedSpellsList"], 372858)
-            end
-            -- 奈萨鲁斯
-            if not F.TContains(CellDB["targetedSpellsList"], 374533) then -- 炽热挥舞
-                tinsert(CellDB["targetedSpellsList"], 374533)
-            end
-            if not F.TContains(CellDB["targetedSpellsList"], 377018) then -- 熔火真金
-                tinsert(CellDB["targetedSpellsList"], 377018)
-            end
-            -- 蕨皮山谷
-            if not F.TContains(CellDB["targetedSpellsList"], 381444) then -- 野蛮冲撞
-                tinsert(CellDB["targetedSpellsList"], 381444)
-            end
-            if not F.TContains(CellDB["targetedSpellsList"], 373912) then -- 腐朽打击
-                tinsert(CellDB["targetedSpellsList"], 373912)
-            end
-            -- 英灵殿
-            if not F.TContains(CellDB["targetedSpellsList"], 193092) then -- 放血扫击
-                tinsert(CellDB["targetedSpellsList"], 193092)
-            end
-
-            -- debuffBlacklist
-            if not F.TContains(CellDB["debuffBlacklist"], 213213) then -- 伪装
-                tinsert(CellDB["debuffBlacklist"], 213213)
-            end
-
-            -- bigDebuffs
-            if not F.TContains(CellDB["bigDebuffs"], 240559) then -- 重伤
-                tinsert(CellDB["bigDebuffs"], 240559)
-            end
-            if not F.TContains(CellDB["bigDebuffs"], 396369) then -- 闪电标记
-                tinsert(CellDB["bigDebuffs"], 396369)
-            end
-            if not F.TContains(CellDB["bigDebuffs"], 396364) then -- 狂风标记
-                tinsert(CellDB["bigDebuffs"], 396364)
-            end
-        end
     end
 
     -- r152-release
     if CellDB["revise"] and dbRevision < 152 then
-        if Cell.isRetail then
-            local found1, found2
-            for _, t in pairs(CellDB["consumables"]) do
-                if t[1] == 370511 then found1 = true end
-                if t[1] == 371024 then found2 = true end
-            end
-            if not found1 then
-                tinsert(CellDB["consumables"], {
-                    370511, -- 振奋治疗药水
-                    {"A", {1, 0.1, 0.1}},
-                })
-            end
-            if not found2 then
-                tinsert(CellDB["consumables"], {
-                    371024, -- 元素强能药水
-                    {"C3", {1, 1, 0}},
-                })
-            end
-            Cell.vars.consumables = I.ConvertConsumables(CellDB["consumables"])
-
-            -- 英灵殿
-            if not F.TContains(CellDB["targetedSpellsList"], 193659) then -- 邪炽冲刺
-                tinsert(CellDB["targetedSpellsList"], 193659)
-            end
-        end
-
         for _, layout in pairs(CellDB["layouts"]) do
             local nameText = Cell.defaults.indicatorIndices.healthText
             if layout["indicators"][nameText] and layout["indicators"][nameText]["indicatorName"] == "nameText" then
@@ -1711,99 +1563,6 @@ function F.Revise()
                     layout["indicators"][nameText]["hideIfEmptyOrFull"] = layout["indicators"][nameText]["hideFull"]
                     layout["indicators"][nameText]["hideFull"] = nil
                 end
-            end
-        end
-    end
-
-    -- r153-release
-    if CellDB["revise"] and dbRevision < 153 then
-        if Cell.isRetail then
-            -- targetedSpells
-            -- 青龙寺
-            if not F.TContains(CellDB["targetedSpellsList"], 106823) then -- 翔龙猛袭
-                tinsert(CellDB["targetedSpellsList"], 106823)
-            end
-            if not F.TContains(CellDB["targetedSpellsList"], 106841) then -- 青龙猛袭
-                tinsert(CellDB["targetedSpellsList"], 106841)
-            end
-            -- 群星庭院
-            if not F.TContains(CellDB["targetedSpellsList"], 211473) then -- 暗影鞭笞
-                tinsert(CellDB["targetedSpellsList"], 211473)
-            end
-            -- 英灵殿
-            if not F.TContains(CellDB["targetedSpellsList"], 192018) then -- 光明之盾
-                tinsert(CellDB["targetedSpellsList"], 192018)
-            end
-            -- 化身巨龙牢窟
-            if not F.TContains(CellDB["targetedSpellsList"], 375870) then -- 致死石爪
-                tinsert(CellDB["targetedSpellsList"], 375870)
-            end
-            if not F.TContains(CellDB["targetedSpellsList"], 395906) then -- 电化之颌
-                tinsert(CellDB["targetedSpellsList"], 395906)
-            end
-            if not F.TContains(CellDB["targetedSpellsList"], 372158) then -- 破甲一击
-                tinsert(CellDB["targetedSpellsList"], 372158)
-            end
-            if not F.TContains(CellDB["targetedSpellsList"], 372056) then -- 碾压
-                tinsert(CellDB["targetedSpellsList"], 372056)
-            end
-            if not F.TContains(CellDB["targetedSpellsList"], 375580) then -- 西风猛击
-                tinsert(CellDB["targetedSpellsList"], 375580)
-            end
-            if not F.TContains(CellDB["targetedSpellsList"], 376276) then -- 震荡猛击
-                tinsert(CellDB["targetedSpellsList"], 376276)
-            end
-            -- 红玉新生法池
-            if not F.TContains(CellDB["targetedSpellsList"], 381512) then -- 风暴猛击
-                tinsert(CellDB["targetedSpellsList"], 381512)
-            end
-            -- 碧蓝魔馆
-            if not F.TContains(CellDB["targetedSpellsList"], 374789) then -- 注能打击
-                tinsert(CellDB["targetedSpellsList"], 374789)
-            end
-            if not F.TContains(CellDB["targetedSpellsList"], 372222) then -- 奥术顺劈
-                tinsert(CellDB["targetedSpellsList"], 372222)
-            end
-            if not F.TContains(CellDB["targetedSpellsList"], 384978) then -- 巨龙打击
-                tinsert(CellDB["targetedSpellsList"], 384978)
-            end
-            if not F.TContains(CellDB["targetedSpellsList"], 391136) then -- 肩部猛击
-                tinsert(CellDB["targetedSpellsList"], 391136)
-            end
-            -- 诺库德阻击战
-            if not F.TContains(CellDB["targetedSpellsList"], 376827) then -- 传导打击
-                tinsert(CellDB["targetedSpellsList"], 376827)
-            end
-            if not F.TContains(CellDB["targetedSpellsList"], 376829) then -- 雷霆打击
-                tinsert(CellDB["targetedSpellsList"], 376829)
-            end
-            if not F.TContains(CellDB["targetedSpellsList"], 375937) then -- 撕裂猛击
-                tinsert(CellDB["targetedSpellsList"], 375937)
-            end
-            if not F.TContains(CellDB["targetedSpellsList"], 375929) then -- 野蛮打击
-                tinsert(CellDB["targetedSpellsList"], 375929)
-            end
-
-            Cell.vars.targetedSpellsList = F.ConvertTable(CellDB["targetedSpellsList"])
-        end
-    end
-
-    -- r154-release
-    if CellDB["revise"] and dbRevision < 154 then
-        if Cell.isRetail then
-            -- 诺库德阻击战
-            if not F.TContains(CellDB["targetedSpellsList"], 376644) then -- 钢铁之矛
-                tinsert(CellDB["targetedSpellsList"], 376644)
-            end
-            if not F.TContains(CellDB["targetedSpellsList"], 376865) then -- 静电之矛
-                tinsert(CellDB["targetedSpellsList"], 376865)
-            end
-            if not F.TContains(CellDB["targetedSpellsList"], 382836) then -- 残杀
-                tinsert(CellDB["targetedSpellsList"], 382836)
-            end
-            -- 英灵殿
-            if not F.TContains(CellDB["targetedSpellsList"], 196838) then -- 血之气息
-                tinsert(CellDB["targetedSpellsList"], 196838)
             end
         end
     end
@@ -1817,31 +1576,6 @@ function F.Revise()
         if CellDB["customExternals"] then
             CellDB["externals"]["custom"] = CellDB["customExternals"]
             CellDB["customExternals"] = nil
-        end
-    end
-
-    -- r158-release
-    if CellDB["revise"] and dbRevision < 158 then
-        --! Missing Buffs indicator only works on Retail
-        --! because it's difficult to check Blessings on Wrath
-        if Cell.isRetail then
-            local index = Cell.defaults.indicatorIndices.missingBuffs
-            for _, layout in pairs(CellDB["layouts"]) do
-                if not layout["indicators"][index] or layout["indicators"][index]["indicatorName"] ~= "missingBuffs" then
-                    tinsert(layout.indicators, index, {
-                        ["name"] = "Missing Buffs",
-                        ["indicatorName"] = "missingBuffs",
-                        ["type"] = "built-in",
-                        ["enabled"] = false,
-                        -- ["trackByName"] = Cell.isCata,
-                        ["position"] = {"BOTTOMRIGHT", "BOTTOMRIGHT", 0, 4},
-                        ["frameLevel"] = 10,
-                        ["size"] = {13, 13},
-                        ["num"] = 3,
-                        ["orientation"] = "right-to-left",
-                    })
-                end
-            end
         end
     end
 
@@ -1871,66 +1605,10 @@ function F.Revise()
         end
     end
 
-    -- r168-release
-    if CellDB["revise"] and dbRevision < 168 then
-        if Cell.isRetail then
-            -- targetedSpells
-            -- 亚贝鲁斯，焰影熔炉
-            if not F.TContains(CellDB["targetedSpellsList"], 401022) then -- 灾祸掠击
-                tinsert(CellDB["targetedSpellsList"], 401022)
-            end
-            if not F.TContains(CellDB["targetedSpellsList"], 407790) then -- 身影碎离
-                tinsert(CellDB["targetedSpellsList"], 407790)
-            end
-        end
-    end
-
-    -- r169-release
-    if CellDB["revise"] and dbRevision < 169 then
-        if Cell.isRetail then
-            local privateAuras = Cell.defaults.indicatorIndices["privateAuras"]
-
-            for _, layout in pairs(CellDB["layouts"]) do
-                if layout["indicators"][privateAuras]["indicatorName"] ~= "privateAuras" then
-                    tinsert(layout["indicators"], privateAuras, {
-                        ["name"] = "Private Auras",
-                        ["indicatorName"] = "privateAuras",
-                        ["type"] = "built-in",
-                        ["enabled"] = true,
-                        ["position"] = {"TOP", "TOP", 0, 3},
-                        ["frameLevel"] = 25,
-                        ["size"] = {18, 18},
-                        ["privateAuraOptions"] = {true, false},
-                    })
-                end
-            end
-        end
-    end
-
     -- r170-release
     if CellDB["revise"] and dbRevision < 170 then
         if not strfind(CellDB["snippets"][0]["code"], "CELL_NICKTAG_ENABLED") then
             CellDB["snippets"][0]["code"] = CellDB["snippets"][0]["code"].."\n\n-- Use nicknames from Details! Damage Meter (boolean, NickTag-1.0 library)\nCELL_NICKTAG_ENABLED = false"
-        end
-
-        if Cell.isCata then
-            local index = Cell.defaults.indicatorIndices.missingBuffs
-            for _, layout in pairs(CellDB["layouts"]) do
-                if not layout["indicators"][index] or layout["indicators"][index]["indicatorName"] ~= "missingBuffs" then
-                    tinsert(layout.indicators, index, {
-                        ["name"] = "Missing Buffs",
-                        ["indicatorName"] = "missingBuffs",
-                        ["type"] = "built-in",
-                        ["enabled"] = false,
-                        ["buffByMe"] = false,
-                        ["position"] = {"BOTTOMRIGHT", "BOTTOMRIGHT", 0, 4},
-                        ["frameLevel"] = 10,
-                        ["size"] = {13, 13},
-                        ["num"] = 3,
-                        ["orientation"] = "right-to-left",
-                    })
-                end
-            end
         end
     end
 
@@ -1986,69 +1664,8 @@ function F.Revise()
         end
     end
 
-    -- r177-release
-    if CellDB["revise"] and dbRevision < 177 then
-        if Cell.isRetail then
-            --! evoker Augmentation 1473
-            if CellDB["clickCastings"]["EVOKER"] then
-                if not CellDB["clickCastings"]["EVOKER"][1473] then
-                    CellDB["clickCastings"]["EVOKER"]["alwaysTargeting"][1473] = "disabled"
-                    CellDB["clickCastings"]["EVOKER"][1473] = {
-                        {"type1", "target"},
-                        {"type2", "togglemenu"},
-                        {"type-shiftR", "spell", 361227},
-                    }
-                end
-            end
-        end
-    end
-
-    -- r178-release
-    if CellDB["revise"] and dbRevision < 178 then
-        if Cell.isCata then
-            for _, layout in pairs(CellDB["layouts"]) do
-                local index = Cell.defaults.indicatorIndices.powerWordShield
-                if layout["indicators"][index]["indicatorName"] ~= "powerWordShield" then
-                    tinsert(layout["indicators"], index, {
-                        ["name"] = "PW:S",
-                        ["indicatorName"] = "powerWordShield",
-                        ["type"] = "built-in",
-                        ["enabled"] = false,
-                        ["position"] = {"CENTER", "BOTTOMRIGHT", -7, 7},
-                        ["frameLevel"] = 10,
-                        ["size"] = {20, 20},
-                        ["shieldByMe"] = true,
-                    })
-                end
-            end
-        end
-    end
-
-    -- r181-release
-    if CellDB["revise"] and dbRevision < 181 then
-        if Cell.isCata then
-            for _, layout in pairs(CellDB["layouts"]) do
-                local index = Cell.defaults.indicatorIndices.powerWordShield
-                if type(layout["indicators"][index]["shape"]) ~= "string" then
-                    layout["indicators"][index]["shape"] = "circle"
-                end
-            end
-        end
-    end
-
     -- r182-release
     if CellDB["revise"] and dbRevision < 182 then
-        if Cell.isCata then
-            if CellDB["clickCastings"] and CellDB["clickCastings"][Cell.vars.playerClass] then
-                if not CellCharacterDB["clickCastings"]["processed"] then
-                    CellCharacterDB["clickCastings"] = CellDB["clickCastings"][Cell.vars.playerClass]
-                    Cell.vars.clickCastings = CellCharacterDB["clickCastings"]
-                    -- flag as processed
-                    CellCharacterDB["clickCastings"]["processed"] = true
-                end
-            end
-        end
-
         for _, layout in pairs(CellDB["layouts"]) do
             if not layout["main"] then
                 layout["main"] = {
@@ -2158,10 +1775,6 @@ function F.Revise()
 
             CellDB["dispelRequest"]["type"] = "text"
         end
-
-        if Cell.isCata then
-            CellCharacterDB["clickCastings"]["class"] = Cell.vars.playerClass
-        end
     end
 
     -- r187-release
@@ -2169,64 +1782,12 @@ function F.Revise()
         if type(CellDB["dispelRequest"]["textOptions"][1]) ~= "string" then
             tinsert(CellDB["dispelRequest"]["textOptions"][1], 1, "A")
         end
-
-        if Cell.isRetail and type(CellDB["quickCast"]) == "table" then
-            for class, classTbl in pairs(CellDB["quickCast"]) do
-                for spec, specTbl in pairs(classTbl) do
-                    if not specTbl["glowBuffsColor"] then
-                        specTbl["glowBuffsColor"] = {1, 1, 0, 1}
-                    end
-                    if not specTbl["glowCasts"] then
-                        specTbl["glowCasts"] = {}
-                        specTbl["glowCastsColor"] = {1, 0, 1, 1}
-                    end
-                end
-            end
-        end
-    end
-
-    -- r188-release
-    if CellDB["revise"] and dbRevision < 188 then
-        if Cell.isRetail and type(CellDB["quickCast"]) == "table" then
-            for class, classTbl in pairs(CellDB["quickCast"]) do
-                for spec, specTbl in pairs(classTbl) do
-                    if strfind(specTbl["orientation"], "^vertical") or strfind(specTbl["orientation"], "^horizontal") then
-                        specTbl["orientation"] = specTbl["orientation"]:gsub("^vertical%-", "")
-                        specTbl["orientation"] = specTbl["orientation"]:gsub("^horizontal%-", "")
-                    end
-                end
-            end
-        end
     end
 
     -- r190-beta
     if CellDB["revise"] and dbRevision < 190 then
         if not strfind(CellDB["snippets"][0]["code"], "CELL_TOOLTIP_REMOVE_RAID_SETUP_DETAILS") then
             CellDB["snippets"][0]["code"] = CellDB["snippets"][0]["code"].."\n\n-- remove raid setup details from the tooltip of the Raid button (boolean)\nCELL_TOOLTIP_REMOVE_RAID_SETUP_DETAILS = false"
-        end
-
-        if Cell.isRetail then
-            for _, layout in pairs(CellDB["layouts"]) do
-                local index = Cell.defaults.indicatorIndices.crowdControls
-                if layout["indicators"][index]["indicatorName"] ~= "crowdControls" then
-                    tinsert(layout["indicators"], index, {
-                        ["name"] = "Crowd Controls",
-                        ["indicatorName"] = "crowdControls",
-                        ["type"] = "built-in",
-                        ["enabled"] = false,
-                        ["position"] = {"CENTER", "CENTER", 0, 0},
-                        ["frameLevel"] = 20,
-                        ["size"] = {22, 22},
-                        ["border"] = 2,
-                        ["num"] = 3,
-                        ["font"] = {
-                            {"Cell ".._G.DEFAULT, 11, "Outline", "TOPRIGHT", 2, 1, {1, 1, 1}},
-                            {"Cell ".._G.DEFAULT, 11, "Outline", "BOTTOMRIGHT", 2, -1, {1, 1, 1}},
-                        },
-                        ["orientation"] = "left-to-right",
-                    })
-                end
-            end
         end
     end
 
@@ -2236,27 +1797,15 @@ function F.Revise()
             CellDB["snippets"][0]["code"] = CellDB["snippets"][0]["code"].."\n\n-- border thickness: unit button and icon (number)\nCELL_BORDER_SIZE = 1"
         end
 
-        local filters
-
-        if Cell.isRetail then
-            filters = {
-                ["PWF"] = true,
-                ["MotW"] = true,
-                ["AB"] = true,
-                ["BS"] = true,
-                ["BotB"] = true,
-            }
-        else
-            filters = {
-                ["PWF"] = true,
-                ["DS"] = true,
-                ["SP"] = true,
-                ["AB"] = true,
-                ["MotW"] = true,
-                ["PALADIN"] = true,
-                ["WARRIOR"] = true,
-            }
-        end
+        local filters = {
+            ["PWF"] = true,
+            ["DS"] = true,
+            ["SP"] = true,
+            ["AB"] = true,
+            ["MotW"] = true,
+            ["PALADIN"] = true,
+            ["WARRIOR"] = true,
+        }
 
         for _, layout in pairs(CellDB["layouts"]) do
             local index = Cell.defaults.indicatorIndices.missingBuffs
@@ -2277,19 +1826,6 @@ function F.Revise()
 
     -- r197-release
     if CellDB["revise"] and dbRevision < 197 then
-        if Cell.isRetail then
-            for c, ct in pairs(CellDB["quickCast"]) do
-                for s, st in pairs(ct) do
-                    if type(st["spacing"]) == "number" then
-                        st["spacingX"] = st["spacing"]
-                        st["spacingY"] = st["spacing"]
-                        st["spacing"] = nil
-                        st["lines"] = 6
-                    end
-                end
-            end
-        end
-
         if type(CellDB["tools"]["marks"][2]) ~= "boolean" then
             tinsert(CellDB["tools"]["marks"], 2, false)
         end
@@ -2336,16 +1872,6 @@ function F.Revise()
         if #CellDB["tools"]["readyAndPull"] ~= 4 then
             -- add style
             tinsert(CellDB["tools"]["readyAndPull"], 2, "text_button")
-        end
-    end
-
-    -- r201-release
-    if CellDB["revise"] and dbRevision < 201 then
-        if Cell.isRetail then
-            -- 阿梅达希尔，梦境之愿
-            if not F.TContains(CellDB["targetedSpellsList"], 418637) then -- 狂怒冲锋
-                tinsert(CellDB["targetedSpellsList"], 418637)
-            end
         end
     end
 
@@ -2443,50 +1969,6 @@ function F.Revise()
         end
     end
 
-    -- r207-release
-    if CellDB["revise"] and dbRevision < 207 then
-        if Cell.isRetail then
-            for spec, t in pairs(CellDB["quickAssist"]) do
-                -- clickCastings -> buffs
-                if not t["spells"]["mine"]["buffs"] then
-                    t["spells"]["mine"]["buffs"] = t["spells"]["mine"]["clickCastings"]
-                    t["spells"]["mine"]["clickCastings"] = nil
-                    for _, st in pairs(t["spells"]["mine"]["buffs"]) do
-                        if st[1] == -1 then st[1] = 0 end
-                        tinsert(st, 2, "icon")
-                    end
-                end
-                -- add bar options
-                if not t["spells"]["mine"]["bar"] then
-                    t["spells"]["mine"]["bar"] = {
-                        ["position"] = {"TOPRIGHT", "BOTTOMRIGHT", 0, 1},
-                        ["orientation"] = "top-to-bottom",
-                        ["size"] = {75, 4},
-                    }
-                end
-                -- add glow options
-                if not t["spells"]["offensives"]["glow"] then
-                    t["spells"]["offensives"]["glow"] = {
-                        ["fadeOut"] = false,
-                        ["options"] = {"None", {0.95,0.95,0.32,1}},
-                    }
-                end
-                -- add filters
-                if not t["layout"]["filters"] then
-                    t["layout"]["filters"] = {
-                        t["layout"]["filter"],
-                        {"role", {["TANK"] = false, ["HEALER"] = false, ["DAMAGER"] = true}, false},
-                        {"role", {["TANK"] = false, ["HEALER"] = false, ["DAMAGER"] = true}, false},
-                        {"role", {["TANK"] = false, ["HEALER"] = false, ["DAMAGER"] = true}, false},
-                        {"role", {["TANK"] = false, ["HEALER"] = false, ["DAMAGER"] = true}, false},
-                        ["active"] = 1,
-                    }
-                    t["layout"]["filter"] = nil
-                end
-            end
-        end
-    end
-
     -- r209-release
     if CellDB["revise"] and dbRevision < 209 then
         -- add change-over-time to custom Color indicator
@@ -2505,35 +1987,6 @@ function F.Revise()
     if CellDB["revise"] and dbRevision < 210 then
         if not CellDB["debuffTypeColor"]["Bleed"] then
             CellDB["debuffTypeColor"]["Bleed"] = {r=1, g=0.2, b=0.6}
-        end
-    end
-
-    -- r213-release
-    if CellDB["revise"] and dbRevision < 213 then
-        if Cell.isRetail then
-            for spec, t in pairs(CellDB["quickAssist"]) do
-                if not t["filters"] then
-                    t["filters"] = t["layout"]["filters"]
-                    t["filters"]["active"] = nil
-                    t["filters"][6] = F.Copy(t["filters"][5])
-                    t["filters"][7] = F.Copy(t["filters"][5])
-                    t["layout"]["filters"] = nil
-                end
-                if not t["filterAutoSwitch"] then
-                    t["filterAutoSwitch"] = {
-                        ["party"] = 1,
-                        ["raid"] = 1,
-                        ["mythic"] = 1,
-                        ["arena"] = 1,
-                        ["battleground"] = 1,
-                    }
-                end
-                for _, ft in pairs(t["filters"]) do
-                    if ft[1] == "name" then
-                        ft[3] = false
-                    end
-                end
-            end
         end
     end
 
@@ -2583,25 +2036,6 @@ function F.Revise()
                     if i.showDuration == 0 then
                         i.showDuration = true
                     end
-                end
-            end
-        end
-
-        if Cell.isRetail then
-            for spec, t in pairs(CellDB["quickAssist"]) do
-                -- update showDuration
-                if t["spells"]["mine"]["icon"]["showDuration"] == 0 then
-                    t["spells"]["mine"]["icon"]["showDuration"] = true
-                end
-                if t["spells"]["offensives"]["icon"]["showDuration"] == 0 then
-                    t["spells"]["offensives"]["icon"]["showDuration"] = true
-                end
-                -- add showAnimation
-                if type(t["spells"]["mine"]["icon"]["showAnimation"]) ~= "boolean" then
-                    t["spells"]["mine"]["icon"]["showAnimation"] = true
-                end
-                if type(t["spells"]["offensives"]["icon"]["showAnimation"]) ~= "boolean" then
-                    t["spells"]["offensives"]["icon"]["showAnimation"] = true
                 end
             end
         end
@@ -2668,18 +2102,6 @@ function F.Revise()
                         tinsert(i.colors[3], 1, true)
                     end
                 end
-            end
-        end
-
-        -- update layoutAutoSwitch
-        if Cell.isRetail then
-            if not CellDB["layoutAutoSwitch"]["role"] then
-                CellDB["layoutAutoSwitch"]["role"] = {
-                    ["TANK"] = CellDB["layoutAutoSwitch"]["TANK"],
-                    ["HEALER"] = CellDB["layoutAutoSwitch"]["HEALER"],
-                    ["DAMAGER"] = CellDB["layoutAutoSwitch"]["DAMAGER"],
-                }
-                F.RemoveElementsExceptKeys(CellDB["layoutAutoSwitch"], "role", Cell.vars.playerClass)
             end
         end
     end
@@ -2855,31 +2277,6 @@ function F.Revise()
         F.DisableSnippets()
     end
 
-    -- r227-release
-    if CellDB["revise"] and dbRevision < 227 then
-        if Cell.isRetail then
-            -- QuickAssist: separate "Shadow" from "Outline"
-            local function FixShadow(t)
-                if type(t[4]) ~= "boolean" then
-                    if string.find(t[3], "^Shadow") then
-                        t[3] = "None"
-                        tinsert(t, 4, true)
-                    else
-                        tinsert(t, 4, false)
-                    end
-                end
-            end
-
-            for _, t in pairs(CellDB["quickAssist"]) do
-                FixShadow(t.style.name.font)
-                FixShadow(t.spells.mine.icon.font[1])
-                FixShadow(t.spells.mine.icon.font[2])
-                FixShadow(t.spells.offensives.icon.font[1])
-                FixShadow(t.spells.offensives.icon.font[2])
-            end
-        end
-    end
-
     -- r228-release
     if CellDB["revise"] and dbRevision < 228 then
         if type(CellDB["appearance"]["overshieldReverseFill"]) ~= "boolean" then
@@ -2937,15 +2334,6 @@ function F.Revise()
                 end
             end
         end
-
-        -- add "solo" for layout auto switch
-        if Cell.isRetail then
-            for role, t in pairs(CellDB["layoutAutoSwitch"]) do
-                for _, st in pairs(t) do
-                    if not st.solo then st.solo = st.party end
-                end
-            end
-        end
     end
 
     if CellCharacterDB and CellCharacterDB["revise"] and charaDbRevision < 229 then
@@ -2994,25 +2382,11 @@ function F.Revise()
         end
 
         -- click-castings macro -> macrotext
-        if Cell.isRetail then
-            for _, classT in pairs(CellDB["clickCastings"]) do
-                for k, t in pairs(classT) do
-                    if type(k) == "number" or k == "common" then
-                        for _, binding in pairs(t) do
-                            if binding[2] == "macro" and binding[3] and strfind(strtrim(binding[3]), "^[/#]") then
-                                binding[2] = "custom"
-                            end
-                        end
-                    end
-                end
-            end
-        else
-            for _, t in pairs(CellCharacterDB["clickCastings"]) do
-                if type(k) == "number" or k == "common" then
-                    for _, binding in pairs(t) do
-                        if binding[2] == "macro" and binding[3] and strfind(strtrim(binding[3]), "^[/#]") then
-                            binding[2] = "custom"
-                        end
+        for _, t in pairs(CellCharacterDB["clickCastings"]) do
+            if type(k) == "number" or k == "common" then
+                for _, binding in pairs(t) do
+                    if binding[2] == "macro" and binding[3] and strfind(strtrim(binding[3]), "^[/#]") then
+                        binding[2] = "custom"
                     end
                 end
             end
@@ -3154,40 +2528,6 @@ function F.Revise()
 
     -- r243-release
     if CellDB["revise"] and dbRevision < 243 then
-        if Cell.isRetail then
-            local spells = {
-                439506, -- 钻地冲击
-                429545, -- 噤声齿轮
-                424888, -- 震地猛击
-                463248, -- 排斥
-                321828, -- 拍手手
-                323057, -- 灵魂之箭
-                333479, -- 吐疫
-                454438, -- 艾泽里特炸药
-                272571, -- 窒息之水
-                257063, -- 盐渍飞弹
-                431491, -- 污邪斩击
-                451119, -- 深渊轰击
-                428711, -- 火成岩锤
-                459210, -- 暗影爪击
-                256709, -- 钢刃之歌
-                434786, -- 蛛网箭
-                451971, -- 熔岩之拳
-                451224, -- 暗影烈焰笼罩
-                451364, -- 残忍打击
-                451261, -- 大地之箭
-                449444, -- 熔火乱舞
-                450100, -- 碾碎
-                463217, -- 心能挥砍
-            }
-            for _, spell in pairs(spells) do
-                if not F.TContains(CellDB["targetedSpellsList"], spell) then
-                    tinsert(CellDB["targetedSpellsList"], spell)
-                end
-            end
-            Cell.vars.targetedSpellsList = F.ConvertTable(CellDB["targetedSpellsList"])
-        end
-
         for _, layout in pairs(CellDB["layouts"]) do
             for _, i in pairs(layout["indicators"]) do
                 if i.type == "text" then
@@ -3227,10 +2567,6 @@ function F.Revise()
                     end
                     tinsert(t.position, 2, relativeTo)
                 end
-            end
-
-            if Cell.isVanilla then
-                layout["powerFilters"] = F.Copy(Cell.defaults.layout.powerFilters)
             end
         end
 
@@ -3331,45 +2667,6 @@ function F.Revise()
         end
     end
 
-    -- 254-release
-    if CellDB["revise"] and dbRevision < 254 then
-        if Cell.isMists then
-            for _, layout in pairs(CellDB["layouts"]) do
-                for _, i in pairs(layout["indicators"]) do
-                    if i.indicatorName == "powerText" then
-                        -- reset powerText filter
-                        i.filters = F.Copy(Cell.defaults.layout.indicators[Cell.defaults.indicatorIndices.powerText].filters)
-                    end
-                end
-
-                -- reset power filters
-                layout["powerFilters"] = F.Copy(Cell.defaults.layout.powerFilters)
-            end
-
-            -- enable healAbsorb
-            CellDB["appearance"]["healAbsorb"][1] = true
-
-            -- reset layoutAutoSwitch
-            -- if not CellDB["layoutAutoSwitch"] then
-            --     CellDB["layoutAutoSwitch"] = {}
-            -- end
-            -- if not CellDB["layoutAutoSwitch"]["role"] then
-            --     CellDB["layoutAutoSwitch"]["role"] = {
-            --         ["TANK"] = F.Copy(Cell.defaults.layoutAutoSwitch),
-            --         ["HEALER"] = F.Copy(Cell.defaults.layoutAutoSwitch),
-            --         ["DAMAGER"] = F.Copy(Cell.defaults.layoutAutoSwitch),
-            --     }
-            -- end
-            -- if not CellDB["layoutAutoSwitch"][Cell.vars.playerClass] then
-            --     CellDB["layoutAutoSwitch"][Cell.vars.playerClass] = {}
-            -- end
-
-            if not next(CellDB["actions"]) then
-                CellDB["actions"] = I.GetDefaultActions()
-            end
-        end
-    end
-
     -- r262-release
     if CellDB["revise"] and dbRevision < 262 then
         CellDB["general"]["alwaysUpdateAuras"] = false
@@ -3389,35 +2686,7 @@ function F.Revise()
 
     -- r264-release
     if CellDB["revise"] and dbRevision < 264 then
-        if Cell.isRetail then
-            F.TInsertIfNotExists(CellDB["targetedSpellsList"], unpack(I.GetDefaultTargetedSpellsList()))
-        end
-
         CellDB["tools"]["buffTracker"][5] = U.GetBuffTrackerDefaults()
-    end
-
-    -- 269-release
-    if CellDB["revise"] and dbRevision < 269 then
-        if Cell.isMists and GetCVar("portal") == "CN" then
-            for _, layout in pairs(CellDB["layouts"]) do
-                for _, i in pairs(layout["indicators"]) do
-                    if i.indicatorName == "powerText" then
-                        -- reset powerText filter
-                        i.filters = F.Copy(Cell.defaults.layout.indicators[Cell.defaults.indicatorIndices.powerText].filters)
-                    end
-                end
-
-                -- reset power filters
-                layout["powerFilters"] = F.Copy(Cell.defaults.layout.powerFilters)
-            end
-
-            -- enable healAbsorb
-            CellDB["appearance"]["healAbsorb"][1] = true
-
-            if not next(CellDB["actions"]) then
-                CellDB["actions"] = I.GetDefaultActions()
-            end
-        end
     end
 
     -- ----------------------------------------------------------------------- --
@@ -3560,7 +2829,10 @@ function F.Revise()
                 end
             elseif type(v) == "table" then
                 if v[1] ~= nil then
-                    if #t[k] ~= #v then
+                    --! WotLK fix: "different length -> take the default" also hit
+                    --! healthThresholds.thresholds, whose length the USER controls
+                    --! via the UI - the second threshold was wiped on every login.
+                    if k ~= "thresholds" and #t[k] ~= #v then
                         t[k] = F.Copy(v)
                     end
                 else

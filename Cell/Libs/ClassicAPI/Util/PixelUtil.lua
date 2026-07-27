@@ -1,8 +1,12 @@
---! Cell: this is a private, trimmed fork of Tsoukie's ClassicAPI.
---! If the standalone !!!ClassicAPI addon is installed (Gladdy requires it), it
---! loads first and owns these globals. Overwriting them with this older subset
---! mixes two incompatible halves of the same library, so bail out instead.
-if IsAddOnLoaded and IsAddOnLoaded("!!!ClassicAPI") then return end
+--! Cell: private, trimmed fork of Tsoukie's ClassicAPI.
+--! Coexistence rules live in Util/Coexist.lua: never bail out, never overwrite a
+--! global somebody else owns, keep our own copy in CellClassicAPI.
+--! Neither PixelUtil nor GetPhysicalScreenSize is native to 3.3.5a (milkyway-codex),
+--! so both are built unconditionally: the globals are only gap-filled, while Cell
+--! reads CellClassicAPI.PixelUtil / CellClassicAPI.GetPhysicalScreenSize, whose
+--! pixel math is the fixed one (a foreign version may return UI units instead of
+--! physical pixels and collapse every pixel-perfect calculation to scale 1).
+local _, Private = ...
 
 local match = string.match
 local tonumber = tonumber
@@ -12,10 +16,33 @@ local GetScreenHeight = GetScreenHeight
 
 local PixelUtil = {};
 
+--! WotLK fix: was 'return GetScreenWidth(), GetScreenHeight()' - those return UI UNITS
+--! (height is always ~768 regardless of resolution), so P.GetPixelPerfectScale() was
+--! always 1 and all pixel-perfect math degenerated to identity. Real physical pixels
+--! come from the gxResolution CVar (ElvUI-WotLK technique, Core/Core.lua:65), then from
+--! the resolution list, and only then degrade to UI units as a last resort.
+local function GetPhysicalScreenSize()
+	local resolution = GetCVar and GetCVar("gxResolution")
+	if resolution then
+		local w, h = match(resolution, "(%d+)x(%d+)")
+		if w and h then
+			return tonumber(w), tonumber(h)
+		end
+	end
+	local index = GetCurrentResolution and GetCurrentResolution()
+	if index and index > 0 then
+		local w, h = match((({GetScreenResolutions()})[index] or ""), "(%d+).-(%d+)")
+		if w and h then
+			return tonumber(w), tonumber(h)
+		end
+	end
+	return GetScreenWidth(), GetScreenHeight()
+end
+
 --! WotLK fix: was reading GetScreenResolutions()[GetCurrentResolution()] directly and
 --! crashed with '768.0 / nil' whenever the lookup failed (GetCurrentResolution can
---! return 0/nil in windowed mode). Route through GetPhysicalScreenSize (defined below
---! in this file), which has safe fallbacks, and guard the division.
+--! return 0/nil in windowed mode). Call OUR GetPhysicalScreenSize (the local above,
+--! never the possibly foreign global) and guard the division.
 function PixelUtil.GetPixelToUIUnitFactor()
     local _, physicalHeight = GetPhysicalScreenSize();
     if physicalHeight and physicalHeight > 0 then
@@ -83,30 +110,5 @@ function PixelUtil.SetStatusBarValue(statusBar, value)
     end
 end
 
---! WotLK fix: was 'return GetScreenWidth(), GetScreenHeight()' - those return UI UNITS
---! (height is always ~768 regardless of resolution), so P.GetPixelPerfectScale() was
---! always 1 and all pixel-perfect math degenerated to identity. It also shadowed the
---! correct gxResolution-based polyfill in Polyfills.lua ('if not GetPhysicalScreenSize'
---! there never passes - ClassicAPI loads first per Cell.toc). Real physical pixels come
---! from the gxResolution CVar (ElvUI-WotLK technique, Core/Core.lua:65), then from the
---! resolution list, and only then degrade to UI units as a last resort.
-function GetPhysicalScreenSize()
-	local resolution = GetCVar and GetCVar("gxResolution")
-	if resolution then
-		local w, h = match(resolution, "(%d+)x(%d+)")
-		if w and h then
-			return tonumber(w), tonumber(h)
-		end
-	end
-	local index = GetCurrentResolution and GetCurrentResolution()
-	if index and index > 0 then
-		local w, h = match((({GetScreenResolutions()})[index] or ""), "(%d+).-(%d+)")
-		if w and h then
-			return tonumber(w), tonumber(h)
-		end
-	end
-	return GetScreenWidth(), GetScreenHeight()
-end
-
--- Global
-_G.PixelUtil = PixelUtil
+Private.Provide("GetPhysicalScreenSize", GetPhysicalScreenSize)
+Private.Merge("PixelUtil", PixelUtil)

@@ -200,18 +200,7 @@ function F.ShowPowerFilters(l, lt)
         vehicleF:Load()
         npcF:Load()
 
-        if Cell.isRetail or Cell.isMists or Cell.isCata or Cell.isWrath then
-            dkF:Load()
-        end
-
-        if Cell.isRetail or Cell.isMists then
-            monkF:Load()
-        end
-
-        if Cell.isRetail then
-            dhF:Load()
-            evokerF:Load()
-        end
+        dkF:Load()
     end
 end
 

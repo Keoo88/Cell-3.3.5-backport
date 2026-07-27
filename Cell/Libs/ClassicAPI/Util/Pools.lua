@@ -1,15 +1,27 @@
---! Cell: this is a private, trimmed fork of Tsoukie's ClassicAPI.
---! If the standalone !!!ClassicAPI addon is installed (Gladdy requires it), it
---! loads first and owns these globals. Overwriting them with this older subset
---! mixes two incompatible halves of the same library, so bail out instead.
-if IsAddOnLoaded and IsAddOnLoaded("!!!ClassicAPI") then return end
+--! Cell: private, trimmed fork of Tsoukie's ClassicAPI.
+--! Coexistence rules live in Util/Coexist.lua: never bail out of a file, never
+--! overwrite a global somebody else owns (gap-fill only), keep our own copy in the
+--! private CellClassicAPI namespace. Names published here are not native to 3.3.5a
+--! (verified against milkyway-codex).
+
+local _, Private = ...
+
+-- Forward-declared as locals: the definitions below fill these locals, not globals.
+-- Publishing happens at the bottom through Private.Provide / Private.Merge, which
+-- only write a global when nobody else owns that name.
+local CreateObjectPool, FramePool_Hide, FramePool_HideAndClearAnchors, CreateFramePool,
+      CreateTexturePool, CreateMaskPool, CreateFontStringPool, ActorPool_HideAndClearModel,
+      CreateActorPool, CreateFramePoolCollection, CreateFixedSizeFramePoolCollection,
+      CreateFontStringPoolCollection, TexturePool_Hide, TexturePool_HideAndClearAnchors,
+      MaskPool_Hide, MaskPool_HideAndClearAnchors, FontStringPool_Hide,
+      FontStringPool_HideAndClearAnchors, ActorPool_Hide
 
 if ObjectPoolMixin then return end
 
 local next = next
 local tostring = tostring
 local type = type
-local CreateFromMixins = CreateFromMixins
+local CreateFromMixins = Private.Own.CreateFromMixins or CreateFromMixins
 
 local ObjectPoolMixin = {};
 
@@ -413,12 +425,33 @@ function FontStringPoolCollectionMixin:Acquire(fontStringTemplate, parent, layer
 end
 
 -- Global
-_G.ObjectPoolMixin = ObjectPoolMixin
-_G.FramePoolMixin = FramePoolMixin
-_G.TexturePoolMixin = TexturePoolMixin
-_G.MaskPoolMixin = MaskPoolMixin
-_G.FontStringPoolMixin = FontStringPoolMixin
-_G.ActorPoolMixin = ActorPoolMixin
-_G.FramePoolCollectionMixin = FramePoolCollectionMixin
-_G.FixedSizeFramePoolCollectionMixin = FixedSizeFramePoolCollectionMixin
-_G.FontStringPoolCollectionMixin = FontStringPoolCollectionMixin
+Private.Merge("ObjectPoolMixin", ObjectPoolMixin)
+Private.Merge("FramePoolMixin", FramePoolMixin)
+Private.Merge("TexturePoolMixin", TexturePoolMixin)
+Private.Merge("MaskPoolMixin", MaskPoolMixin)
+Private.Merge("FontStringPoolMixin", FontStringPoolMixin)
+Private.Merge("ActorPoolMixin", ActorPoolMixin)
+Private.Merge("FramePoolCollectionMixin", FramePoolCollectionMixin)
+Private.Merge("FixedSizeFramePoolCollectionMixin", FixedSizeFramePoolCollectionMixin)
+Private.Merge("FontStringPoolCollectionMixin", FontStringPoolCollectionMixin)
+
+-- Publish: gap-fill only, ours stays reachable via CellClassicAPI.<name>
+Private.Provide("CreateObjectPool", CreateObjectPool)
+Private.Provide("FramePool_Hide", FramePool_Hide)
+Private.Provide("FramePool_HideAndClearAnchors", FramePool_HideAndClearAnchors)
+Private.Provide("CreateFramePool", CreateFramePool)
+Private.Provide("CreateTexturePool", CreateTexturePool)
+Private.Provide("CreateMaskPool", CreateMaskPool)
+Private.Provide("CreateFontStringPool", CreateFontStringPool)
+Private.Provide("ActorPool_HideAndClearModel", ActorPool_HideAndClearModel)
+Private.Provide("CreateActorPool", CreateActorPool)
+Private.Provide("CreateFramePoolCollection", CreateFramePoolCollection)
+Private.Provide("CreateFixedSizeFramePoolCollection", CreateFixedSizeFramePoolCollection)
+Private.Provide("CreateFontStringPoolCollection", CreateFontStringPoolCollection)
+Private.Provide("TexturePool_Hide", TexturePool_Hide)
+Private.Provide("TexturePool_HideAndClearAnchors", TexturePool_HideAndClearAnchors)
+Private.Provide("MaskPool_Hide", MaskPool_Hide)
+Private.Provide("MaskPool_HideAndClearAnchors", MaskPool_HideAndClearAnchors)
+Private.Provide("FontStringPool_Hide", FontStringPool_Hide)
+Private.Provide("FontStringPool_HideAndClearAnchors", FontStringPool_HideAndClearAnchors)
+Private.Provide("ActorPool_Hide", ActorPool_Hide)

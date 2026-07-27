@@ -1,10 +1,16 @@
---! Cell: this is a private, trimmed fork of Tsoukie's ClassicAPI.
---! If the standalone !!!ClassicAPI addon is installed (Gladdy requires it), it
---! loads first and owns these globals. Overwriting them with this older subset
---! mixes two incompatible halves of the same library, so bail out instead.
-if IsAddOnLoaded and IsAddOnLoaded("!!!ClassicAPI") then return end
+--! Cell: private, trimmed fork of Tsoukie's ClassicAPI.
+--! Coexistence rules live in Util/Coexist.lua: never bail out of a file, never
+--! overwrite a global somebody else owns (gap-fill only), keep our own copy in the
+--! private CellClassicAPI namespace. Names published here are not native to 3.3.5a
+--! (verified against milkyway-codex).
 
 local _, Private = ...
+
+-- Forward-declared as locals: the definitions below fill these locals, not globals.
+-- Publishing happens at the bottom through Private.Provide / Private.Merge, which
+-- only write a global when nobody else owns that name.
+local C_UnitInRange, UnitDistanceSquared, UnitIsTapDenied, C_UnitCastingInfo, C_UnitChannelInfo,
+      C_UnitRace, UnitFullName, C_UnitGroupRolesAssigned
 
 local _G = _G
 local UnitName = UnitName
@@ -113,9 +119,9 @@ function C_UnitGroupRolesAssigned(Unit)
 	end
 end
 
-_G.UnitShouldDisplayName = Private.True
-_G.UnitPhaseReason = Private.Void
-_G.UnitInPhase = Private.True
+Private.Provide("UnitShouldDisplayName", Private.True)
+Private.Provide("UnitPhaseReason", Private.Void)
+Private.Provide("UnitInPhase", Private.True)
 
 --[[ EventHandler: PLAYER_ROLES_ASSIGNED ]]
 
@@ -176,3 +182,13 @@ EventHandler_Define("OnEvent", "UNIT_CONNECTION", UNIT_CONNECTION_EH)
 EventHandler_Define("OnRegister", "UNIT_CONNECTION", UNIT_CONNECTION_EH)
 EventHandler_Define("OnUnregister", "UNIT_CONNECTION", UNIT_CONNECTION_EH)
 ]]
+
+-- Publish: gap-fill only, ours stays reachable via CellClassicAPI.<name>
+Private.Provide("C_UnitInRange", C_UnitInRange)
+Private.Provide("UnitDistanceSquared", UnitDistanceSquared)
+Private.Provide("UnitIsTapDenied", UnitIsTapDenied)
+Private.Provide("C_UnitCastingInfo", C_UnitCastingInfo)
+Private.Provide("C_UnitChannelInfo", C_UnitChannelInfo)
+Private.Provide("C_UnitRace", C_UnitRace)
+Private.Provide("UnitFullName", UnitFullName)
+Private.Provide("C_UnitGroupRolesAssigned", C_UnitGroupRolesAssigned)

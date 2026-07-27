@@ -4184,7 +4184,10 @@ local function CreateAuraButtons(parent, auraButtons, auraTable, noUpDownButtons
 
             CellSpellTooltip:SetOwner(popup, "ANCHOR_NONE")
             CellSpellTooltip:SetPoint("TOPLEFT", popup, "BOTTOMLEFT", 0, -1)
-            CellSpellTooltip:SetSpellByID(spellId, tex)
+            --! WotLK fix: on 3.3.5 slot 2 of SetSpellByID is isPet, not a texture.
+            --! A non-empty path there is truthy and sends the lookup to the pet book.
+            CellSpellTooltip:SetSpellIcon(tex)
+            CellSpellTooltip:SetSpellByID(spellId)
             CellSpellTooltip:Show()
         end)
 
@@ -4341,7 +4344,10 @@ local function CreateAuraButtons(parent, auraButtons, auraTable, noUpDownButtons
 
                 CellSpellTooltip:SetOwner(auraButtons[i], "ANCHOR_NONE")
                 CellSpellTooltip:SetPoint("TOPRIGHT", auraButtons[i], "TOPLEFT", -1, 0)
-                CellSpellTooltip:SetSpellByID(self.spellId, self.spellTex)
+                --! WotLK fix: on 3.3.5 slot 2 of SetSpellByID is isPet, not a texture.
+                --! A non-empty path there is truthy and sends the lookup to the pet book.
+                CellSpellTooltip:SetSpellIcon(self.spellTex)
+                CellSpellTooltip:SetSpellByID(self.spellId)
                 CellSpellTooltip:Show()
             end)
             auraButtons[i]:HookScript("OnLeave", function()
@@ -6718,7 +6724,19 @@ end
 
 local function CreateClassFilter(parent, class)
     local filter = Cell.CreateButton(parent, class, "accent-hover", {120, 20})
-    filter:SetTexture("classicon-"..strlower(class), {16, 16}, {"LEFT", 2, 0}, true, true)
+    --! WotLK fix: classicon-* atlases do not exist on 3.3.5, and the SetAtlas
+    --! polyfill silently does nothing for an unknown atlas, so every filter button
+    --! stayed blank. Use the class icon sheet + CLASS_ICON_TCOORDS from FrameXML.
+    --! Only for real classes: VEHICLE/PET/NPC have no entry in CLASS_ICON_TCOORDS,
+    --! and setting the sheet without cropping would squeeze all ten class icons
+    --! into one 16x16 button.
+    if CLASS_ICON_TCOORDS[class] then
+        filter:SetTexture("Interface\\Glues\\CharacterCreate\\UI-CharacterCreate-Classes",
+                          {16, 16}, {"LEFT", 2, 0}, false, true)
+        if filter.tex then
+            filter.tex:SetTexCoord(unpack(CLASS_ICON_TCOORDS[class]))
+        end
+    end
 
 
     if class == "VEHICLE" or class == "PET" or class == "NPC" then

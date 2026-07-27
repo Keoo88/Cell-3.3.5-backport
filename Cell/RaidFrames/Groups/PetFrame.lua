@@ -66,11 +66,12 @@ local function UpdateAnchor()
     local show
     local layoutPet = Cell.vars.currentLayoutTable["pet"]
 
-    --! WotLK fix: the solo case was missing, so with "Show Solo Pet" + Detached
-    --! the separate frame appeared with no mover and no menu button at all.
+    --! The detached pet frame is a GROUP-ONLY feature (as upstream): "Detached"
+    --! belongs to "Show Party/Arena Pets". A solo player's pet is rendered by
+    --! SoloFrame.lua next to the player button ("Show Solo Pet"), so there is no
+    --! solo clause here - see PetFrame_UpdateLayout for the full reasoning.
     if layoutPet["raidEnabled"]
-       or (layoutPet["partyEnabled"] and layoutPet["partyDetached"])
-       or (layoutPet["soloEnabled"] and layoutPet["partyDetached"]) then
+       or (layoutPet["partyEnabled"] and layoutPet["partyDetached"]) then
         --! WotLK fix: the button array used to be filled exactly once at load,
         --! when the secure header has usually not created its children yet. When
         --! that happened the array stayed empty forever, pinning show to false,
@@ -136,15 +137,9 @@ header:SetAttribute("columnAnchorPoint", "LEFT")
 header:SetAttribute("unitsPerColumn", 5)
 header:SetAttribute("showPlayer", true) -- show player pet while not in a raid
 
-if Cell.isRetail then
-    header:SetAttribute("maxColumns", 4)
-    --! make needButtons == 20
-    header:SetAttribute("startingIndex", -19)
-else
-    header:SetAttribute("maxColumns", 5)
-    --! make needButtons == 25
-    header:SetAttribute("startingIndex", -24)
-end
+header:SetAttribute("maxColumns", 5)
+--! make needButtons == 25
+header:SetAttribute("startingIndex", -24)
 header:Show()
 header:SetAttribute("startingIndex", 1)
 
@@ -281,23 +276,18 @@ local function PetFrame_UpdateLayout(layout, which)
     --! SecureCmdOptionParse only knows "target=unit", so the old driver
     --! always evaluated "hide" and the detached pet frame NEVER showed
     --! anywhere (5-man pets came from the attached party-frame path).
-    --! Also: solo was hard-hidden by an early return, so the "Show Solo
-    --! Pet" (soloEnabled) option had no effect - include a [target=pet]
-    --! clause instead when it's on.
     if Cell.vars.isHidden then
         UnregisterAttributeDriver(petFrame, "state-visibility")
         petFrame:Hide()
         return
     end
-    --! WotLK fix: the solo clause must also respect "Detached". This driver is a
-    --! secure state-visibility driver, so it wins over any petFrame:Hide() done
-    --! from Lua - leaving it ungated made the separate pet frame pop back up on
-    --! the next state change even when the frame had just been hidden below.
-    local driver = "[target=raid1,exists] show;[target=party1,exists] show;"
-    if layout["pet"]["soloEnabled"] and layout["pet"]["partyDetached"] then
-        driver = driver .. "[target=pet,exists] show;"
-    end
-    RegisterAttributeDriver(petFrame, "state-visibility", driver .. "hide")
+    --! No solo clause on purpose: the driver is secure and wins over any
+    --! petFrame:Hide() done from Lua, so a "[target=pet,exists] show" clause put
+    --! the detached frame back on screen whenever the player was alone. With the
+    --! group checkboxes off there was nothing to fill it and pet buttons carry no
+    --! RegisterUnitWatch, which is where the reported empty panel while solo came
+    --! from. Group-only, same as upstream.
+    RegisterAttributeDriver(petFrame, "state-visibility", "[target=raid1,exists] show;[target=party1,exists] show;hide")
 
     if not which or strfind(which, "size$") or strfind(which, "power$") or which == "barOrientation" then
         local width, height, powerSize
@@ -412,24 +402,16 @@ local function PetFrame_UpdateLayout(layout, which)
     end
 
     if not which or which == "pet" then
-        if Cell.vars.groupType == "solo" and layout["pet"]["soloEnabled"] and layout["pet"]["partyDetached"] then
-            --! WotLK fix: solo was unconditionally hidden (fell into the else
-            --! branch), so the "Show Solo Pet" (soloEnabled) checkbox did
-            --! nothing. Native 3.3.5 GetGroupHeaderType supports type "SOLO"
-            --! via the showSolo attribute (implies showPlayer -> shows "pet"),
-            --! so the player's own pet displays without any group.
-            --! "partyDetached" is required as well: it is the single "show pets in
-            --! a separate frame" switch, and the party branch below already honours
-            --! it. Without it a solo player got the detached frame on top of the
-            --! attached pet button that SoloFrame.lua already shows for
-            --! soloEnabled, so turning Detached off changed nothing while solo.
-            --! When it is off the pet is not lost - SoloFrame renders it next to
-            --! the player button.
-            header:SetAttribute("showSolo", true)
-            header:SetAttribute("showParty", false)
-            header:SetAttribute("showRaid", false)
-            petFrame:Show()
-        elseif Cell.vars.groupType == "party" and layout["pet"]["partyEnabled"] and layout["pet"]["partyDetached"] then
+        --! There is deliberately no solo branch (upstream has none either).
+        --! "Show Solo Pet" (soloEnabled) is owned by SoloFrame.lua:101, which
+        --! anchors the pet button to the player button under a
+        --! "[nopet] hide; [vehicleui] hide; show" driver. Driving the detached
+        --! header with showSolo=true here duplicated that, and because
+        --! "Detached" stays checked in the DB while its checkbox is disabled
+        --! (Layouts.lua:2786 only enables it when "Show Party/Arena Pets" is on),
+        --! a solo player ended up with an empty detached frame that could not be
+        --! turned off from the options at all - the bug reported on 2026-07-26.
+        if Cell.vars.groupType == "party" and layout["pet"]["partyEnabled"] and layout["pet"]["partyDetached"] then
             --! WotLK fix: on 3.3.5 an arena team is a PARTY (party1-4/partypet1-4),
             --! never a raid. The retail/Cata branch set showRaid=true here, but
             --! native GetGroupHeaderType (SecureTemplates.lua) requires

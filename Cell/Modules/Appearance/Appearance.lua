@@ -574,6 +574,11 @@ local function CheckTextures()
         -- make default texture first
         F.TRemove(textureNames, defaultTextureName)
         tinsert(textureNames, 1, defaultTextureName)
+        --! WotLK fix: this backport runs LSM in fetch-only mode (F.RegisterWithLSM in
+        --! Utils.lua is a no-op), so LSM's hash table has no entry for "Cell DEFAULT"
+        --! and the first item had a nil preview texture. Patch the path in by hand,
+        --! exactly like F.GetFontItems already does for the default font.
+        textures[defaultTextureName] = defaultTexture
 
         for _, name in pairs(textureNames) do
             tinsert(items, {
@@ -1840,28 +1845,21 @@ local function UpdateAppearance(which)
 
     -- scale
     if not which or which == "scale" then
+        --! WotLK fix: every frame below is a descendant of CellParent (mainFrame ->
+        --! optionsFrame/raidRosterFrame, CellParent -> changelogs/codeSnippets/colorPicker)
+        --! and SetScale is multiplicative with the parent's scale, so scaling them again
+        --! produced scale^2: 1.5 drew them at 2.25x, 0.5 at 0.25x. Scale CellParent only.
         CellParent:SetScale(CellDB["appearance"]["scale"])
 
-        if Cell.frames.optionsFrame then
-            Cell.frames.optionsFrame:SetScale(CellDB["appearance"]["scale"])
-        end
-
-        if Cell.frames.raidRosterFrame then
-            Cell.frames.raidRosterFrame:SetScale(CellDB["appearance"]["scale"])
-        end
-
         if Cell.frames.changelogsFrame then
-            Cell.frames.changelogsFrame:SetScale(CellDB["appearance"]["scale"])
             Cell.frames.changelogsFrame:UpdatePixelPerfect()
         end
 
         if Cell.frames.codeSnippetsFrame then
-            Cell.frames.codeSnippetsFrame:SetScale(CellDB["appearance"]["scale"])
             Cell.frames.codeSnippetsFrame:UpdatePixelPerfect()
         end
 
         if CellColorPicker then
-            CellColorPicker:SetScale(CellDB["appearance"]["scale"])
             CellColorPicker:UpdatePixelPerfect()
         end
 

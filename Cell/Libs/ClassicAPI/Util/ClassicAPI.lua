@@ -1,8 +1,8 @@
---! Cell: this is a private, trimmed fork of Tsoukie's ClassicAPI.
---! If the standalone !!!ClassicAPI addon is installed (Gladdy requires it), it
---! loads first and owns these globals. Overwriting them with this older subset
---! mixes two incompatible halves of the same library, so bail out instead.
-if IsAddOnLoaded and IsAddOnLoaded("!!!ClassicAPI") then return end
+--! Cell: private, trimmed fork of Tsoukie's ClassicAPI.
+--! Coexistence rules live in Util/Coexist.lua: never bail out of a file, never
+--! overwrite a global somebody else owns (gap-fill only), keep our own copy in the
+--! private CellClassicAPI namespace. Names published here are not native to 3.3.5a
+--! (verified against milkyway-codex).
 
 local _, Private = ...
 
@@ -10,7 +10,7 @@ local _, Private = ...
 Private.TEXTURE_PATH = "Interface\\AddOns\\Cell\\Libs\\ClassicAPI\\Texture\\"
 
 -- Scan Tooltip
-local Tooltip = CreateFrame("GameTooltip", "CAPI_ScanTooltip")
+local Tooltip = CreateFrame("GameTooltip", "CellCAPI_ScanTooltip") -- own name: a foreign ClassicAPI owns CAPI_ScanTooltip
 Tooltip:SetOwner(WorldFrame, "ANCHOR_NONE")
 Tooltip:AddFontStrings(Tooltip:CreateFontString("$parentTextLeft1", nil, "GameTooltipText"), Tooltip:CreateFontString("$parentTextRight1", nil, "GameTooltipText"))
 Private.Tooltip = Tooltip

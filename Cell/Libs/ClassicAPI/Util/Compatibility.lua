@@ -1,10 +1,10 @@
---! Cell: this is a private, trimmed fork of Tsoukie's ClassicAPI.
---! If the standalone !!!ClassicAPI addon is installed (Gladdy requires it), it
---! loads first and owns these globals. Overwriting them with this older subset
---! mixes two incompatible halves of the same library, so bail out instead.
-if IsAddOnLoaded and IsAddOnLoaded("!!!ClassicAPI") then return end
+--! Cell: private, trimmed fork of Tsoukie's ClassicAPI.
+--! Coexistence rules live in Util/Coexist.lua: never bail out of a file, never
+--! overwrite a global somebody else owns (gap-fill only), keep our own copy in the
+--! private CellClassicAPI namespace. Names published here are not native to 3.3.5a
+--! (verified against milkyway-codex).
 
-local AddonName = ...
+local AddonName, Private = ...
 
 local _G = _G
 local Type = type
@@ -211,9 +211,25 @@ local function Initialize()
 	end
 end
 
+--! WotLK fix (coexistence): everything above is a generic engine and stays defined,
+--! but the registrations below must run only once per session. The standalone
+--! !!!ClassicAPI ships the same engine with the same list, and two engines snapshot
+--! and restore the same globals twice - that is exactly how SOUNDKIT got wiped once
+--! (Register snapshots the CURRENT value, and a stale snapshot is restored later).
+--! So when a foreign ClassicAPI owns this job, we register nothing.
+if ( Private.Own.__meta.standalone ) then return end
+
 Register("Details", MODE_RESTORE_GLOBALS, nil, "IsInGroup", "IsInRaid", "GetNumGroupMembers")
 Register("WeakAuras", MODE_RESTORE_GLOBALS, "<5.21.3", "IsInGroup", "IsInRaid", "GetNumGroupMembers")
-Register("aux-addon", MODE_RESTORE_GLOBALS, nil, "C_Container", "SOUNDKIT")
+--! WotLK fix: SOUNDKIT removed from the restore list. Register() snapshots the
+--! CURRENT value (`Config[Object] = _G[Object]`, line 163) at ClassicAPI load time,
+--! and on 3.3.5 SOUNDKIT does not exist yet at that point - Cell creates it later in
+--! Polyfills.lua (loaded after Libs\ClassicAPI\Load.xml, see Cell.toc). So the
+--! snapshot was nil, and restoring it when aux-addon loaded wiped SOUNDKIT for good:
+--! every button/checkbox PostClick then called PlaySound(nil) -> "Usage: PlaySound".
+--! Unlike C_Container, SOUNDKIT here is Cell's own table, not a Blizzard global that
+--! aux-addon could clobber, so there is nothing to restore.
+Register("aux-addon", MODE_RESTORE_GLOBALS, nil, "C_Container")
 
 Register("TrinketCDs", MODE_INTERCEPT_PRELOAD, nil, "AuraUtil")
 Register("AI_VoiceOver", MODE_INTERCEPT_PRELOAD, nil, "WOW_PROJECT_ID")

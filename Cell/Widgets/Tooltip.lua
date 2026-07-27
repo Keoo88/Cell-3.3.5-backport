@@ -27,21 +27,20 @@ local function CreateTooltip(name, hasIcon)
         icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
         icon:Hide()
 
-        hooksecurefunc(tooltip, "SetSpellByID", function(self, id, tex)
+        --! WotLK fix: the signature on 3.3.5 is SetSpellByID(id, isPet, showSubtext),
+        --! so a texture path passed in slot 2 is truthy and makes the client look the
+        --! spell up in the PET book. Set the icon through a separate method instead of
+        --! smuggling it through the tooltip call.
+        function tooltip:SetSpellIcon(tex)
             if tex then
                 iconBG:Show()
                 icon:SetTexture(tex)
                 icon:Show()
+            else
+                iconBG:Hide()
+                icon:Hide()
             end
-        end)
-    end
-
-    if Cell.isRetail then
-        tooltip:RegisterEvent("TOOLTIP_DATA_UPDATE")
-        tooltip:SetScript("OnEvent", function()
-            -- Interface\FrameXML\GameTooltip.lua line924
-            tooltip:RefreshData()
-        end)
+        end
     end
 
     tooltip:SetScript("OnTooltipCleared", function()

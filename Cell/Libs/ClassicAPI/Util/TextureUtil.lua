@@ -1,8 +1,19 @@
---! Cell: this is a private, trimmed fork of Tsoukie's ClassicAPI.
---! If the standalone !!!ClassicAPI addon is installed (Gladdy requires it), it
---! loads first and owns these globals. Overwriting them with this older subset
---! mixes two incompatible halves of the same library, so bail out instead.
-if IsAddOnLoaded and IsAddOnLoaded("!!!ClassicAPI") then return end
+--! Cell: private, trimmed fork of Tsoukie's ClassicAPI.
+--! Coexistence rules live in Util/Coexist.lua: never bail out of a file, never
+--! overwrite a global somebody else owns (gap-fill only), keep our own copy in the
+--! private CellClassicAPI namespace. Names published here are not native to 3.3.5a
+--! (verified against milkyway-codex).
+
+local _, Private = ...
+
+-- Forward-declared as locals: the definitions below now fill these locals, not
+-- globals. Publishing happens at the bottom of the file through Private.Provide,
+-- which only writes a global when nobody else owns that name.
+local GetTextureInfo, SetClampedTextureRotation, ClearClampedTextureRotation,
+      GetTexCoordsByGrid, GetTexCoordsForRole, CreateTextureMarkup, CreateAtlasMarkup,
+      CreateAtlasMarkupWithAtlasSize, SetupAtlasesOnRegions, GetFinalNameFromTextureKit,
+      SetupTextureKitOnFrame, SetupTextureKitOnFrames, SetupTextureKitOnRegions,
+      SetupTextureKitsFromRegionInfo
 
 function GetTextureInfo(obj)
     if obj:GetObjectType() == "Texture" then
@@ -256,5 +267,22 @@ function SetupTextureKitsFromRegionInfo(textureKit, frame, regionInfoList)
     end
 end
 
--- Global
-_G.TextureKitConstants = TextureKitConstants
+--! WotLK fix (coexistence): last direct global write in this library - the table
+--! may already belong to the standalone !!!ClassicAPI, so merge missing keys only.
+Private.Merge("TextureKitConstants", TextureKitConstants)
+
+-- Publish: gap-fill only, ours stays reachable via CellClassicAPI.<name>
+Private.Provide("GetTextureInfo", GetTextureInfo)
+Private.Provide("SetClampedTextureRotation", SetClampedTextureRotation)
+Private.Provide("ClearClampedTextureRotation", ClearClampedTextureRotation)
+Private.Provide("GetTexCoordsByGrid", GetTexCoordsByGrid)
+Private.Provide("GetTexCoordsForRole", GetTexCoordsForRole)
+Private.Provide("CreateTextureMarkup", CreateTextureMarkup)
+Private.Provide("CreateAtlasMarkup", CreateAtlasMarkup)
+Private.Provide("CreateAtlasMarkupWithAtlasSize", CreateAtlasMarkupWithAtlasSize)
+Private.Provide("SetupAtlasesOnRegions", SetupAtlasesOnRegions)
+Private.Provide("GetFinalNameFromTextureKit", GetFinalNameFromTextureKit)
+Private.Provide("SetupTextureKitOnFrame", SetupTextureKitOnFrame)
+Private.Provide("SetupTextureKitOnFrames", SetupTextureKitOnFrames)
+Private.Provide("SetupTextureKitOnRegions", SetupTextureKitOnRegions)
+Private.Provide("SetupTextureKitsFromRegionInfo", SetupTextureKitsFromRegionInfo)

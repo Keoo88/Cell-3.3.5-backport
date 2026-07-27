@@ -175,22 +175,13 @@ local function DoImport(noReload)
     end
 
     --! overwrite
-    if Cell.isRetail or Cell.isMists then
-        if not ignoredIndices["clickCastings"] then
-            CellDB["clickCastings"] = clickCastings
-        end
-        if not ignoredIndices["layouts"] then
-            CellDB["layoutAutoSwitch"] = layoutAutoSwitch
-        end
-    else
-        if not ignoredIndices["clickCastings"] then
-            CellCharacterDB["clickCastings"] = clickCastings
-        end
-        if not ignoredIndices["layouts"] then
-            CellCharacterDB["layoutAutoSwitch"] = layoutAutoSwitch
-        end
-        CellCharacterDB["revise"] = imported["revise"]
+    if not ignoredIndices["clickCastings"] then
+        CellCharacterDB["clickCastings"] = clickCastings
     end
+    if not ignoredIndices["layouts"] then
+        CellCharacterDB["layoutAutoSwitch"] = layoutAutoSwitch
+    end
+    CellCharacterDB["revise"] = imported["revise"]
 
     for k, v in pairs(imported) do
         CellDB[k] = v
@@ -451,7 +442,7 @@ local function CreateImportExportFrame()
                 version = tonumber(version)
 
                 if version and data then
-                    if version >= Cell.MIN_VERSION then --! WotLK fix: removed the "version <= Cell.versionNum" upper clamp (profile import used to accept only this exact build's strings)
+                    if version >= Cell.MIN_IMPORT_VERSION then --! WotLK fix: removed the "version <= Cell.versionNum" upper clamp (profile import used to accept only this exact build's strings); the floor is MIN_IMPORT_VERSION now, MIN_VERSION is the saved-DB floor used by Revise.lua
                         local success
                         data = LibDeflate:DecodeForPrint(data) -- decode
                         success, data = pcall(LibDeflate.DecompressDeflate, LibDeflate, data) -- decompress
@@ -580,7 +571,7 @@ function Cell.ImportProfile(profileString, profileName, ignoredIndicesExternal)
     version = tonumber(version)
 
     if version and data then
-        if version >= Cell.MIN_VERSION then --! WotLK fix: removed the "version <= Cell.versionNum" upper clamp (profile import used to accept only this exact build's strings)
+        if version >= Cell.MIN_IMPORT_VERSION then --! WotLK fix: removed the "version <= Cell.versionNum" upper clamp (profile import used to accept only this exact build's strings); the floor is MIN_IMPORT_VERSION now, MIN_VERSION is the saved-DB floor used by Revise.lua
             local success
             data = LibDeflate:DecodeForPrint(data) -- decode
             success, data = pcall(LibDeflate.DecompressDeflate, LibDeflate, data) -- decompress

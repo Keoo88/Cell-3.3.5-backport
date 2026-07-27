@@ -22,28 +22,13 @@ Cell.isCata = WOW_PROJECT_ID == WOW_PROJECT_CATACLYSM_CLASSIC
 Cell.isMists = WOW_PROJECT_ID == WOW_PROJECT_MISTS_CLASSIC
 Cell.isTWW = LE_EXPANSION_LEVEL_CURRENT == LE_EXPANSION_WAR_WITHIN
 
-if Cell.isRetail then
-    Cell.flavor = "retail"
-elseif Cell.isMists then
-    Cell.flavor = "mists"
-elseif Cell.isCata then
-    Cell.flavor = "cata"
-elseif Cell.isWrath then
-    Cell.flavor = "wrath"
-elseif Cell.isVanilla then
-    Cell.flavor = "vanilla"
-end
+Cell.flavor = "wrath"
 
 -------------------------------------------------
 -- class
 -------------------------------------------------
-local localizedClass
-if Cell.isRetail then
-    localizedClass = LocalizedClassList()
-else
-    localizedClass = {}
-    FillLocalizedClassList(localizedClass)
-end
+local localizedClass = {}
+FillLocalizedClassList(localizedClass)
 
 local sortedClasses = {}
 local classFileToID = {}
@@ -106,13 +91,6 @@ end
 -------------------------------------------------
 -- Classic
 -------------------------------------------------
-if Cell.isCata then
-    function F.GetActiveTalentInfo()
-        local which = GetActiveTalentGroup() == 1 and L["Primary Talents"] or L["Secondary Talents"]
-        return which, Cell.vars.playerSpecIcon, Cell.vars.playerSpecName
-    end
-
-elseif Cell.isWrath or Cell.isVanilla then
     function F.GetActiveTalentInfo()
         local which = GetActiveTalentGroup() == 1 and L["Primary Talents"] or L["Secondary Talents"]
 
@@ -132,7 +110,6 @@ elseif Cell.isWrath or Cell.isVanilla then
 
         return which, specIcon or 134400, specName or L["No Spec"]
     end
-end
 
 -- local specRoles = {
 --     ["DeathKnightBlood"] = "DAMAGER",
@@ -966,11 +943,6 @@ function F.IterateAllUnitButtons(func, updateCurrentGroupOnly, updateQuickAssist
         end
     end
 
-    if Cell.isRetail and updateQuickAssists then
-        for i = 1, 40 do
-            func(Cell.unitButtons.quickAssist[i])
-        end
-    end
 end
 
 function F.IterateSharedUnitButtons(func)
@@ -1074,14 +1046,16 @@ function F.UpdateTextWidth(fs, text, width, relativeTo)
     elseif width[1] == "percentage" then
         local percent = width[2] or 0.75
         local width = relativeTo:GetWidth() - 2
-        for i = string.utf8len(text), 0, -1 do
+        --! WotLK fix: strlenutf8 is native on 3.3.5; string.utf8len is a byte-by-byte
+        --! Lua loop from Libs/utf8.lua and this runs per name on every roster update.
+        for i = strlenutf8(text), 0, -1 do
             fs:SetText(string.utf8sub(text, 1, i))
             if fs:GetWidth() / width <= percent then
                 break
             end
         end
     elseif width[1] == "length" then
-        if string.len(text) == string.utf8len(text) then -- en
+        if string.len(text) == strlenutf8(text) then -- en
             fs:SetText(string.utf8sub(text, 1, width[2]))
         else -- non-en
             fs:SetText(string.utf8sub(text, 1, width[3]))
@@ -1180,7 +1154,10 @@ function F.GetClassColor(class)
         if CUSTOM_CLASS_COLORS and CUSTOM_CLASS_COLORS[token] then
             return CUSTOM_CLASS_COLORS[token].r, CUSTOM_CLASS_COLORS[token].g, CUSTOM_CLASS_COLORS[token].b
         else
-            return RAID_CLASS_COLORS[token]:GetRGB()
+            --! WotLK fix: :GetRGB() is a polyfilled ColorMixin method (no such method
+            --! on 3.3.5); the table itself already carries r/g/b natively.
+            local c = RAID_CLASS_COLORS[token]
+            return c.r, c.g, c.b
         end
     else
         return 1, 1, 1
@@ -1214,6 +1191,11 @@ function F.GetUnitClassColor(unit, class, guid)
 end
 
 
+--! WotLK fix: these were allocated fresh on every UNIT_POWER / UNIT_DISPLAYPOWER for
+--! every unit - and on 3.3.5 almost every unit is a mana user.
+local MANA_COLOR = {r=0, g=0.5, b=1} -- default mana color is too dark!
+local INSANITY_COLOR = {r=0.6, g=0.2, b=1}
+
 function F.GetPowerColor(unit)
     local r, g, b, t
     -- https://wow.gamepedia.com/API_UnitPowerType
@@ -1222,9 +1204,9 @@ function F.GetPowerColor(unit)
 
     local info = PowerBarColor[powerToken]
     if powerType == 0 then -- MANA
-        info = {r=0, g=0.5, b=1} -- default mana color is too dark!
+        info = MANA_COLOR
     elseif powerType == 13 then -- INSANITY
-        info = {r=0.6, g=0.2, b=1}
+        info = INSANITY_COLOR
     end
 
     if info then
@@ -1768,24 +1750,9 @@ function F.RotateTexture(texture, degrees)
     texture:SetTexCoord(ULx, ULy, LLx, LLy, URx, URy, LRx, LRy)
 end
 
--- wow atlases
-local wowAtlases = {
-    "playerpartyblip",
-    "Artifacts-PerkRing-WhiteGlow",
-    "AftLevelup-WhiteIconGlow",
-    "LootBanner-IconGlow",
-    "AftLevelup-WhiteStarBurst",
-    "ChallengeMode-WhiteSpikeyGlow",
-    "UI-QuestPoiCampaign-OuterGlow",
-    "vignettekill",
-    "PetJournal-FavoritesIcon",
-    "dungeonskull",
-    "questnormal",
-    "questturnin",
-    "bags-icon-addslots",
-    "communities-chat-icon-plus",
-    "communities-chat-icon-minus",
-}
+--! WotLK fix: no "wow atlases" list here - 3.3.5 has no atlas system; SetAtlas is a
+--! shim that silently no-ops for unregistered names, so all 15 retail atlases upstream
+--! offered rendered as empty tiles in the texture selector.
 
 -- wow textures
 local wowTextures = {
@@ -1821,14 +1788,9 @@ local powaTextures = {
 }
 
 function F.GetTextures()
-    local builtIns = #wowAtlases + #wowTextures + #shapes
+    local builtIns = #wowTextures + #shapes
 
     local t = {}
-
-    -- wow atlases
-    for _, wa in pairs(wowAtlases) do
-        tinsert(t, wa)
-    end
 
     -- wow textures
     for _, wt in pairs(wowTextures) do
@@ -1932,21 +1894,6 @@ function F.GetSpellTooltipInfo(spellId)
     return name, icon, table.concat(lines, "\n")
 end
 
-if Cell.isRetail or Cell.isMists then
-    local GetSpellInfo = C_Spell.GetSpellInfo
-    local GetSpellTexture = C_Spell.GetSpellTexture
-    function F.GetSpellInfo(spellId)
-        if not spellId then return end
-        local info = GetSpellInfo(spellId)
-        if not info then return end
-
-        if not info.iconID then -- when?
-            info.iconID = GetSpellTexture(spellId)
-        end
-
-        return info.name, info.iconID
-    end
-else
     local GetSpellInfo = GetSpellInfo
     function F.GetSpellInfo(spellId)
         if not spellId then return end
@@ -1955,7 +1902,6 @@ else
         local name, _, icon = GetSpellInfo(spellId)
         return name, icon, tonumber(rank)
     end
-end
 
 if Cell.isWrath or Cell.isVanilla then
     local GetSpellInfo = GetSpellInfo
@@ -2025,15 +1971,10 @@ if Cell.isWrath or Cell.isVanilla then
     end
 end
 
-if C_Spell.GetSpellCooldown then
-    local GetSpellCooldown = C_Spell.GetSpellCooldown
-    F.GetSpellCooldown = function(spellId)
-        local info = GetSpellCooldown(spellId)
-        if info then
-            return info.startTime, info.duration
-        end
-    end
-else
+--! WotLK fix: C_Spell.GetSpellCooldown is a ClassicAPI shim that wraps the native
+--! tuple into a throw-away table; call the native function directly.
+do
+    local GetSpellCooldown = GetSpellCooldown
     F.GetSpellCooldown = function(spellId)
         local start, duration = GetSpellCooldown(spellId)
         return start, duration
@@ -2070,7 +2011,9 @@ mc:SetScript("OnEvent", function()
         tinsert(macroIndices, i)
     end
     for i = 1, perChar do
-        tinsert(macroIndices, 120 + i)
+        --! WotLK fix: 120 is the retail MAX_ACCOUNT_MACROS; on 3.3.5 it is 36, and
+        --! Blizzard_MacroUI is load-on-demand, so the constant may not exist yet.
+        tinsert(macroIndices, (MAX_ACCOUNT_MACROS or 36) + i)
     end
 end)
 
@@ -2099,27 +2042,6 @@ function F.FindAuraById(unit, type, spellId)
     end
 end
 
-if Cell.isRetail then
-    function F.FindDebuffByIds(unit, spellIds)
-        local debuffs = {}
-        AuraUtil.ForEachAura(unit, "HARMFUL", nil, function(name, icon, count, debuffType, duration, expirationTime, source, isStealable, nameplateShowPersonal, spellId)
-            if spellIds[spellId] then
-                debuffs[spellId] = I.CheckDebuffType(debuffType, spellId)
-            end
-        end)
-        return debuffs
-    end
-
-    function F.FindAuraByDebuffTypes(unit, types)
-        local debuffs = {}
-        AuraUtil.ForEachAura(unit, "HARMFUL", nil, function(name, icon, count, debuffType, duration, expirationTime, source, isStealable, nameplateShowPersonal, spellId)
-            if types == "all" or types[debuffType] then
-                debuffs[spellId] = I.CheckDebuffType(debuffType, spellId)
-            end
-        end)
-        return debuffs
-    end
-else
     function F.FindDebuffByIds(unit, spellIds)
         local debuffs = {}
         for i = 1, 40 do
@@ -2153,7 +2075,6 @@ else
         end
         return debuffs
     end
-end
 
 -------------------------------------------------
 -- OmniCD
@@ -2253,7 +2174,9 @@ local UnitCanAssist = UnitCanAssist
 local UnitCanAttack = UnitCanAttack
 local UnitCanCooperate = UnitCanCooperate
 local IsSpellInRange = (C_Spell and C_Spell.IsSpellInRange) and C_Spell.IsSpellInRange or IsSpellInRange
-local IsItemInRange = (C_Spell and C_Item.IsItemInRange) and C_Item.IsItemInRange or IsItemInRange
+--! WotLK fix: the guard checked C_Spell while dereferencing C_Item - any load order
+--! where C_Spell exists but C_Item does not would error out the whole file.
+local IsItemInRange = (C_Item and C_Item.IsItemInRange) and C_Item.IsItemInRange or IsItemInRange
 local CheckInteractDistance = CheckInteractDistance
 local UnitIsDead = UnitIsDead
 -- upstream r273 switched to IsSpellKnown; on 3.3.5 IsSpellKnownOrOverridesKnown
@@ -2265,14 +2188,7 @@ local IsSpellKnownOrOverridesKnown = IsSpellKnownOrOverridesKnown or IsSpellKnow
 -- local GetSpellBookItemName = GetSpellBookItemName
 -- local BOOKTYPE_SPELL = BOOKTYPE_SPELL
 
-local UnitInSamePhase
-if Cell.isRetail then
-    UnitInSamePhase = function(unit)
-        return not UnitPhaseReason(unit)
-    end
-else
-    UnitInSamePhase = UnitInPhase
-end
+local UnitInSamePhase = UnitInPhase
 
 local playerClass = UnitClassBase("player")
 
@@ -2316,7 +2232,9 @@ local harmSpells = {
     ["PRIEST"] = Cell.isRetail and 589 or 585, -- 暗言术：痛 / 惩击
     ["ROGUE"] = 1752, -- 影袭
     ["SHAMAN"] = Cell.isRetail and 188196 or 403, -- 闪电箭
-    ["WARLOCK"] = 234153, -- 吸取生命
+    --! WotLK fix: 234153 is the retail Drain Life ID; on 3.3.5 it is 689 (rank 1),
+    --! so IsSpellKnown() never matched and warlocks fell back to the item check.
+    ["WARLOCK"] = Cell.isRetail and 234153 or 689, -- 吸取生命
     ["WARRIOR"] = 355, -- 嘲讽
 }
 
@@ -2444,21 +2362,12 @@ function F.IsInRange(unit, check)
     if UnitIsUnit("player", unit) then
         return true
 
-    elseif not check and Cell.isRetail and F.UnitInGroup(unit) then
-        -- NOTE: UnitInRange only works with group players/pets
-        --! but not available for PLAYER PET when SOLO
-        --! WotLK/ClassicAPI: UnitInRange is a fixed ~28yd interact check (not spell
-        --! range), so gate it behind isRetail and fall through to the spell-based
-        --! path below for correct ~40yd healer range on classic.
-        local inRange, checked = UnitInRange(unit)
-        if not checked then
-            return F.IsInRange(unit, true)
-        end
-        return inRange
-
     else
         if UnitCanAssist("player", unit) then -- or UnitCanCooperate("player", unit)
-            if not (UnitIsConnected(unit) and UnitInSamePhase(unit)) then
+            --! WotLK fix: there is no phasing on 3.3.5 - UnitInPhase is a ClassicAPI
+            --! shim hardwired to true (Private.True), so this was a pure Lua call per
+            --! friendly unit per range tick.
+            if not UnitIsConnected(unit) then
                 return false
             end
 
@@ -2470,9 +2379,13 @@ function F.IsInRange(unit, check)
                 return UnitInSpellRange(spell_friend, unit)
             end
 
-            local inRange, checked = UnitInRange(unit)
-            if checked then
-                return inRange
+            --! WotLK fix: the second return (checkedRange) was added in 4.0; on 3.3.5
+            --! UnitInRange returns 1/nil only, so this branch never fired and classes
+            --! without a friendly spell collapsed to CheckInteractDistance's 28 yards.
+            --! nil here also means "not a group member" (or a solo pet), so keep
+            --! falling through instead of returning false.
+            if UnitInRange(unit) == 1 then
+                return true
             end
 
             if UnitIsUnit(unit, "pet") and spell_pet then
@@ -2486,7 +2399,9 @@ function F.IsInRange(unit, check)
             elseif spell_harm then
                 return UnitInSpellRange(spell_harm, unit)
             end
-            return IsItemInRange(harmItems[playerClass], unit)
+            --! WotLK fix: native IsItemInRange returns 1/0/nil, and 0 is TRUTHY in Lua,
+            --! so an out-of-range enemy used to read as "in range" and never faded.
+            return IsItemInRange(harmItems[playerClass], unit) == 1
         end
 
         return CheckInteractDistance(unit, 4) -- 28 yards
@@ -2582,6 +2497,3 @@ end
 ---------------------------------------------------------------------
 -- spec data
 ---------------------------------------------------------------------
-if Cell.isMists then
-
-end

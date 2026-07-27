@@ -261,8 +261,14 @@ local function Shared_CreateCooldown_Clock(frame)
     P.Point(cooldown, "BOTTOMRIGHT", frame, -CELL_BORDER_SIZE, CELL_BORDER_SIZE)
     cooldown:SetReverse(true)
     cooldown:SetDrawEdge(false)
-    cooldown:SetSwipeTexture(Cell.vars.whiteTexture)
-    cooldown:SetSwipeColor(0, 0, 0, 0.77)
+    --! WotLK fix: SetSwipeTexture has no native counterpart on 3.3.5 and switches
+    --! ClassicAPI into its software swipe emulation (CooldownCapture: ~10 frames,
+    --! 5 textures, a looping AnimationGroup and a per-frame OnUpdate per cooldown,
+    --! plus a crash in CooldownCaptureShow). The native Cooldown draws the sweep itself.
+    if not Cell.isWrath then
+        cooldown:SetSwipeTexture(Cell.vars.whiteTexture)
+        cooldown:SetSwipeColor(0, 0, 0, 0.77)
+    end
     -- cooldown:SetEdgeTexture([[Interface\Cooldown\UI-HUD-ActionBar-SecondaryCooldown]])
 
     -- cooldown text
@@ -617,9 +623,15 @@ function I.CreateAura_BorderIcon(name, parent, borderSize)
     local cooldown = CreateFrame("Cooldown", name.."Cooldown", frame)
     frame.cooldown = cooldown
     cooldown:SetAllPoints(frame)
-    cooldown:SetSwipeTexture(Cell.vars.whiteTexture)
-    -- alpha is explicit: ClassicAPI's SetSwipeColor backport requires 4 args
-    cooldown:SetSwipeColor(1, 1, 1, 1)
+    --! WotLK fix: SetSwipeTexture has no native counterpart on 3.3.5 and switches
+    --! ClassicAPI into its software swipe emulation (CooldownCapture: ~10 frames,
+    --! 5 textures, a looping AnimationGroup and a per-frame OnUpdate per cooldown,
+    --! plus a crash in CooldownCaptureShow). The native Cooldown draws the sweep itself.
+    if not Cell.isWrath then
+        cooldown:SetSwipeTexture(Cell.vars.whiteTexture)
+        -- alpha is explicit: ClassicAPI's SetSwipeColor backport requires 4 args
+        cooldown:SetSwipeColor(1, 1, 1, 1)
+    end
     cooldown:SetHideCountdownNumbers(true)
     -- disable omnicc
     cooldown.noCooldownCount = true
@@ -1673,6 +1685,11 @@ local function Color_SetColors(self, colors)
     self.type = colors[1]
     self.colors = colors
 
+    --! WotLK fix: replaces the removed solidTex:SetScript("OnShow", ...) — Texture
+    --! has no ScriptObject on 3.3.5, so SetScript is nil. Refreshing here covers
+    --! every branch below and keeps the texture in sync with Appearance settings.
+    self.solidTex:SetTexture(Cell.vars.texture)
+
     if colors[1] == "solid" then
         self:SetScript("OnUpdate", nil)
         self.solidTex:SetVertexColor(colors[2][1], colors[2][2], colors[2][3], colors[2][4])
@@ -1716,10 +1733,10 @@ function I.CreateAura_Color(name, parent)
     solidTex:SetAllPoints(color)
     solidTex:Hide()
 
-    solidTex:SetScript("OnShow", function()
-        -- update texture
-        solidTex:SetTexture(Cell.vars.texture)
-    end)
+    --! WotLK fix: Texture has no ScriptObject in its 3.3.5 inheritance chain, so
+    --! Texture:SetScript is nil and this line crashed I.CreateIndicator for every
+    --! custom indicator of type "color". The texture is refreshed in
+    --! Color_SetColors instead, right before it is shown.
 
     local gradientTex = color:CreateTexture(nil, "ARTWORK")
     color.gradientTex = gradientTex

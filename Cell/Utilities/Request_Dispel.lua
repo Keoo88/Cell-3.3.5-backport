@@ -179,7 +179,11 @@ local function CreateDRPane()
 
         CellSpellTooltip:SetOwner(popup, "ANCHOR_NONE")
         CellSpellTooltip:SetPoint("TOPLEFT", popup, "BOTTOMLEFT", 0, -1)
-        CellSpellTooltip:SetSpellByID(spellId, tex)
+        --! WotLK fix: SetSpellByID on 3.3.5 is (id, isPet, showSubtext) - a texture path
+        --! in slot 2 is truthy and sends the client to the PET spellbook. The icon used to
+        --! be picked up by a global hooksecurefunc, which was removed; set it explicitly.
+        CellSpellTooltip:SetSpellIcon(tex)
+        CellSpellTooltip:SetSpellByID(spellId)
         CellSpellTooltip:Show()
     end)
 
@@ -339,7 +343,11 @@ LoadList = function(scrollToBottom)
 
                     CellSpellTooltip:SetOwner(debuffItems[i], "ANCHOR_NONE")
                     CellSpellTooltip:SetPoint("TOPRIGHT", debuffItems[i], "TOPLEFT", -1, 0)
-                    CellSpellTooltip:SetSpellByID(self.spellId, icon)
+                    --! WotLK fix: SetSpellByID on 3.3.5 is (id, isPet, showSubtext) - a texture path
+                    --! in slot 2 is truthy and sends the client to the PET spellbook. The icon used to
+                    --! be picked up by a global hooksecurefunc, which was removed; set it explicitly.
+                    CellSpellTooltip:SetSpellIcon(icon)
+                    CellSpellTooltip:SetSpellByID(self.spellId)
                     CellSpellTooltip:Show()
                 end
             end)
@@ -445,7 +453,9 @@ function U.CreateDispelRequestText(parent)
     end
 
     function drText:SetType(type)
-        tex:SetTexture("Interface/AddOns/Cell/Media/FlipBooks/dispel_"..type..".png")
+        --! WotLK fix: the 3.3.5a client reads BLP2 and TGA only - PNG silently
+        --! renders nothing. Sheets converted to 32-bit uncompressed TGA.
+        tex:SetTexture("Interface/AddOns/Cell/Media/FlipBooks/dispel_"..type..".tga")
         local info = flipBookInfo[type]
         if info then
             rows, columns, totalFrames = info[1], info[2], info[3]

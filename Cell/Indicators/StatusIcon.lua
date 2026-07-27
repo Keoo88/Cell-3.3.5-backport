@@ -1,4 +1,11 @@
 local _, Cell = ...
+
+--! WotLK fix (coexistence): CombatLogGetCurrentEventInfo is a TRANSLATOR of the
+--! native COMBAT_LOG_EVENT varargs, not a retail-style no-arg getter. The global
+--! may belong to the standalone !!!ClassicAPI, whose copy has different semantics,
+--! so always prefer OUR implementation from the private CellClassicAPI namespace.
+local CombatLogGetCurrentEventInfo = (_G.CellClassicAPI and _G.CellClassicAPI.CombatLogGetCurrentEventInfo) or _G.CombatLogGetCurrentEventInfo
+
 ---@type CellFuncs
 local F = Cell.funcs
 ---@class CellIndicatorFuncs
@@ -218,86 +225,6 @@ end
 -------------------------------------------------
 -- update (UnitButton_UpdateAuras)
 -------------------------------------------------
-if Cell.isRetail then
-    function I.UpdateStatusIcon(button)
-        local unit = button.states.unit
-        if not unit then return end
-
-        -- https://wow.gamepedia.com/API_UnitPhaseReason
-        local phaseReason = UnitPhaseReason(unit)
-
-        local icon = button.indicators.statusIcon
-
-        -- Interface\FrameXML\CompactUnitFrame.lua, CompactUnitFrame_UpdateCenterStatusIcon
-        if UnitInOtherParty(unit) then
-            icon:SetVertexColor(1, 1, 1, 1)
-            icon:SetTexture("Interface\\LFGFrame\\LFG-Eye")
-            -- icon:SetTexCoord(0.125, 0.25, 0.25, 0.5)
-            -- icon:SetTexCoord(0.145, 0.23, 0.29, 0.46)
-            icon:SetTexCoord(0.14, 0.235, 0.28, 0.47)
-            icon:Show()
-        elseif UnitHasIncomingResurrection(unit) then
-            icon:SetVertexColor(1, 1, 1, 1)
-            icon:SetTexture("Interface\\RaidFrame\\Raid-Icon-Rez")
-            icon:SetTexCoord(0, 1, 0, 1)
-            icon:Show()
-        elseif button.states.hasRezDebuff then
-            icon:SetVertexColor(0.6, 1, 0.6, 1)
-            icon:SetTexture("Interface\\RaidFrame\\Raid-Icon-Rez")
-            icon:SetTexCoord(0, 1, 0, 1)
-            icon:Show()
-        elseif button.states.hasSoulstone then
-            icon:SetVertexColor(1, 0.4, 1, 1)
-            icon:SetTexture("Interface\\RaidFrame\\Raid-Icon-Rez")
-            icon:SetTexCoord(0, 1, 0, 1)
-            icon:Show()
-        elseif CELL_SUMMON_ICONS_ENABLED and C_IncomingSummon and C_IncomingSummon.HasIncomingSummon(unit) then
-            local status = C_IncomingSummon.IncomingSummonStatus(unit)
-            if status == Enum.SummonStatus.Pending then
-                icon:SetAtlas("Raid-Icon-SummonPending")
-                icon:SetTexCoord(0.15, 0.85, 0.15, 0.85)
-            elseif status == Enum.SummonStatus.Accepted then
-                icon:SetAtlas("Raid-Icon-SummonAccepted")
-                icon:SetTexCoord(0.15, 0.85, 0.15, 0.85)
-                C_Timer.After(6, function() I.UpdateStatusIcon(button) end)
-            elseif status == Enum.SummonStatus.Declined then
-                icon:SetAtlas("Raid-Icon-SummonDeclined")
-                icon:SetTexCoord(0.15, 0.85, 0.15, 0.85)
-                C_Timer.After(6, function() I.UpdateStatusIcon(button) end)
-            end
-            icon:Show()
-        elseif UnitIsPlayer(unit) and phaseReason and not button.states.inVehicle then
-            if phaseReason == 3 then -- chromie, yellow
-                icon:SetVertexColor(1, 1, 0)
-            elseif phaseReason == 2 then -- warmode, red
-                icon:SetVertexColor(1, 0.6, 0.6)
-            elseif phaseReason == 1 then -- sharding, green
-                icon:SetVertexColor(0.5, 1, 0.5)
-            else -- 0, phasing
-                icon:SetVertexColor(1, 1, 1)
-            end
-            icon:SetTexture("Interface\\TargetingFrame\\UI-PhasingIcon")
-            icon:SetTexCoord(0.1, 0.9, 0.1, 0.9)
-            icon:Show()
-        -- elseif UnitIsDeadOrGhost(unit) then
-        --     icon:SetTexture("Interface\\TargetingFrame\\UI-TargetingFrame-Skull")
-        --     icon:SetTexCoord(0, 1, 0, 1)
-        --     icon:Show()
-        elseif button.states.BGFlag then
-            icon:SetVertexColor(1, 1, 1, 1)
-            icon:SetAtlas("nameplates-icon-flag-"..button.states.BGFlag)
-            icon:SetTexCoord(0, 1, 0, 1)
-            icon:Show()
-        elseif button.states.BGOrb then
-            icon:SetVertexColor(1, 1, 1, 1)
-            icon:SetAtlas("nameplates-icon-orb-"..button.states.BGOrb)
-            icon:SetTexCoord(0, 1, 0, 1)
-            icon:Show()
-        else
-            icon:Hide()
-        end
-    end
-else
     function I.UpdateStatusIcon(button)
         local unit = button.states.unit
         if not unit then return end
@@ -337,7 +264,6 @@ else
             icon:Hide()
         end
     end
-end
 
 -------------------------------------------------
 -- enable
@@ -348,9 +274,6 @@ function I.EnableStatusIcon(enabled)
         -- eventFrame:RegisterEvent("UNIT_PHASE") --! WotLK: event does not exist on 3.3.5 (added 4.x) - registration was silently inert, the phase icon never triggered this way
         eventFrame:RegisterEvent("PARTY_MEMBER_DISABLE")
         eventFrame:RegisterEvent("PARTY_MEMBER_ENABLE")
-        if Cell.isRetail and CELL_SUMMON_ICONS_ENABLED then
-            eventFrame:RegisterEvent("INCOMING_SUMMON_CHANGED")
-        end
         -- resurrection
         cleuFrame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
     else

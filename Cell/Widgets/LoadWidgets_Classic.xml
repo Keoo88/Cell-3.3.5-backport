@@ -1,6 +1,9 @@
 <Ui xmlns="http://www.blizzard.com/wow/ui/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
     xsi:schemaLocation="http://www.blizzard.com/wow/ui/ https://raw.githubusercontent.com/Gethe/wow-ui-source/live/Interface/FrameXML/UI_shared.xsd">
-    <Include file="BackdropTemplate.xml"/>
+    <!--! WotLK fix: no BackdropTemplate include here. A working virtual template of that
+         name is already declared in Libs\ClassicAPI\Templates\Backdrop.xml, which the TOC
+         loads earlier (Libs\ClassicAPI\Load.xml). Declaring a second virtual frame with an
+         already taken name throws an XML load error and one of the two is discarded. -->
     <Script file="Animation.lua"/>
     <Script file="Widgets.lua"/>
     <Script file="Widgets_IndicatorSettings.lua"/>

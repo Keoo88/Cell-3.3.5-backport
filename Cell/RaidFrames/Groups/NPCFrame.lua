@@ -1,4 +1,18 @@
 local _, Cell = ...
+
+--! WotLK fix (coexistence): our PixelUtil (Cell.PixelUtil, built in Polyfills.lua)
+--! is the one whose GetNearestPixelSize/SetPoint use the real gxResolution based
+--! screen size. The global may belong to the standalone !!!ClassicAPI, so read ours
+--! first and fall back to the global only if Polyfills has not run yet.
+local PixelUtil = (Cell and Cell.PixelUtil) or _G.PixelUtil
+
+
+--! WotLK fix (coexistence): CombatLogGetCurrentEventInfo is a TRANSLATOR of the
+--! native COMBAT_LOG_EVENT varargs, not a retail-style no-arg getter. The global
+--! may belong to the standalone !!!ClassicAPI, whose copy has different semantics,
+--! so always prefer OUR implementation from the private CellClassicAPI namespace.
+local CombatLogGetCurrentEventInfo = (_G.CellClassicAPI and _G.CellClassicAPI.CombatLogGetCurrentEventInfo) or _G.CombatLogGetCurrentEventInfo
+
 local L = Cell.L
 local F = Cell.funcs
 local B = Cell.bFuncs
@@ -747,8 +761,17 @@ local function NPCFrame_UpdateLayout(layout, which)
         if layout["npc"]["enabled"] then
             -- NOTE: RegisterAttributeDriver
             for i, b in ipairs(Cell.unitButtons.npc) do
-                RegisterAttributeDriver(b, "state-visibility", "[@boss"..i..", help] show; hide")
-                -- RegisterAttributeDriver(b, "state-visibility", "[@player, help] show; hide")
+                --! WotLK fix: 3.3.5 only has boss1-boss4 (FrameXML TargetFrame.xml
+                --! creates exactly four BossTargetFrames). Drivers for boss5-boss8
+                --! can never resolve to "show", yet SecureStateDriver still parses
+                --! them 5 times per second forever. Register only the first four.
+                if i <= 4 then
+                    RegisterAttributeDriver(b, "state-visibility", "[@boss"..i..", help] show; hide")
+                    -- RegisterAttributeDriver(b, "state-visibility", "[@player, help] show; hide")
+                else
+                    UnregisterAttributeDriver(b, "state-visibility")
+                    b:Hide()
+                end
             end
             if layout["npc"]["separate"] then
                 UnregisterStateDriver(npcFrame, "groupstate")

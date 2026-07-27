@@ -1,14 +1,15 @@
---! Cell: this is a private, trimmed fork of Tsoukie's ClassicAPI.
---! If the standalone !!!ClassicAPI addon is installed (Gladdy requires it), it
---! loads first and owns these globals. Overwriting them with this older subset
---! mixes two incompatible halves of the same library, so bail out instead.
-if IsAddOnLoaded and IsAddOnLoaded("!!!ClassicAPI") then return end
+--! Cell: private, trimmed fork of Tsoukie's ClassicAPI.
+--! Coexistence rules live in Util/Coexist.lua: never bail out of a file, never
+--! overwrite a global somebody else owns (gap-fill only), keep our own copy in the
+--! private CellClassicAPI namespace. Names published here are not native to 3.3.5a
+--! (verified against milkyway-codex).
 
 local _, Private = ...
 
 local _G = _G
 
-local C_SpellBook = C_SpellBook or {}
+-- Own table: filling a foreign C_SpellBook in place would overwrite its methods.
+local C_SpellBook = {}
 
 C_SpellBook.HasPetSpells = HasPetSpells
 C_SpellBook.GetSpellLinkFromSpellID = GetSpellLink
@@ -16,6 +17,6 @@ C_SpellBook.PickupSpellBookItem = PickupSpell
 C_SpellBook.GetSpellBookItemName = GetSpellName
 
 -- Global
-_G.C_SpellBook = C_SpellBook
-_G.PickupSpellBookItem = C_SpellBook.PickupSpellBookItem
-_G.GetSpellBookItemName = C_SpellBook.GetSpellBookItemName
+Private.Merge("C_SpellBook", C_SpellBook)
+Private.Provide("PickupSpellBookItem", C_SpellBook.PickupSpellBookItem)
+Private.Provide("GetSpellBookItemName", C_SpellBook.GetSpellBookItemName)

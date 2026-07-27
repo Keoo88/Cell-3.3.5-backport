@@ -1,4 +1,11 @@
 local _, Cell = ...
+
+--! WotLK fix (coexistence): CombatLogGetCurrentEventInfo is a TRANSLATOR of the
+--! native COMBAT_LOG_EVENT varargs, not a retail-style no-arg getter. The global
+--! may belong to the standalone !!!ClassicAPI, whose copy has different semantics,
+--! so always prefer OUR implementation from the private CellClassicAPI namespace.
+local CombatLogGetCurrentEventInfo = (_G.CellClassicAPI and _G.CellClassicAPI.CombatLogGetCurrentEventInfo) or _G.CombatLogGetCurrentEventInfo
+
 local L = Cell.L
 ---@type CellFuncs
 local F = Cell.funcs

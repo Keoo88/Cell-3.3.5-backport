@@ -21,9 +21,7 @@ local RETRY_INTERVAL = 1.5
 local MAX_ATTEMPTS = 3
 
 -- WOW_PROJECT_ID is polyfilled in Polyfills.lua which loads before this library
-local IS_RETAIL = WOW_PROJECT_ID == WOW_PROJECT_MAINLINE
 local IS_WRATH = WOW_PROJECT_ID == WOW_PROJECT_WRATH_CLASSIC
-local IS_MISTS = WOW_PROJECT_ID == WOW_PROJECT_MISTS_CLASSIC
 
 local debugMode = false
 local function Print(...)
@@ -146,9 +144,6 @@ local UnitIsDead = UnitIsDead
 local UnitIsConnected = UnitIsConnected
 local UnitIsVisible = UnitIsVisible
 local CanInspect = CanInspect
-local GetSpecialization = GetSpecialization or (C_SpecializationInfo and C_SpecializationInfo.GetSpecialization)
-local GetSpecializationInfo = GetSpecializationInfo or (C_SpecializationInfo and C_SpecializationInfo.GetSpecializationInfo)
-local GetInspectSpecialization = GetInspectSpecialization
 
 -- Polyfill for UnitNameUnmodified (doesn't exist in WotLK 3.3.5a) 
 if not UnitNameUnmodified then
@@ -174,11 +169,6 @@ local GetNumGroupMembers = GetNumGroupMembers
 local UnitInParty = UnitInParty
 local UnitInRaid = UnitInRaid
 local UnitGroupRolesAssigned = Cell_UnitGroupRolesAssigned or UnitGroupRolesAssigned --! WotLK fix: prefer Cell's private retail-contract polyfill; the bare global is native (3 booleans)
-
-local locale = GetLocale()
-local GetSpecName = GetSpecName
-local GetSpecIcon = GetSpecIcon
-local GetSpecRole = GetSpecRole
 
 local GetNumTalentTabs = GetNumTalentTabs
 local GetTalentTabInfo = GetTalentTabInfo
@@ -221,15 +211,12 @@ local function UpdateBaseInfo(unit, guid)
     if not guid then return end
 
     if not cache[guid] then cache[guid] = {} end
-    --! WotLK fix: guard on "not IS_RETAIL and not IS_MISTS" instead of
-    --! IS_WRATH: on 3.3.5 Alpha clients WOW_PROJECT_ID may not match
-    --! WOW_PROJECT_WRATH_CLASSIC, causing IS_WRATH=false even though
-    --! BuildAndNotify_Wrath is still called, leaving talents=nil and
-    --! crashing at line 393 (attempt to index field ? a nil value).
-    if not IS_RETAIL and not IS_MISTS then
-        if not cache[guid]["talents"] then
-            cache[guid]["talents"] = {}
-        end
+    --! WotLK fix: always create the talents table - BuildAndNotify_Wrath is
+    --! the only build path here and it indexes cache[guid]["talents"]
+    --! unconditionally (used to crash with "attempt to index field ? a nil
+    --! value" when the table was missing).
+    if not cache[guid]["talents"] then
+        cache[guid]["talents"] = {}
     end
 
     -- general
@@ -249,50 +236,6 @@ local function UpdateBaseInfo(unit, guid)
     lib.callbacks:Fire(UPDATE_BASE_EVENT, guid, unit, cache[guid])
 
     return guid
-end
-
-local function BuildAndNotify(unit)
-    Print("|cffff7777LGI:BuildAndNotify|r", unit)
-
-    local guid = UnitGUID(unit)
-    if not guid then return end
-
-    UpdateBaseInfo(unit, guid)
-
-    local specId, role
-
-    if UnitIsUnit(unit, "player") then
-        local specIndex = GetSpecialization()
-        specId, _, _, _, role = GetSpecializationInfo(specIndex)
-    else
-        specId = GetInspectSpecialization(unit)
-        role = select(5, GetSpecializationInfoByID(specId))
-        -- if not (UnitIsConnected(unit) or UnitIsVisible(unit)) then
-        --     cache[guid].notVisible = true
-        -- else
-        --     cache[guid].notVisible = nil
-        -- end
-    end
-
-    cache[guid].role = role
-
-    -- spec
-    if specId then
-        cache[guid].specId = specId
-        cache[guid].specName = GetSpecName(specId, locale)
-        cache[guid].specRole = GetSpecRole(specId, locale)
-        cache[guid].specIcon = GetSpecIcon(specId, locale)
-        cache[guid].inspected = true
-    else
-        cache[guid].specId = 0
-        cache[guid].specName = nil
-        cache[guid].specRole = nil
-        cache[guid].specIcon = nil
-        cache[guid].inspected = nil
-    end
-
-    --! fire
-    lib.callbacks:Fire(UPDATE_EVENT, guid, unit, cache[guid])
 end
 
 -- 3.3.5: role by class + dominant talent tree (tab index order is fixed).
@@ -451,12 +394,8 @@ local function Query(unit)
 
     if IsInGroup() and not (UnitInParty(unit) or UnitInRaid(unit)) then return end
 
-    if IS_RETAIL or IS_MISTS then
-        BuildAndNotify(unit)
-    else
-        -- returns false when the inspect data was rejected as stale/foreign
-        return BuildAndNotify_Wrath(unit)
-    end
+    -- returns false when the inspect data was rejected as stale/foreign
+    return BuildAndNotify_Wrath(unit)
 end
 
 ---------------------------------------------------------------------
@@ -465,37 +404,31 @@ end
 function frame:PLAYER_LOGIN()
     PLAYER_GUID = UnitGUID("player")
 
-    if IS_RETAIL or IS_MISTS then
-        cache[PLAYER_GUID] = {}
-        -- CacheSpecData()
-        frame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
-    else
-        cache[PLAYER_GUID] = {["talents"]={}}
-        -- frame:RegisterEvent("UNIT_AURA")
+    cache[PLAYER_GUID] = {["talents"]={}}
+    -- frame:RegisterEvent("UNIT_AURA")
 
-        --! WotLK fix: PLAYER_SPECIALIZATION_CHANGED doesn't exist on 3.3.5,
-        --! so the player's cached spec was built once at login and never
-        --! refreshed - the role stuck to whatever spec you logged in with.
-        --! Own spec changes arrive as ACTIVE_TALENT_GROUP_CHANGED (dual
-        --! spec swap) and PLAYER_TALENT_UPDATE (learning/resetting talents);
-        --! other players' dual-spec swaps are visible as a successful cast
-        --! of a talent-activation spell (same trick as LibGroupTalents).
-        frame:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
-        frame:RegisterEvent("PLAYER_TALENT_UPDATE")
-        frame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
+    --! WotLK fix: PLAYER_SPECIALIZATION_CHANGED doesn't exist on 3.3.5,
+    --! so the player's cached spec was built once at login and never
+    --! refreshed - the role stuck to whatever spec you logged in with.
+    --! Own spec changes arrive as ACTIVE_TALENT_GROUP_CHANGED (dual
+    --! spec swap) and PLAYER_TALENT_UPDATE (learning/resetting talents);
+    --! other players' dual-spec swaps are visible as a successful cast
+    --! of a talent-activation spell (same trick as LibGroupTalents).
+    frame:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
+    frame:RegisterEvent("PLAYER_TALENT_UPDATE")
+    frame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 
-        --! WotLK fix: group members outside inspect range (28y) are skipped
-        --! by AddToQueue and nothing re-queues them until the next roster
-        --! event - in a static group they stayed uninspected forever (role
-        --! defaulted to DAMAGER). Rescan periodically; already-inspected
-        --! members are skipped, so this only touches missing ones.
-        if not lib.rescanTicker then
-            lib.rescanTicker = C_Timer.NewTicker(15, function()
-                if IsInGroup() and PLAYER_GUID then
-                    frame:GROUP_ROSTER_UPDATE(true)
-                end
-            end)
-        end
+    --! WotLK fix: group members outside inspect range (28y) are skipped
+    --! by AddToQueue and nothing re-queues them until the next roster
+    --! event - in a static group they stayed uninspected forever (role
+    --! defaulted to DAMAGER). Rescan periodically; already-inspected
+    --! members are skipped, so this only touches missing ones.
+    if not lib.rescanTicker then
+        lib.rescanTicker = C_Timer.NewTicker(15, function()
+            if IsInGroup() and PLAYER_GUID then
+                frame:GROUP_ROSTER_UPDATE(true)
+            end
+        end)
     end
 
     frame:RegisterEvent("PLAYER_ENTERING_WORLD")
@@ -538,9 +471,7 @@ function frame:PLAYER_ENTERING_WORLD(isLogin, isReload)
     --! and the role chain fell through to the DAMAGER default (solo 0/0/41
     --! resto shaman showed as DPS). Loading screens are rare on 3.3.5 -
     --! just always refresh.
-    if not (IS_RETAIL or IS_MISTS) then
-        shouldUpdate = true
-    end
+    shouldUpdate = true
 
     if shouldUpdate then
         frame:Hide()
@@ -610,7 +541,7 @@ frame:SetScript("OnUpdate", function(self, elapsed)
 end)
 
 local function AddToQueue(unit, guid)
-    if IS_WRATH or IS_MISTS then
+    if IS_WRATH then
         if not UnitIsConnected(unit) or not CheckInteractDistance(unit, 1) or not CanInspect(unit) then
             UpdateBaseInfo(unit, guid)
             return
@@ -692,7 +623,10 @@ local function IterateAllUnits()
             end
         end
         local pRaidIndex = UnitInRaid("player")
-        if pRaidIndex then cache[PLAYER_GUID].unit = "raid"..pRaidIndex end
+        --! WotLK fix: UnitInRaid is 0-based on 3.3.5 (raid1 -> 0), so the token
+        --! needs +1. Without it the first raid slot cached a non-existent "raid0"
+        --! and everyone else got the previous player's unit token.
+        if pRaidIndex then cache[PLAYER_GUID].unit = "raid"..(pRaidIndex + 1) end
 
     elseif IsInGroup() then
         wasInGroup = true

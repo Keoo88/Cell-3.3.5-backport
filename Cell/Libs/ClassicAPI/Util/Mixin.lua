@@ -1,32 +1,39 @@
---! Cell: this is a private, trimmed fork of Tsoukie's ClassicAPI.
---! If the standalone !!!ClassicAPI addon is installed (Gladdy requires it), it
---! loads first and owns these globals. Overwriting them with this older subset
---! mixes two incompatible halves of the same library, so bail out instead.
-if IsAddOnLoaded and IsAddOnLoaded("!!!ClassicAPI") then return end
+--! Cell: private, trimmed fork of Tsoukie's ClassicAPI.
+--! Coexistence rules live in Util/Coexist.lua: never bail out of a file, never
+--! overwrite a global somebody else owns (gap-fill only), keep our own copy in the
+--! private CellClassicAPI namespace. Mixin exists natively in later clients only;
+--! 3.3.5a has none of these three (verified against milkyway-codex).
+
+local _, Private = ...
 
 local Select = select
 local Pairs = pairs
 
-if ( not Mixin ) then
-	function Mixin(Object, ...)
-		for i = 1, Select("#", ...) do
-			local Mixin = Select(i, ...)
-			if ( Mixin ) then
-				for k, v in Pairs(Mixin) do
-					Object[k] = v
-				end
+local Mixin, CreateFromMixins, CreateAndInitFromMixin
+
+function Mixin(Object, ...)
+	for i = 1, Select("#", ...) do
+		local Source = Select(i, ...)
+		if ( Source ) then
+			for k, v in Pairs(Source) do
+				Object[k] = v
 			end
 		end
-		return Object
 	end
+	return Object
 end
 
 function CreateFromMixins(...)
 	return Mixin({}, ...)
 end
 
-function CreateAndInitFromMixin(Mixin, ...)
-	local Object = CreateFromMixins(Mixin)
+function CreateAndInitFromMixin(Source, ...)
+	local Object = CreateFromMixins(Source)
 	Object:Init(...)
 	return Object
 end
+
+-- Publish: gap-fill only, ours stays reachable via CellClassicAPI.<name>
+Private.Provide("Mixin", Mixin)
+Private.Provide("CreateFromMixins", CreateFromMixins)
+Private.Provide("CreateAndInitFromMixin", CreateAndInitFromMixin)

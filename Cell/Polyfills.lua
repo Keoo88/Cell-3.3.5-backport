@@ -4,6 +4,61 @@ _G.Cell = _G.Cell or ns or {}
 local Cell = _G.Cell
 
 -------------------------------------------------
+-- Coexistence helpers
+--! WotLK fix (coexistence): Cell must behave the same with and without the
+--! standalone !!!ClassicAPI addon, so this file follows the same three rules as
+--! Cell/Libs/ClassicAPI/Util/Coexist.lua: never overwrite a global somebody else
+--! owns, fill missing keys only, and keep our own implementation reachable from
+--! the Cell table. The library loads before Polyfills (Cell.toc: Load.xml, then
+--! Polyfills.lua), so the helpers are normally already there; the fallbacks below
+--! keep this file working on its own.
+-------------------------------------------------
+local CAPI = _G.CellClassicAPI
+
+local CoexistProvide = (CAPI and CAPI.__Provide) or function(name, value)
+    if rawget(_G, name) == nil then
+        _G[name] = value
+    end
+    return value
+end
+
+local CoexistMerge = (CAPI and CAPI.__Merge) or function(name, source)
+    local current = rawget(_G, name)
+    if type(current) ~= "table" then
+        _G[name] = source
+        return source
+    end
+    for key, value in pairs(source) do
+        if current[key] == nil then
+            current[key] = value
+        end
+    end
+    return current
+end
+
+
+local CoexistAdopt = (CAPI and CAPI.__Adopt) or function(name, value)
+    if rawget(_G, name) == nil then
+        _G[name] = value
+    end
+    return value
+end
+
+--! WotLK fix (coexistence): three names used to be built TWICE by our own code -
+--! once in Libs\ClassicAPI and once here - so which implementation ran depended on
+--! load order (/cell debug shims reported them as duplicates). The blocks below now
+--! reuse the library copy when it exists and only add what it lacks, so there is
+--! exactly one C_Timer / PixelUtil / GetPhysicalScreenSize in the client.
+local function FillMissing(target, source)
+    for key, value in pairs(source) do
+        if target[key] == nil then
+            target[key] = value
+        end
+    end
+    return target
+end
+
+-------------------------------------------------
 -- GetClassInfo contract shim
 -- The global has two different contracts depending on which copy of ClassicAPI
 -- owns it: Cell's fork returns a tuple, the standalone !!!ClassicAPI addon
@@ -129,27 +184,45 @@ Cell.supporters2 = Cell.supporters2 or {}
 -------------------------------------------------
 -- Screen size polyfill for WotLK
 -------------------------------------------------
-if not GetPhysicalScreenSize then
-    -- Real physical resolution from the gxResolution CVar (ElvUI 3.3.5 technique).
-    -- GetScreenWidth/Height return UI units (scale-dependent) and break
-    -- pixel-perfect math, so only fall back to them if the CVar is unreadable.
-    function GetPhysicalScreenSize()
-        local resolution = GetCVar and GetCVar("gxResolution")
-        if resolution then
-            local w, h = resolution:match("(%d+)x(%d+)")
-            if w and h then
-                return tonumber(w), tonumber(h)
+--! WotLK fix (coexistence): the standalone !!!ClassicAPI publishes its own
+--! GetPhysicalScreenSize built on GetScreenWidth/GetScreenHeight - those are UI
+--! units that move with UIParent scale, so pixel-perfect math on top of them
+--! drifts. Always build our gxResolution based version, keep it as
+--! Cell.GetPhysicalScreenSize for our own math, and hand it to the global only
+--! when the name is free.
+do
+        -- Real physical resolution from the gxResolution CVar (ElvUI 3.3.5 technique).
+        -- GetScreenWidth/Height return UI units (scale-dependent) and break
+        -- pixel-perfect math, so only fall back to them if the CVar is unreadable.
+        local function GetPhysicalScreenSize()
+            local resolution = GetCVar and GetCVar("gxResolution")
+            if resolution then
+                local w, h = resolution:match("(%d+)x(%d+)")
+                if w and h then
+                    return tonumber(w), tonumber(h)
+                end
             end
+            return GetScreenWidth(), GetScreenHeight()
         end
-        return GetScreenWidth(), GetScreenHeight()
-    end
+
+    --! Single owner: the library copy (Libs\ClassicAPI\Util\PixelUtil.lua) is the
+    --! same gxResolution technique plus a resolution-list fallback, so prefer it and
+    --! keep the local above only as a standalone fallback.
+    GetPhysicalScreenSize = (CAPI and CAPI.GetPhysicalScreenSize) or GetPhysicalScreenSize
+
+    Cell.GetPhysicalScreenSize = GetPhysicalScreenSize
+    CoexistAdopt("GetPhysicalScreenSize", GetPhysicalScreenSize)
 end
 
 -------------------------------------------------
 -- PixelUtil polyfill (doesn't exist in WotLK)
 -------------------------------------------------
-if not PixelUtil then
-    PixelUtil = {}
+--! WotLK fix (coexistence): was `if not PixelUtil then` - with the standalone
+--! !!!ClassicAPI loaded Cell skipped its own table entirely and did pixel math
+--! through a foreign implementation. Build ours always, expose it as
+--! Cell.PixelUtil, and give the global only the functions nobody defined yet.
+do
+    local PixelUtil = {}
 
     -- Polyfill for GetNearestPixelSize
     -- Returns a pixel-perfect size based on the desired size and scale
@@ -194,6 +267,17 @@ if not PixelUtil then
         local scale = UIParent:GetEffectiveScale()
         return 1 / (768 / GetScreenHeight()) / scale
     end
+
+    --! Single owner: the library table has the full set (SetWidth/SetHeight/SetSize/
+    --! SetStatusBarValue and a minPixels-aware GetNearestPixelSize), so build on it and
+    --! add only what it lacks. Cell.PixelUtil used to point at this thinner table, which
+    --! meant a call to a key only the library defines would have been a nil call.
+    if ( CAPI and type(CAPI.PixelUtil) == "table" ) then
+        PixelUtil = FillMissing(CAPI.PixelUtil, PixelUtil)
+    end
+
+    Cell.PixelUtil = PixelUtil
+    CoexistMerge("PixelUtil", PixelUtil)
 end
 
 
@@ -314,25 +398,30 @@ end
 do
     local region = CreateFrame("Frame")
     local mt = getmetatable(region)
-    if not mt or not mt.__index then return end
+    --! WotLK fix: `do ... end` is a BLOCK, not a function, so a bare `return`
+    --! here returns from the whole CHUNK - if the guard ever fired, everything
+    --! below this point (SetShown, CreateColor, C_Timer, UnitClassBase, the
+    --! GROUP_ROSTER_UPDATE proxy, ...) would silently never load, with no error.
+    --! Use a positive `if` around the body instead.
+    if mt and mt.__index then
+        local idx = mt.__index
 
-    local idx = mt.__index
-
-    -- Retail: ScriptRegion:SetMouseClickEnabled(bool)
-    if not idx.SetMouseClickEnabled then
-        function idx:SetMouseClickEnabled(enabled)
-            -- Wrath only has EnableMouse(bool) for both hover+click
-            if self.EnableMouse then
-                self:EnableMouse(not not enabled)
+        -- Retail: ScriptRegion:SetMouseClickEnabled(bool)
+        if not idx.SetMouseClickEnabled then
+            function idx:SetMouseClickEnabled(enabled)
+                -- Wrath only has EnableMouse(bool) for both hover+click
+                if self.EnableMouse then
+                    self:EnableMouse(not not enabled)
+                end
             end
         end
-    end
 
-    -- Retail: ScriptRegion:SetMouseMotionEnabled(bool)
-    if not idx.SetMouseMotionEnabled then
-        function idx:SetMouseMotionEnabled(enabled)
-            if self.EnableMouse then
-                self:EnableMouse(not not enabled)
+        -- Retail: ScriptRegion:SetMouseMotionEnabled(bool)
+        if not idx.SetMouseMotionEnabled then
+            function idx:SetMouseMotionEnabled(enabled)
+                if self.EnableMouse then
+                    self:EnableMouse(not not enabled)
+                end
             end
         end
     end
@@ -872,24 +961,24 @@ do
         end
 
         -- For raid members, get role from GetRaidRosterInfo
-        if not result and UnitInRaid(unit) then
-            for i = 1, GetNumRaidMembers() do
-                -- GetRaidRosterInfo returns: name, rank, subgroup, level, class, fileName, zone, online, isDead, role, isML, combatRole
-                local name, _, _, _, _, _, _, _, _, role = GetRaidRosterInfo(i)
-                local raidUnit = "raid" .. i
-
-                if UnitIsUnit(unit, raidUnit) then
-                    if role and role ~= "NONE" and role ~= "" then
-                        roleSource = "GetRaidRosterInfo"
-                        if role == "MAINTANK" or role == "TANK" then
-                            result = "TANK"
-                        elseif role == "HEALER" then
-                            result = "HEALER"
-                        elseif role == "MAINASSIST" or role == "DAMAGER" or role == "DPS" then
-                            result = "DAMAGER"
-                        end
-                    end
-                    break
+        --! WotLK fix: UnitInRaid already RETURNS the roster index (0-based, nil
+        --! if not in the raid), so scanning the whole roster with UnitIsUnit and
+        --! building "raid"..i strings just to find it again is pure waste - this
+        --! runs for every unit button on every roster/role update. Blizzard's own
+        --! FrameXML does exactly this: TargetFrame.lua:659-661
+        --! (id = UnitInRaid("target"); GetRaidRosterInfo(id + 1)).
+        local raidIndex = not result and UnitInRaid(unit)
+        if raidIndex then
+            -- GetRaidRosterInfo returns: name, rank, subgroup, level, class, fileName, zone, online, isDead, role, isML
+            local _, _, _, _, _, _, _, _, _, role = GetRaidRosterInfo(raidIndex + 1)
+            if role and role ~= "NONE" and role ~= "" then
+                roleSource = "GetRaidRosterInfo"
+                if role == "MAINTANK" or role == "TANK" then
+                    result = "TANK"
+                elseif role == "HEALER" then
+                    result = "HEALER"
+                elseif role == "MAINASSIST" or role == "DAMAGER" or role == "DPS" then
+                    result = "DAMAGER"
                 end
             end
         end
@@ -1707,8 +1796,13 @@ do
         return timer
     end
 
-    -- Completely replace C_Timer (don't try to preserve native version)
-    C_Timer = {
+    --! WotLK fix (coexistence): was a full overwrite of the global C_Timer, which
+    --! wiped the timer table another addon (or our own embedded ClassicAPI) already
+    --! owned together with every ticker registered in it. This pooled version stays
+    --! ours: it is kept as Cell.C_Timer, becomes the private CellClassicAPI copy
+    --! (it is the fixed one - honours the iterations argument and recycles handles),
+    --! and the global only receives the keys nobody defined.
+    local C_Timer = {
         After = function(durationOrSelf, callbackOrDuration, maybeCallback)
             -- Handle both C_Timer.After(duration, callback) and C_Timer:After(duration, callback)
             local duration, callback
@@ -1751,6 +1845,17 @@ do
             return CreateTimer(duration, callback, iterations)
         end
     }
+
+    --! Single owner: two pooled implementations meant two OnUpdate driver frames, and
+    --! which one served Cell depended on load order. Reuse the library table (nothing in
+    --! Cell calls C_Timer with colon syntax, so its plain-dot signatures are enough) and
+    --! add only the keys it lacks.
+    if ( CAPI and type(CAPI.C_Timer) == "table" ) then
+        C_Timer = FillMissing(CAPI.C_Timer, C_Timer)
+    end
+
+    Cell.C_Timer = C_Timer
+    CoexistMerge("C_Timer", C_Timer)
 end
 
 -- C_Spell
@@ -1909,25 +2014,28 @@ if not C_UnitAuras then
     end
 
     function C_UnitAuras.GetAuraDataBySpellName(unit, spellName, filter)
-        for i = 1, 40 do
-            local name, rank, icon, count, debuffType, duration, expirationTime, unitCaster, isStealable, shouldConsolidate, spellId = safeUnitAura(unit, i, filter)
-            if not name then break end
-            if name == spellName then
-                return {
-                    name = name,
-                    icon = icon,
-                    count = count,
-                    debuffType = debuffType,
-                    duration = duration,
-                    expirationTime = expirationTime,
-                    sourceUnit = unitCaster,
-                    isStealable = isStealable,
-                    spellId = spellId,
-                    points = {} -- Placeholder
-                }
-            end
-        end
-        return nil
+        --! WotLK fix: 3.3.5 can look an aura up by NAME natively -
+        --! UnitBuff/UnitDebuff("unit", "name") - so the 40-slot scan (up to 40
+        --! UnitAura calls per lookup, 18 lookups per UNIT_AURA in BuffTracker)
+        --! is pure waste. Note UnitAura(unit, "name", ...) takes RANK as the
+        --! 3rd argument, not a filter - hence picking the function by filter.
+        if not unit or unit == "" or not spellName then return nil end
+        local get = (filter and strfind(filter, "HARMFUL")) and UnitDebuff or UnitBuff
+        local name, rank, icon, count, debuffType, duration, expirationTime,
+              unitCaster, isStealable, shouldConsolidate, spellId = get(unit, spellName)
+        if not name then return nil end
+        return {
+            name = name,
+            icon = icon,
+            count = count,
+            debuffType = debuffType,
+            duration = duration,
+            expirationTime = expirationTime,
+            sourceUnit = unitCaster,
+            isStealable = isStealable,
+            spellId = spellId,
+            points = {} -- Placeholder
+        }
     end
 
     function C_UnitAuras.GetAuraSlots(unit, filter, maxSlots)
@@ -2166,8 +2274,16 @@ do
 end
 
 -- SOUNDKIT
-if not SOUNDKIT then
-    SOUNDKIT = {
+--! WotLK fix: MERGE the defaults instead of the old all-or-nothing `if not SOUNDKIT`.
+--! The standalone !!!ClassicAPI addon (Util/SoundKit.lua) creates SOUNDKIT before Cell
+--! loads, but ships only 12 keys and has NO U_CHAT_SCROLL_BUTTON - it spells that
+--! sound as GS_LOGIN_CHANGE_REALM_OK. With the old guard Cell skipped its own table
+--! entirely, so every button/checkbox PostClick called PlaySound(nil) and threw
+--! "Usage: PlaySound(\"sound\")", which aborted the whole click chain: option
+--! dropdowns appeared to accept a choice but never applied it.
+--! Filling only the missing keys keeps whatever another addon already defined.
+do
+    local soundkitDefaults = {
         U_CHAT_SCROLL_BUTTON = "UChatScrollButton",
         IG_MAINMENU_OPTION_CHECKBOX_ON = "igMainMenuOptionCheckBoxOn",
         IG_MAINMENU_OPTION_CHECKBOX_OFF = "igMainMenuOptionCheckBoxOff",
@@ -2178,6 +2294,10 @@ if not SOUNDKIT then
         IG_BACKPACK_OPEN = "igBackPackOpen",
         IG_BACKPACK_CLOSE = "igBackPackClose",
     }
+    if type(SOUNDKIT) ~= "table" then SOUNDKIT = {} end
+    for k, v in pairs(soundkitDefaults) do
+        if SOUNDKIT[k] == nil then SOUNDKIT[k] = v end
+    end
 end
 
 -- C_ClassTalents (Retail talent system, not in WotLK)
@@ -2364,9 +2484,13 @@ if not MapUtil then
 end
 
 -- Enum (doesn't exist in WotLK 3.3.5a)
-if not Enum then
+--! WotLK fix (coexistence): Enum may already belong to the standalone
+--! !!!ClassicAPI; every sub-table below is filled only when missing, so keep a
+--! reference to whichever table won instead of replacing it.
+if type(Enum) ~= "table" then
     Enum = {}
 end
+Cell.Enum = Enum
 
 -- UIMapType enum (retail feature, doesn't exist in WotLK)
 if not Enum.UIMapType then
@@ -2432,28 +2556,23 @@ if not UnitIsGroupAssistant then
     end
 end
 
--- PlaySound wrapper for WotLK compatibility
--- In WotLK 3.3.5a, PlaySound signature is different from retail
--- Store original PlaySound and wrap it to handle errors gracefully
-do
-    local _originalPlaySound = PlaySound
-    if _originalPlaySound then
-        PlaySound = function(soundKit, channel)
-            -- In WotLK, PlaySound only takes soundFile/soundName, not soundKitID + channel
-            -- Silently fail if sound doesn't work
-            pcall(_originalPlaySound, soundKit)
-        end
-    end
-end
+--! WotLK fix: removed the global PlaySound wrapper that used to live here.
+--! It replaced the native C function with a Lua closure + pcall for the WHOLE
+--! UI (FrameXML bags, spellbook, chat, auction house), silently dropped the
+--! channel argument and swallowed errors. Cell only ever passes valid 3.3.5
+--! string names from its own SOUNDKIT table above, so no wrapper is needed.
 
 -- GetNormalizedRealmName
--- In WotLK 3.3.5a (Ascension), this function exists but might be broken (calls nil 'Sub')
--- We overwrite it to ensure it works correctly
-GetNormalizedRealmName = function()
-    local realm = GetRealmName()
-    if not realm then return "" end
-    -- Remove spaces to normalize
-    return string.gsub(realm, "%s+", "")
+--! WotLK fix: this was defined unconditionally and shadowed the correct
+--! ClassicAPI version (Libs/ClassicAPI/Util/API.lua:122, loaded earlier), which
+--! also strips dashes. Worse, `return string.gsub(...)` leaks gsub's second
+--! return (the replacement count) into every caller. Guard + parenthesise.
+if not GetNormalizedRealmName then
+    function GetNormalizedRealmName()
+        local realm = GetRealmName()
+        if not realm then return "" end
+        return (string.gsub(realm, "[-%s]", ""))
+    end
 end
 
 -- IsEncounterInProgress (doesn't exist in WotLK 3.3.5a)
@@ -2928,104 +3047,12 @@ end
 -------------------------------------------------
 
 -------------------------------------------------
--- DEBUG: Track font modifications to find root cause
+--! WotLK fix: removed the leftover SetFont/SetFontObject debug hooks (and the
+--! /celldebug slash command) that used to live here. SetFont/SetFontObject are
+--! native FontInstance methods on 3.3.5, and the hooks sat on the SHARED
+--! FontString metatable: every font change in FrameXML and in every other addon
+--! paid a Lua frame + GetParent + 2x GetName + debugstack(2,3,0) + 6 string.match.
 -------------------------------------------------
-do
-    local debugLog = {}
-    local fs = UIParent:CreateFontString()
-    local mt = getmetatable(fs)
-
-    if mt and mt.__index and not mt.__index._CellDebugHooked then
-        local origSetFont = mt.__index.SetFont
-        local origSetFontObject = mt.__index.SetFontObject
-
-        -- Hook SetFont to track who's modifying fonts
-        mt.__index.SetFont = function(self, path, size, flags)
-            local parent = self:GetParent()
-            local parentName = parent and parent:GetName() or ""
-            local selfName = self:GetName() or ""
-            local caller = debugstack(2, 3, 0)
-
-            -- ONLY alert if Cell is modifying NotPlater/Quartz/XPerl frames
-            local isTargetAddon = parentName:match("Quartz") or parentName:match("NotPlater") or
-                                 parentName:match("XPerl") or selfName:match("Quartz") or
-                                 selfName:match("NotPlater") or selfName:match("XPerl")
-
-            if isTargetAddon and caller:match("Cell") then
-                print(string.format("|cFFFF0000[Cell Debug]|r Cell modifying %s addon!",
-                    parentName:match("Quartz") and "Quartz" or parentName:match("NotPlater") and "NotPlater" or "XPerl"))
-                print("  Parent: " .. (parentName ~= "" and parentName or "nil"))
-                print("  Self: " .. (selfName ~= "" and selfName or "nil"))
-                print("  Size: " .. tostring(size))
-                print("  Stack:\n" .. caller)
-
-                table.insert(debugLog, {
-                    time = GetTime(),
-                    parent = parentName,
-                    self = selfName,
-                    path = path,
-                    size = size,
-                    flags = flags or "none",
-                    caller = caller
-                })
-            end
-
-            return origSetFont(self, path, size, flags)
-        end
-
-        -- Hook SetFontObject
-        mt.__index.SetFontObject = function(self, fontObj)
-            local parent = self:GetParent()
-            local parentName = parent and parent:GetName() or ""
-            local selfName = self:GetName() or ""
-            local caller = debugstack(2, 3, 0)
-
-            -- ONLY alert if Cell is modifying NotPlater/Quartz/XPerl frames
-            local isTargetAddon = parentName:match("Quartz") or parentName:match("NotPlater") or
-                                 parentName:match("XPerl") or selfName:match("Quartz") or
-                                 selfName:match("NotPlater") or selfName:match("XPerl")
-
-            if isTargetAddon and caller:match("Cell") then
-                print(string.format("|cFFFF0000[Cell Debug]|r Cell SetFontObject on %s addon!",
-                    parentName:match("Quartz") and "Quartz" or parentName:match("NotPlater") and "NotPlater" or "XPerl"))
-                print("  Parent: " .. (parentName ~= "" and parentName or "nil"))
-                print("  Self: " .. (selfName ~= "" and selfName or "nil"))
-                print("  FontObj: " .. tostring(fontObj))
-                print("  Stack:\n" .. caller)
-            end
-
-            return origSetFontObject(self, fontObj)
-        end
-
-        mt.__index._CellDebugHooked = true
-
-        -- Export debug log
-        _G.CellDebugFontLog = debugLog
-
-        -- Slash command
-        SLASH_CELLDEBUG1 = "/celldebug"
-        SlashCmdList["CELLDEBUG"] = function(msg)
-            if msg == "fonts" then
-                print("=== Cell Font Debug Log (" .. #debugLog .. " entries) ===")
-                for i = math.max(1, #debugLog - 20), #debugLog do
-                    local e = debugLog[i]
-                    print(string.format("[%.2f] %s.%s size=%s",
-                        e.time, e.parent, e.self, tostring(e.size)))
-                    if e.caller:match("Cell") then
-                        print("  |cFFFF0000FROM CELL:|r " .. e.caller:match("[^\n]+"))
-                    end
-                end
-            elseif msg == "clear" then
-                wipe(debugLog)
-                print("Debug log cleared")
-            else
-                print("Cell Debug: /celldebug fonts | clear")
-            end
-        end
-
-        -- print("|cFF00FF00[Cell]|r Debug logging active. Use /celldebug fonts")
-    end
-end
 
 -- Fonts
 -- NOTE: Font objects are created in Widgets/Widgets.lua and Indicators/Built-in.lua
@@ -3297,7 +3324,11 @@ do
 
 
     -- Fix 1: ScrollFrame eats clicks
-    function PatchCreateScrollFrame()
+    --! WotLK fix: these two patch helpers were global. On 3.3.5 every addon
+    --! shares one _G, so unprefixed names like PatchCreateScrollFrame /
+    --! PatchBindingListButton can be clobbered by any other addon. Both are
+    --! only called at the bottom of this same do-block, so make them local.
+    local function PatchCreateScrollFrame()
         if not Cell or not Cell.CreateScrollFrame then return end
         if Cell._ScrollFramePatchedForBindings then return end
         Cell._ScrollFramePatchedForBindings = true
@@ -3319,7 +3350,7 @@ do
     end
 
     -- Fix 2: BindingListButton grids have too low frame level (6 vs 530+)
-    function PatchBindingListButton()
+    local function PatchBindingListButton()
         if not Cell or not Cell.CreateBindingListButton then return end
         if Cell._BindingListButtonPatched then return end
         Cell._BindingListButtonPatched = true

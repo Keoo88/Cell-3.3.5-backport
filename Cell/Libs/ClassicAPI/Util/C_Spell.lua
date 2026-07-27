@@ -1,8 +1,8 @@
---! Cell: this is a private, trimmed fork of Tsoukie's ClassicAPI.
---! If the standalone !!!ClassicAPI addon is installed (Gladdy requires it), it
---! loads first and owns these globals. Overwriting them with this older subset
---! mixes two incompatible halves of the same library, so bail out instead.
-if IsAddOnLoaded and IsAddOnLoaded("!!!ClassicAPI") then return end
+--! Cell: private, trimmed fork of Tsoukie's ClassicAPI.
+--! Coexistence rules live in Util/Coexist.lua: never bail out of a file, never
+--! overwrite a global somebody else owns (gap-fill only), keep our own copy in the
+--! private CellClassicAPI namespace. Names published here are not native to 3.3.5a
+--! (verified against milkyway-codex).
 
 local _, Private = ...
 
@@ -15,7 +15,8 @@ local Tooltip = Private.Tooltip
 local EventHandler = Private.EventHandler
 local EventHandler_Fire = EventHandler.Fire
 
-local C_Spell = C_Spell or {}
+-- Own table: filling a foreign C_Spell in place would overwrite its methods.
+local C_Spell = {}
 
 function C_Spell.IsSpellDataCached(ID)
 	return GetSpellInfo(ID) ~= nil
@@ -120,14 +121,14 @@ C_Spell.GetSpellCastCount = Private.Zero
 C_Spell.GetSpellCharges = Private.Void
 
 -- Global
-_G.C_Spell = C_Spell
+Private.Merge("C_Spell", C_Spell)
 
 -- Global Deprecated (Compatibility)
-_G.C_GetSpellTexture = C_Spell.GetSpellTexture
-_G.GetSpellSubtext = C_Spell.GetSpellSubtext
-_G.DoesSpellExist = C_Spell.DoesSpellExist
-_G.GetSpellDescription = C_Spell.GetSpellDescription
-_G.C_GetSpellInfo = function(ID, BookType)
+Private.Provide("C_GetSpellTexture", C_Spell.GetSpellTexture)
+Private.Provide("GetSpellSubtext", C_Spell.GetSpellSubtext)
+Private.Provide("DoesSpellExist", C_Spell.DoesSpellExist)
+Private.Provide("GetSpellDescription", C_Spell.GetSpellDescription)
+Private.Provide("C_GetSpellInfo", function(ID, BookType)
 	local _, Name, Rank, Icon, CastTime, RangeMin, RangeMax
 
 	if ( ID ) then
@@ -140,4 +141,4 @@ _G.C_GetSpellInfo = function(ID, BookType)
 	end
 
 	return Name, Rank, Icon, CastTime, RangeMin, RangeMax, ID
-end
+end)

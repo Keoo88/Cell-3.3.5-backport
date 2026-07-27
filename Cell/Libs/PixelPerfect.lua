@@ -161,7 +161,10 @@ end
 --     end
 -- end
 
-local GetNearestPixelSize = PixelUtil.GetNearestPixelSize
+--! WotLK fix (coexistence): prefer OUR PixelUtil (Cell.PixelUtil) - the global
+--! one may come from the standalone !!!ClassicAPI, whose pixel math is built on
+--! scale dependent UI units instead of the real screen resolution.
+local GetNearestPixelSize = ((_G.Cell and _G.Cell.PixelUtil) or PixelUtil).GetNearestPixelSize
 
 function P.Scale(desiredPixels)
     return GetNearestPixelSize(desiredPixels, CellParent:GetEffectiveScale())
@@ -357,7 +360,10 @@ end
 --     end
 -- end
 
-local GetNearestPixelSize = PixelUtil.GetNearestPixelSize
+--! WotLK fix (coexistence): prefer OUR PixelUtil (Cell.PixelUtil) - the global
+--! one may come from the standalone !!!ClassicAPI, whose pixel math is built on
+--! scale dependent UI units instead of the real screen resolution.
+local GetNearestPixelSize = ((_G.Cell and _G.Cell.PixelUtil) or PixelUtil).GetNearestPixelSize
 
 function P.Scale(desiredPixels)
     return GetNearestPixelSize(desiredPixels, CellParent:GetEffectiveScale())

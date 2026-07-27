@@ -41,7 +41,12 @@ local L = Cell.L
 --! Anything older than that relies on Revise.lua migrations, and those only ever run
 --! against the local saved DB - never against imported data - so importing an older
 --! payload would inject an outdated shape and error out later at runtime.
-Cell.MIN_VERSION = 269
+--! WotLK fix: MIN_VERSION is ALSO the "unsupported saved DB" floor (Revise.lua:17/:32),
+--! so raising it to 269 made every local DB at revise 246..268 offer a full settings reset
+--! instead of migrating - Revise.lua:3317/3322/3335/3374/3391/3400 became unreachable.
+--! The DB floor is back to upstream's 246; the import floor keeps 269 as MIN_IMPORT_VERSION.
+Cell.MIN_VERSION = 246          -- unsupported-DB floor, used by Revise.lua
+Cell.MIN_IMPORT_VERSION = 269   -- floor for accepted import strings
 Cell.MIN_CLICKCASTINGS_VERSION = 269
 Cell.MIN_LAYOUTS_VERSION = 269
 Cell.MIN_INDICATORS_VERSION = 269
@@ -189,7 +194,9 @@ local GetNumGroupMembers = GetNumGroupMembers
 local GetRaidRosterInfo = GetRaidRosterInfo
 local UnitGUID = UnitGUID
 -- local IsInBattleGround = C_PvP.IsBattleground -- NOTE: can't get valid value immediately after PLAYER_ENTERING_WORLD
-local GetAddOnMetadata = C_AddOns and C_AddOns.GetAddOnMetadata or GetAddOnMetadata
+--! WotLK fix: C_AddOns is a shim whose GetAddOnMetadata is a bare alias of the
+--! native function (Libs/ClassicAPI/Util/C_AddOns.lua:72)
+local GetAddOnMetadata = GetAddOnMetadata
 
 -- local cellLoaded, omnicdLoaded
 function eventFrame:ADDON_LOADED(arg1)
@@ -583,7 +590,10 @@ local function DoGroupRosterUpdate()
         -- update guid & raid setup
         for i = 1, GetNumGroupMembers() do
             -- update raid setup
-            local _, _, _, _, _, class, _, _, _, _, _, role = GetRaidRosterInfo(i)
+            --! WotLK fix: GetRaidRosterInfo has no 12th return (combatRole) on 3.3.5;
+            --! use the same resolver everything else in Cell uses.
+            local _, _, _, _, _, class = GetRaidRosterInfo(i)
+            local role = Cell_UnitGroupRolesAssigned("raid"..i)
             if not role or role == "NONE" then role = "DAMAGER" end
             -- update ALL
             Cell.vars.raidSetup[role]["ALL"] = Cell.vars.raidSetup[role]["ALL"] + 1
@@ -677,6 +687,10 @@ end
 local inInstance
 function eventFrame:PLAYER_ENTERING_WORLD()
     local isIn, iType = IsInInstance()
+    --! WotLK fix: upstream Core.lua sets these two, the Wrath branch lost them;
+    --! Layouts.lua:2902 marks the "current layout" star from Cell.vars.inInstance.
+    Cell.vars.inInstance = isIn
+    Cell.vars.instanceType = iType
     instanceType = iType
     Cell.vars.raidType = nil
 
@@ -933,12 +947,16 @@ SLASH_CELL1 = "/cell"
 function SlashCmdList.CELL(msg, editbox)
     local command, rest = msg:match("^(%S*)%s*(.-)$")
     command = strlower(command or "")
-    rest = strlower(rest or "")
+    --! WotLK fix: keep the original case of the argument tail. The debug extension
+    --! takes API function names and event names (/cell debug ret GetRaidRosterInfo,
+    --! /cell debug ev READY_CHECK_CONFIRM), and those are case-sensitive lookups.
+    local restRaw = rest or ""
+    rest = strlower(restRaw)
 
     if command == "debug" then
         -- Delegate to the debug module if it's loaded
         if Cell.Debug and Cell.Debug.HandleCommand then
-            Cell.Debug:HandleCommand(rest)
+            Cell.Debug:HandleCommand(rest, restRaw)
         else
             F.Print("Debug module not loaded.")
         end

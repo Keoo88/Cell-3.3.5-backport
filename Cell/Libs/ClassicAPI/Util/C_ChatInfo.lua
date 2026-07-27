@@ -1,8 +1,8 @@
---! Cell: this is a private, trimmed fork of Tsoukie's ClassicAPI.
---! If the standalone !!!ClassicAPI addon is installed (Gladdy requires it), it
---! loads first and owns these globals. Overwriting them with this older subset
---! mixes two incompatible halves of the same library, so bail out instead.
-if IsAddOnLoaded and IsAddOnLoaded("!!!ClassicAPI") then return end
+--! Cell: private, trimmed fork of Tsoukie's ClassicAPI.
+--! Coexistence rules live in Util/Coexist.lua: never bail out of a file, never
+--! overwrite a global somebody else owns (gap-fill only), keep our own copy in the
+--! private CellClassicAPI namespace. Names published here are not native to 3.3.5a
+--! (verified against milkyway-codex).
 
 local _, Private = ...
 
@@ -15,7 +15,8 @@ local GetNumLanguages = GetNumLanguages
 local SendAddonMessage = SendAddonMessage
 local GetLanguageByIndex = GetLanguageByIndex
 
-local C_ChatInfo = C_ChatInfo or {}
+-- Own table: filling a foreign C_ChatInfo in place would overwrite its methods.
+local C_ChatInfo = {}
 local LanguageIDList
 
 function C_ChatInfo.CanPlayerSpeakLanguage(LanguageID)
@@ -109,13 +110,18 @@ C_ChatInfo.UncensorChatLine
 ]]
 
 -- Global
-_G.C_ChatInfo = C_ChatInfo
+Private.Merge("C_ChatInfo", C_ChatInfo)
 
 --[[
 	CHATTHROTTLELIB OVERRIDE
 ]]
 
+--! WotLK fix (coexistence): only one ClassicAPI may wrap ChatThrottleLib. When the
+--! standalone !!!ClassicAPI is installed it already did this, and wrapping the wrapper
+--! would send every addon message through two throttles. Also guard against CTL being
+--! absent, which used to be a nil index right here.
 local CTL = _G.ChatThrottleLib
+if ( CTL and not Private.Own.__meta.standalone and CTL.version ~= 50 ) then
 local CTL_SendAddonMessage = CTL.SendAddonMessage
 CTL.version = 50 -- Force ClassicAPI CTL.
 CTL.SendAddonMessage = function(...)
@@ -124,3 +130,4 @@ CTL.SendAddonMessage = function(...)
 		return CTL_SendAddonMessage(...)
 	end
 end
+end --! WotLK fix: closes the coexistence guard above.

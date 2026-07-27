@@ -1,14 +1,22 @@
---! Cell: this is a private, trimmed fork of Tsoukie's ClassicAPI.
---! If the standalone !!!ClassicAPI addon is installed (Gladdy requires it), it
---! loads first and owns these globals. Overwriting them with this older subset
---! mixes two incompatible halves of the same library, so bail out instead.
-if IsAddOnLoaded and IsAddOnLoaded("!!!ClassicAPI") then return end
+--! Cell: private, trimmed fork of Tsoukie's ClassicAPI.
+--! Coexistence rules live in Util/Coexist.lua: never bail out of a file, never
+--! overwrite a global somebody else owns (gap-fill only), keep our own copy in the
+--! private CellClassicAPI namespace. Names published here are not native to 3.3.5a
+--! (verified against milkyway-codex).
+
+local _, Private = ...
+
+-- Forward-declared as locals: the definitions below now fill these locals, not
+-- globals. Publishing happens at the bottom of the file through Private.Provide,
+-- which only writes a global when nobody else owns that name.
+local ExtractColorValueFromHex, CreateColorFromHexString, CreateColorFromBytes, AreColorsEqual,
+      GetClassColor, GetClassColorObj, GetClassColoredTextForUnit, GetFactionColor
 
 local RAID_CLASS_COLORS = RAID_CLASS_COLORS
-local CreateColor = CreateColor
-local ColorMixin = ColorMixin
+local CreateColor = Private.Own.CreateColor or CreateColor
+local ColorMixin = Private.Own.ColorMixin or ColorMixin
 local UnitClass = UnitClass
-local Mixin = Mixin
+local Mixin = Private.Own.Mixin or Mixin
 
 for _, classColor in pairs(RAID_CLASS_COLORS) do
 	Mixin(classColor, ColorMixin);
@@ -62,3 +70,13 @@ end
 function GetFactionColor(factionGroupTag)
 	return PLAYER_FACTION_COLORS[PLAYER_FACTION_GROUP[factionGroupTag]];
 end
+
+-- Publish: gap-fill only, ours stays reachable via CellClassicAPI.<name>
+Private.Provide("ExtractColorValueFromHex", ExtractColorValueFromHex)
+Private.Provide("CreateColorFromHexString", CreateColorFromHexString)
+Private.Provide("CreateColorFromBytes", CreateColorFromBytes)
+Private.Provide("AreColorsEqual", AreColorsEqual)
+Private.Provide("GetClassColor", GetClassColor)
+Private.Provide("GetClassColorObj", GetClassColorObj)
+Private.Provide("GetClassColoredTextForUnit", GetClassColoredTextForUnit)
+Private.Provide("GetFactionColor", GetFactionColor)

@@ -1,4 +1,11 @@
 local _, Cell = ...
+
+--! WotLK fix (coexistence): our PixelUtil (Cell.PixelUtil, built in Polyfills.lua)
+--! is the one whose GetNearestPixelSize/SetPoint use the real gxResolution based
+--! screen size. The global may belong to the standalone !!!ClassicAPI, so read ours
+--! first and fall back to the global only if Polyfills has not run yet.
+local PixelUtil = (Cell and Cell.PixelUtil) or _G.PixelUtil
+
 local L = Cell.L
 local F = Cell.funcs
 local I = Cell.iFuncs
@@ -28,74 +35,6 @@ local requiredBuffs = {}
 local available = {}
 local unaffected = {}
 
-if Cell.isVanilla then
-    buffs = {
-        -- 1243: Power Word: Fortitude
-        -- 21562: Prayer of Fortitude
-        ["PWF"] = {buff1 = 1243, buff2 = 21562, provider = "PRIEST", order = 1},
-
-        -- 14752: Divine Spirit
-        -- 27681: Prayer of Spirit
-        ["DS"] = {buff1 = 14752, buff2 = 27681, provider = "PRIEST", order = 8},
-
-        -- 976: Shadow Protection
-        -- 27683: Prayer of Shadow Protection
-        ["SP"] = {buff1 = 976, buff2 = 27683, provider = "PRIEST", order = 9},
-
-        -- 1459: Arcane Intellect
-        -- 23028: Arcane Brilliance
-        ["AB"] = {buff1 = 1459, buff2 = 23028, provider = "MAGE", order = 2},
-
-        -- 6673: Battle Shout
-        -- ["BS"] = {buff1 = 6673, provider = "WARRIOR", order = 3},
-
-        -- 1126: Mark of the Wild
-        -- 21849: Gift of the Wild
-        ["MotW"] = {buff1 = 1126, buff2 = 21849, provider = "DRUID", order = 3},
-
-        -- 20217: Blessing of Kings
-        -- 25898: Greater Blessing of Kings
-        ["BoK"] = {buff1 = 20217, buff2 = 25898, provider = "PALADIN", order = 4},
-
-        -- 19740: Blessing of Might
-        -- 25782: Greater Blessing of Might
-        ["BoM"] = {buff1 = 19740, buff2 = 25782, provider = "PALADIN", order = 5},
-
-        -- 19742: Blessing of Wisdom
-        -- 25894: Greater Blessing of Wisdom
-        ["BoW"] = {buff1 = 19742, buff2 = 25894, provider = "PALADIN", order = 6},
-
-        -- 20911: Blessing of Sanctuary
-        -- 25899: Greater Blessing of Sanctuary
-        ["BoS"] = {buff1 = 20911, buff2 = 25899, provider = "PALADIN", order = 7},
-    }
-
-    requiredBuffs = {
-        ["WARRIOR"] = {["PWF"] = true, ["MotW"] = true, ["BoK"] = true, ["BoM"] = true, ["BoS"] = true, ["SP"] = true},
-        ["PALADIN"] = {["PWF"] = true, ["AB"] = true, ["DS"] = true, ["MotW"] = true, ["BoK"] = true, ["BoM"] = true, ["BoW"] = true, ["BoS"] = true, ["SP"] = true},
-        ["HUNTER"] = {["PWF"] = true, ["AB"] = true, ["MotW"] = true, ["BoK"] = true, ["BoM"] = true, ["BoS"] = true, ["SP"] = true},
-        ["ROGUE"] = {["PWF"] = true, ["MotW"] = true, ["BoK"] = true, ["BoM"] = true, ["BoS"] = true, ["SP"] = true},
-        ["PRIEST"] = {["PWF"] = true, ["AB"] = true, ["DS"] = true, ["MotW"] = true, ["BoK"] = true, ["BoW"] = true, ["BoS"] = true, ["SP"] = true},
-        ["DEATHKNIGHT"] = {["PWF"] = true, ["MotW"] = true, ["BoK"] = true, ["BoM"] = true, ["BoS"] = true, ["SP"] = true},
-        ["SHAMAN"] = {["PWF"] = true, ["AB"] = true, ["DS"] = true, ["MotW"] = true, ["BoK"] = true, ["BoM"] = true, ["BoW"] = true, ["BoS"] = true, ["SP"] = true},
-        ["MAGE"] = {["PWF"] = true, ["AB"] = true, ["MotW"] = true, ["BoK"] = true, ["BoW"] = true, ["BoS"] = true, ["SP"] = true},
-        ["WARLOCK"] = {["PWF"] = true, ["AB"] = true, ["MotW"] = true, ["BoK"] = true, ["BoW"] = true, ["BoS"] = true, ["SP"] = true},
-        ["DRUID"] = {["PWF"] = true, ["AB"] = true, ["DS"] = true, ["MotW"] = true, ["BoK"] = true, ["BoM"] = true, ["BoW"] = true, ["BoS"] = true, ["SP"] = true},
-    }
-
-    unaffected = {
-        ["PWF"] = {},
-        ["AB"] = {},
-        ["DS"] = {},
-        ["MotW"] = {},
-        ["BoK"] = {},
-        ["BoM"] = {},
-        ["BoW"] = {},
-        ["BoS"] = {},
-        ["SP"] = {},
-    }
-
-elseif Cell.isWrath then
     buffs = {
         -- 1243: Power Word: Fortitude
         -- 21562: Prayer of Fortitude
@@ -164,56 +103,6 @@ elseif Cell.isWrath then
         ["BoS"] = {},
         ["SP"] = {},
     }
-
-elseif Cell.isCata then
-    buffs = {
-        -- 21562: Power Word: Fortitude
-        ["PWF"] = {buff1 = 21562, provider = "PRIEST", level = 14, order = 1},
-
-        -- 27683: Shadow Protection
-        ["SP"] = {buff1 = 27683, provider = "PRIEST", level = 52, order = 6},
-
-        -- 1459: Arcane Brilliance
-        ["AB"] = {buff1 = 1459, buff2 = 79058, provider = "MAGE", level = 58, order = 2},
-
-        -- 6673: Battle Shout
-        -- ["BS"] = {buff1 = 6673, provider = "WARRIOR", level = 20},
-
-        -- 469: Commanding Shout
-        -- ["CS"] = {buff1 = 469, provider = "WARRIOR", level = 68},
-
-        -- 1126: Mark of the Wild
-        ["MotW"] = {buff1 = 1126, provider = "DRUID", level = 30, order = 3},
-
-        -- 20217: Blessing of Kings
-        ["BoK"] = {buff1 = 20217, provider = "PALADIN", level = 22, order = 4},
-
-        -- 19740: Blessing of Might
-        ["BoM"] = {buff1 = 19740, provider = "PALADIN", level = 56, order = 5},
-    }
-
-    requiredBuffs = {
-        ["WARRIOR"] = {["PWF"] = true, ["MotW"] = true, ["BoK"] = true, ["BoM"] = true, ["SP"] = true},
-        ["PALADIN"] = {["PWF"] = true, ["AB"] = true, ["MotW"] = true, ["BoK"] = true, ["BoM"] = true, ["SP"] = true},
-        ["HUNTER"] = {["PWF"] = true, ["MotW"] = true, ["BoK"] = true, ["BoM"] = true, ["SP"] = true},
-        ["ROGUE"] = {["PWF"] = true, ["MotW"] = true, ["BoK"] = true, ["BoM"] = true, ["SP"] = true},
-        ["PRIEST"] = {["PWF"] = true, ["AB"] = true, ["MotW"] = true, ["BoK"] = true, ["SP"] = true},
-        ["DEATHKNIGHT"] = {["PWF"] = true, ["MotW"] = true, ["BoK"] = true, ["BoM"] = true, ["SP"] = true},
-        ["SHAMAN"] = {["PWF"] = true, ["AB"] = true, ["MotW"] = true, ["BoK"] = true, ["BoM"] = true, ["SP"] = true},
-        ["MAGE"] = {["PWF"] = true, ["AB"] = true, ["MotW"] = true, ["BoK"] = true, ["SP"] = true},
-        ["WARLOCK"] = {["PWF"] = true, ["AB"] = true, ["MotW"] = true, ["BoK"] = true, ["SP"] = true},
-        ["DRUID"] = {["PWF"] = true, ["AB"] = true, ["MotW"] = true, ["BoK"] = true, ["BoM"] = true, ["SP"] = true},
-    }
-
-    unaffected = {
-        ["PWF"] = {},
-        ["AB"] = {},
-        ["MotW"] = {},
-        ["BoK"] = {},
-        ["BoM"] = {},
-        ["SP"] = {},
-    }
-end
 
 ---------------------------------------------------------------------
 -- prepare

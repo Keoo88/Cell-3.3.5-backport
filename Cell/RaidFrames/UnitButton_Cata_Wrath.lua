@@ -68,7 +68,9 @@ local UnitBuff = UnitBuff
 local UnitDebuff = UnitDebuff
 local IsInRaid = IsInRaid
 local UnitDetailedThreatSituation = UnitDetailedThreatSituation
-local CombatLogGetCurrentEventInfo = CombatLogGetCurrentEventInfo
+--! WotLK fix (coexistence): our translator, never the possibly foreign global
+--! published by the standalone !!!ClassicAPI (different semantics).
+local CombatLogGetCurrentEventInfo = (_G.CellClassicAPI and _G.CellClassicAPI.CombatLogGetCurrentEventInfo) or CombatLogGetCurrentEventInfo
 local GetSpellInfo = GetSpellInfo
 
 
@@ -107,6 +109,14 @@ local function IsWeakenedSoul(spellId, spellName)
     end
 
     return false
+end
+
+--! WotLK fix: restore upstream's Weakened Soul filter, lost in the backport.
+--! 6788 is not in the default debuff blacklist, so with a disc priest around a
+--! 15s debuff sat on every shielded player and pushed real debuffs out of the
+--! three Debuffs slots. Upstream hides it from everyone but priests.
+local function FilterWeakenedSoul(spellId)
+    return spellId ~= 6788 or Cell.vars.playerClass == "PRIEST"
 end
 
 -------------------------------------------------
@@ -1189,7 +1199,7 @@ local function UnitButton_UpdateDebuffs(self)
                 refreshing = false
             end
 
-            if enabledIndicators["debuffs"] and not Cell.vars.debuffBlacklist[spellId] then
+            if enabledIndicators["debuffs"] and not Cell.vars.debuffBlacklist[spellId] and FilterWeakenedSoul(spellId) then
                 local isBigDebuff = Cell.vars.bigDebuffs[spellId]
                 if not isBigDebuff and name then
                     isBigDebuff = Cell.vars.bigDebuffNames[name]
@@ -2477,6 +2487,16 @@ local function _UpdateShield(b, current, max, resetMax)
     UnitButton_UpdatePowerWordShield(b, current, max, resetMax)
 end
 
+-- Localized Spell Names (Priest)
+--! WotLK fix: hoisted these three up from below. In Lua 5.1 a local is only in
+--! scope AFTER its declaration, so PWS_NAME read inside UpdateShield - which sat
+--! above the old declaration site - compiled as a nil global: absorbInfos[guid][nil]
+--! is nil, so pws was always 0 and the Power Word: Shield indicator never moved.
+--! (An earlier literal duplicate of two of them was removed here as well.)
+local PWS_NAME = GetSpellInfo(17) or "Power Word: Shield"
+local DA_NAME = GetSpellInfo(47753) or "Divine Aegis"
+local PAK_NAME = GetSpellInfo(64413) or "Protection of Ancient Kings"
+
 local function UpdateShield(guid, max, resetMax)
     local pws = absorbInfos[guid] and absorbInfos[guid][PWS_NAME] or 0
     F.HandleUnitButton("guid", guid, _UpdateShield, pws, max, resetMax)
@@ -2493,12 +2513,6 @@ local blessing
 local lastHealTimeStamp = {}
 
 -- Localized Spell Names
---! WotLK fix: removed a literal duplicate of these two locals that immediately
---! shadowed this pair (cosmetic, backlog item 3)
-local PWS_NAME = GetSpellInfo(17) or "Power Word: Shield"
-local DA_NAME = GetSpellInfo(47753) or "Divine Aegis"
-local PAK_NAME = GetSpellInfo(64413) or "Protection of Ancient Kings"
-
 -- Shaman
 local STONECLAW_NAME = GetSpellInfo(55277) or "Stoneclaw Totem"
 -- Mage
@@ -2725,7 +2739,14 @@ cleu:SetScript("OnEvent", function(_, _, ...)
              UpdateShield(destGUID)
         end
     -- SPELL_DAMAGE / RANGE_DAMAGE: amount(12), ..., absorbed(17)
-    elseif subEvent == "SPELL_DAMAGE" or subEvent == "RANGE_DAMAGE" then
+    --! WotLK fix: SPELL_PERIODIC_DAMAGE, SPELL_BUILDING_DAMAGE, DAMAGE_SHIELD and
+    --! DAMAGE_SPLIT carry the same SPELL prefix (spellId, spellName, spellSchool),
+    --! so absorbed stays at arg17. Without the periodic variant every DoT tick ate
+    --! the shield without decrementing absorbInfos, and shieldBar kept showing
+    --! absorb the target no longer had.
+    elseif subEvent == "SPELL_DAMAGE" or subEvent == "RANGE_DAMAGE"
+        or subEvent == "SPELL_PERIODIC_DAMAGE" or subEvent == "SPELL_BUILDING_DAMAGE"
+        or subEvent == "DAMAGE_SHIELD" or subEvent == "DAMAGE_SPLIT" then
          local absorbed = arg17
          if absorbed and absorbed > 0 and absorbInfos[destGUID] then
              for spellName, amount in pairs(absorbInfos[destGUID]) do
@@ -2753,8 +2774,11 @@ cleu:SetScript("OnEvent", function(_, _, ...)
                   UpdateShield(destGUID)
              end
         end
-    elseif subEvent == "SPELL_MISSED" or subEvent == "RANGE_MISSED" then
-         if arg12 == "ABSORB" then 
+    --! WotLK fix: a tick absorbed in full arrives as SPELL_PERIODIC_MISSED with the
+    --! same layout - missType(12), amountMissed(13). DAMAGE_SHIELD_MISSED too.
+    elseif subEvent == "SPELL_MISSED" or subEvent == "RANGE_MISSED"
+        or subEvent == "SPELL_PERIODIC_MISSED" or subEvent == "DAMAGE_SHIELD_MISSED" then
+         if arg12 == "ABSORB" then
              local amount = arg13 --! WotLK fix: SPELL/RANGE_MISSED payload is spellId(9), spellName(10), school(11), missType(12), amountMissed(13) - arg14 was always nil
              if type(amount) == "number" and amount > 0 and absorbInfos[destGUID] then
                   local absorbed = amount
@@ -2768,6 +2792,22 @@ cleu:SetScript("OnEvent", function(_, _, ...)
                   UpdateShield(destGUID)
              end
         end
+
+    --! WotLK fix: ENVIRONMENTAL_DAMAGE has a single prefix arg (environmentalType),
+    --! so the damage suffix starts one slot earlier and absorbed sits at arg15,
+    --! not arg17. Fire, lava, falling and drowning eat the shield too.
+    elseif subEvent == "ENVIRONMENTAL_DAMAGE" then
+         local absorbed = arg15
+         if absorbed and absorbed > 0 and absorbInfos[destGUID] then
+             for spellName, amount in pairs(absorbInfos[destGUID]) do
+                 local deduct = math.min(amount, absorbed)
+                 absorbInfos[destGUID][spellName] = amount - deduct
+                 if absorbInfos[destGUID][spellName] <= 0 then absorbInfos[destGUID][spellName] = nil end
+                 absorbed = absorbed - deduct
+                 if absorbed <= 0 then break end
+             end
+             UpdateShield(destGUID)
+        end
     end
 end)
 
@@ -2776,35 +2816,33 @@ end)
 -------------------------------------------------
 local cleuHealthUpdater = CreateFrame("Frame", "CellCleuHealthUpdater")
 cleuHealthUpdater:SetScript("OnEvent", function(self, event, ...)
-    --! WotLK fix: this handler was silently dead. CombatLogGetCurrentEventInfo
-    --! DOES exist here (the ClassicAPI shim, loaded first via the TOC), so the
-    --! old "retail" branch was always taken - but that shim is an argument
-    --! TRANSLATOR (native varargs in, retail order out) that returns nothing
-    --! when called with no arguments, leaving every field nil. The old
-    --! "native" fallback was misaligned as well (it skipped a hideCaster slot
-    --! that does not exist on 3.3.5). Feed the varargs to the translator and
-    --! parse its retail-ordered result: the payload starts at slot 12, so the
-    --! arg12/arg15 offsets used by the diff logic below stay correct.
-    local _, subEvent, _, sourceGUID, sourceName, sourceFlags, _, destGUID, destName, destFlags, _, arg12, arg13, arg14, arg15, arg16, arg17, arg18, arg19, arg20, arg21, arg22 = CombatLogGetCurrentEventInfo(...)
+    --! WotLK fix/perf: CombatLogGetCurrentEventInfo does not exist on 3.3.5 - the
+    --! ClassicAPI version is a pure argument TRANSLATOR (20 params in, 23 returns
+    --! out) whose Lua frame was paid on EVERY combat-log event, before subEvent or
+    --! destFlags were even looked at; in a raid that is hundreds of calls a second.
+    --! Parse the native payload directly, like the cleu handler above does: there
+    --! is no hideCaster and there are no raid-flag slots here, so retail slot N is
+    --! native slot N-3 (amount: 15 -> 12 for spell/range, 12 -> 9 for swing).
+    local _, subEvent, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, arg9, arg10, arg11, arg12, arg13, arg14, arg15, arg16, arg17, arg18, arg19 = ...
 
     if not F.IsFriend(destFlags) then return end
 
     local diff
     if subEvent == "SPELL_HEAL" or subEvent == "SPELL_PERIODIC_HEAL" then
         -- spellId, spellName, spellSchool, amount, overhealing, absorbed, critical
-        diff = arg15
+        diff = arg12
     elseif subEvent == "SPELL_DAMAGE" or subEvent == "SPELL_PERIODIC_DAMAGE" then
         -- spellId, spellName, spellSchool, amount, overhealing, absorbed, critical
-        diff = -arg15
+        diff = -arg12
     elseif subEvent == "SWING_DAMAGE" then
         -- amount
-        diff = -arg12
+        diff = -arg9
     elseif subEvent == "RANGE_DAMAGE" then
         -- spellId, spellName, spellSchool, amount
-        diff = -arg15
+        diff = -arg12
     elseif subEvent == "ENVIRONMENTAL_DAMAGE" then
         -- environmentalType, amount
-        diff = -arg13
+        diff = -arg10
     end
 
     if diff and diff ~= 0 then

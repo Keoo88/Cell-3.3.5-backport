@@ -312,7 +312,11 @@ local function CreateWidgets()
     local showCurrentBtn = Cell.CreateButton(debuffsTab, "", "accent-hover", {46, 20}, nil, nil, nil, nil, nil, L["Show Current Instance"])
     showCurrentBtn:SetPoint("TOPRIGHT", -5, -7)
     showCurrentBtn.tex = showCurrentBtn:CreateTexture(nil, "ARTWORK")
-    showCurrentBtn:SetTexture("DungeonSkull", {18, 18}, {"CENTER", 0, 0}, true)
+    --! WotLK fix: 3.3.5 has no atlas system, and the ClassicAPI SetAtlas shim silently
+    --! no-ops for names missing from its ~30-entry registry (AtlasInfo.lua) - "DungeonSkull"
+    --! is not there, so this textless button rendered as an empty rectangle. Use a real
+    --! 3.3.5 texture path instead (isAtlas = false).
+    showCurrentBtn:SetTexture("Interface\\LFGFrame\\LFGIcon-Dungeon", {18, 18}, {"CENTER", 0, 0})
 
     showCurrentBtn:SetScript("OnClick", function()
         if IsInInstance() then
@@ -324,14 +328,18 @@ local function CreateWidgets()
     -- import/export button
     local exportBtn = Cell.CreateButton(debuffsTab, "", "accent-hover", {46, 20}, nil, nil, nil, nil, nil, L["Export"])
     exportBtn:SetPoint("TOPRIGHT", showCurrentBtn, "TOPLEFT", P.Scale(-5), 0)
-    exportBtn:SetTexture("Interface\\AddOns\\Cell\\Media\\Icons\\export.blp", {16, 16}, {"CENTER", 0, 0})
+    --! WotLK fix: Cell ships these icons as .tga (Media/Icons/export.tga, import.tga),
+    --! there is no .blp, so the hardcoded extension resolved to nothing and both
+    --! buttons drew empty. Everywhere else Cell passes them without an extension
+    --! (About.lua, ClickCastings.lua) and lets the client pick the file.
+    exportBtn:SetTexture("Interface\\AddOns\\Cell\\Media\\Icons\\export", {16, 16}, {"CENTER", 0, 0})
     exportBtn:SetScript("OnClick", function()
         F.ShowRaidDebuffsExportFrame(loadedInstance, loadedInstance == loadedBoss and "general" or loadedBoss)
     end)
 
     local importBtn = Cell.CreateButton(debuffsTab, "", "accent-hover", {46, 20}, nil, nil, nil, nil, nil, L["Import"])
     importBtn:SetPoint("TOPRIGHT", exportBtn, "TOPLEFT", P.Scale(-5), 0)
-    importBtn:SetTexture("Interface\\AddOns\\Cell\\Media\\Icons\\import.blp", {16, 16}, {"CENTER", 0, 0})
+    importBtn:SetTexture("Interface\\AddOns\\Cell\\Media\\Icons\\import", {16, 16}, {"CENTER", 0, 0}) --! WotLK fix: same as the export button above - the file on disk is import.tga, not .blp
     importBtn:SetScript("OnClick", function()
         F.ShowRaidDebuffsImportFrame()
     end)
@@ -787,7 +795,11 @@ local function CreateDebuffsFrame()
             popup.button1:SetEnabled(true)
             CellSpellTooltip:SetOwner(popup, "ANCHOR_NONE")
             CellSpellTooltip:SetPoint("TOPLEFT", popup, "BOTTOMLEFT", 0, -1)
-            CellSpellTooltip:SetSpellByID(spellId, icon)
+            --! WotLK fix: SetSpellByID on 3.3.5 is (id, isPet, showSubtext) - a texture path
+            --! in slot 2 is truthy and sends the client to the PET spellbook. The icon used to
+            --! be picked up by a global hooksecurefunc, which was removed; set it explicitly.
+            CellSpellTooltip:SetSpellIcon(icon)
+            CellSpellTooltip:SetSpellByID(spellId)
             CellSpellTooltip:Show()
         end)
         popup:SetPoint("TOPLEFT", 117, -170)
@@ -1119,7 +1131,11 @@ ShowDebuffs = function(bossId, buttonIndex)
         debuffListFrame:GetScript("OnEnter")()
         CellSpellTooltip:SetOwner(b, "ANCHOR_NONE")
         CellSpellTooltip:SetPoint("TOPRIGHT", b, "TOPLEFT", -1, 0)
-        CellSpellTooltip:SetSpellByID(b.spellId, b.spellTex)
+        --! WotLK fix: SetSpellByID on 3.3.5 is (id, isPet, showSubtext) - a texture path
+        --! in slot 2 is truthy and sends the client to the PET spellbook. The icon used to
+        --! be picked up by a global hooksecurefunc, which was removed; set it explicitly.
+        CellSpellTooltip:SetSpellIcon(b.spellTex)
+        CellSpellTooltip:SetSpellByID(b.spellId)
         CellSpellTooltip:Show()
     end, function(b)
         debuffListFrame:GetScript("OnLeave")()
@@ -2316,53 +2332,6 @@ function F.UpdateRaidDebuffs(instanceId, bossId, data, which)
 end
 
 -------------------------------------------------
--- notice
--------------------------------------------------
-local function CreateNoticeFrame()
-    if CellDB["raidDebuffsNoticeViewed"] then return end
-
-    local noticeFrame = CreateFrame("Frame", nil, debuffsTab, nil)
-    noticeFrame:SetAllPoints(debuffsTab)
-    noticeFrame:EnableMouse(true)
-    noticeFrame:SetFrameLevel(debuffsTab:GetFrameLevel()+25)
-    Cell.StylizeFrame(noticeFrame, {0.1, 0.1, 0.1, 0.99})
-
-    local content = noticeFrame:CreateFontString(nil, "OVERLAY")
-    content:SetFont(UNIT_NAME_FONT_CHINESE, 12 + CellDB["appearance"]["optionsFontSizeOffset"], "")
-    content:SetTextColor(1, 1, 1, 1)
-    content:SetShadowColor(0, 0, 0)
-    content:SetShadowOffset(1, -1)
-    content:SetText([[
-|cffe52b50Raid Debuffs issues|r
-The instance/boss list is generated automatically on Retail.
-For this reason, there can be some mistakes.
-But there's no plan for me to correct them.
-It's unnecessary in most cases, since the debuffs will work as expected.
-If you'd like to fix it, go check |cfffff2b2Cell\RaidDebuffs\ExpansionData\ExpansionData.lua|r (at the end of the file), then create a PR on GitHub.
-
-
-|cffe52b50副本减益中存在的问题|r
-副本/首领列表是在正式服上自动生成的。
-因此，其中有些并不与怀旧服完全一致。
-对于此类错误，我自己不打算修复。
-因为在大多数情况下，这并不影响副本减益正常运作。
-如果你想修复它，查看 |cfffff2b2Cell\RaidDebuffs\ExpansionData\ExpansionData.lua|r 这个文件的末尾，然后在 GitHub 上提交。
-]])
-    content:SetPoint("LEFT", 20, 0)
-    content:SetPoint("RIGHT", -20, 0)
-    content:SetJustifyH("LEFT")
-    content:SetSpacing(5)
-
-    local closeBtn = Cell.CreateButton(noticeFrame, "OK", "accent", {205, 20})
-    closeBtn:SetPoint("BOTTOMLEFT")
-    closeBtn:SetPoint("BOTTOMRIGHT")
-    closeBtn:SetScript("OnClick", function()
-        noticeFrame:Hide()
-        CellDB["raidDebuffsNoticeViewed"] = true
-    end)
-end
-
--------------------------------------------------
 -- show
 -------------------------------------------------
 local init
@@ -2375,7 +2344,6 @@ local function ShowTab(tab)
             CreateBossesFrame()
             CreateDebuffsFrame()
             CreateDetailsFrame()
-            if Cell.isVanilla then CreateNoticeFrame() end
             if textureDebug and not textureDebugAnnounced then
                 textureDebugAnnounced = true
                 textureDebugLimit = 200 -- give us more headroom for this session

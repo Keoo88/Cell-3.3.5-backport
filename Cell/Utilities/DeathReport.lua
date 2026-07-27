@@ -1,4 +1,11 @@
 local _, Cell = ...
+
+--! WotLK fix (coexistence): CombatLogGetCurrentEventInfo is a TRANSLATOR of the
+--! native COMBAT_LOG_EVENT varargs, not a retail-style no-arg getter. The global
+--! may belong to the standalone !!!ClassicAPI, whose copy has different semantics,
+--! so always prefer OUR implementation from the private CellClassicAPI namespace.
+local CombatLogGetCurrentEventInfo = (_G.CellClassicAPI and _G.CellClassicAPI.CombatLogGetCurrentEventInfo) or _G.CombatLogGetCurrentEventInfo
+
 local L = Cell.L
 local F = Cell.funcs
 
@@ -133,8 +140,6 @@ function frame:PLAYER_ENTERING_WORLD()
     instanceType = iType
 
     if instanceType == "pvp" or instanceType == "arena" then
-        frame:UnregisterEvent("ENCOUNTER_START")
-        frame:UnregisterEvent("ENCOUNTER_END")
         frame:UnregisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
         frame:UnregisterEvent("GROUP_ROSTER_UPDATE")
         return
@@ -148,13 +153,10 @@ function frame:PLAYER_ENTERING_WORLD()
         if instanceType == "raid" then
             -- frame:RegisterEvent("ENCOUNTER_START") --! WotLK: event does not exist on 3.3.5 (added 5.4) - was silently inert; the count reset below still happens on entering a raid instance
             count = 0
-        else
-            frame:UnregisterEvent("ENCOUNTER_START")
         end
     elseif inInstance then -- left insntance
         inInstance = false
         wipe(deathLogs)
-        frame:UnregisterEvent("ENCOUNTER_START")
     end
     -- texplore(deathLogs)
 end
@@ -176,15 +178,6 @@ function frame:GROUP_ROSTER_UPDATE()
     init = true
 end
 
-function frame:ENCOUNTER_END()
-    frame:UnregisterEvent("ENCOUNTER_END")
-    frame:GROUP_ROSTER_UPDATE()
-end
-
-function frame:ENCOUNTER_START()
-    count = 0
-end
-
 function frame:COMBAT_LOG_EVENT_UNFILTERED(...)
     --! WotLK fix: this handler receives the TRANSLATED retail layout from the ClassicAPI
     --! CombatLogGetCurrentEventInfo shim (see the dispatcher below) - i.e. WITH the
@@ -201,7 +194,9 @@ function frame:COMBAT_LOG_EVENT_UNFILTERED(...)
     -- SPELL/RANGE: spellId, spellName, spellSchool
 
     -- if string.find(destGUID, "^Player") then -- debug
-    if string.find(destGUID, "^Player") and F.IsFriend(destFlags) then
+    --! WotLK fix: 3.3.5 combat-log GUIDs are hex ("0x0000000000012345"), the
+    --! "Player-realm-id" format arrived in 6.0. F.IsPlayer handles both.
+    if F.IsPlayer(destGUID) and F.IsFriend(destFlags) then
         if event == "SPELL_INSTAKILL" then
             UpdateDeathLog(destGUID, timestamp, "INSTAKILL", destName)
         end

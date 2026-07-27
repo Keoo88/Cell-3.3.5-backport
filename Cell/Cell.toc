@@ -12,6 +12,8 @@
 ## X-Wago-ID: qv63LLKb
 ## X-WoWI-ID: 26244
 
+DebugSnapshot.lua
+
 Libs\ClassicAPI\Load.xml
 
 Polyfills.lua
@@ -24,6 +26,7 @@ Libs\LoadLibs_Classic.xml
 
 Core_Wrath.lua
 Debug.lua
+Debug_Wrath.lua
 Utils.lua
 Revise.lua
 Comm\LoadComm.xml
@@ -40,7 +43,6 @@ Indicators\TargetCounter.lua
 Indicators\TargetedSpells.lua
 Indicators\Actions.lua
 Indicators\Custom_Classic.lua
-Indicators\Supporter.lua
 
 RaidFrames\MainFrame.lua
 
@@ -57,5 +59,3 @@ RaidFrames\Groups\RaidFrame.lua
 RaidFrames\Groups\PetFrame.lua
 RaidFrames\Groups\NPCFrame.lua
 RaidFrames\Groups\SpotlightFrame.lua
-
-Supporters.lua

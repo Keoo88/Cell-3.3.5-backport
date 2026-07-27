@@ -1,10 +1,13 @@
---! Cell: this is a private, trimmed fork of Tsoukie's ClassicAPI.
---! If the standalone !!!ClassicAPI addon is installed (Gladdy requires it), it
---! loads first and owns these globals. Overwriting them with this older subset
---! mixes two incompatible halves of the same library, so bail out instead.
-if IsAddOnLoaded and IsAddOnLoaded("!!!ClassicAPI") then return end
+--! Cell: private, trimmed fork of Tsoukie's ClassicAPI.
+--! Coexistence rules live in Util/Coexist.lua: never bail out of a file, never
+--! overwrite a global somebody else owns (gap-fill only), keep our own copy in the
+--! private CellClassicAPI namespace. Names published here are not native to 3.3.5a
+--! (verified against milkyway-codex).
 
-local AuraUtil = AuraUtil or {}
+local _, Private = ...
+
+-- Own table: filling a foreign AuraUtil in place would overwrite its methods.
+local AuraUtil = {}
 
 local UnitAura = UnitAura
 
@@ -74,4 +77,4 @@ do
 end
 
 -- Global
-_G.AuraUtil = AuraUtil
+Private.Merge("AuraUtil", AuraUtil)

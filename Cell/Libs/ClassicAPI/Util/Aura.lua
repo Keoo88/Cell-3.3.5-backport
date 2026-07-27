@@ -1,8 +1,17 @@
---! Cell: this is a private, trimmed fork of Tsoukie's ClassicAPI.
---! If the standalone !!!ClassicAPI addon is installed (Gladdy requires it), it
---! loads first and owns these globals. Overwriting them with this older subset
---! mixes two incompatible halves of the same library, so bail out instead.
-if IsAddOnLoaded and IsAddOnLoaded("!!!ClassicAPI") then return end
+--! Cell: private, trimmed fork of Tsoukie's ClassicAPI.
+--! Coexistence rules live in Util/Coexist.lua: never bail out of a file, never
+--! overwrite a global somebody else owns (gap-fill only), keep our own copy in the
+--! private CellClassicAPI namespace. Names published here are not native to 3.3.5a
+--! (verified against milkyway-codex).
+
+local _, Private = ...
+
+-- Forward-declared as locals: the definitions below fill these locals, not globals.
+-- Publishing happens at the bottom through Private.Provide / Private.Merge, which
+-- only write a global when nobody else owns that name.
+local SpellIsPriorityAura, SpellCanApplyAura, SpellAppliesOnlyYourself, SpellIsSelfBuff,
+      SpellGetVisibilityInfo, C_UnitAura, C_UnitBuff, C_UnitDebuff,
+      CompactUnitFrame_UtilShouldDisplayDebuff, UnitAuraBySlot, UnitAuraSlots
 
 local UnitAura = UnitAura
 local UnitBuff = UnitBuff
@@ -88,7 +97,7 @@ function C_UnitDebuff(...)
 	return Name, Icon, Count, Type, Duration, Expire, Caster, Steal, Consolidate, ID
 end
 
-local SpellGetVisibilityInfo = SpellGetVisibilityInfo
+local SpellGetVisibilityInfo = Private.Own.SpellGetVisibilityInfo or SpellGetVisibilityInfo
 function CompactUnitFrame_UtilShouldDisplayDebuff(...)
 	local _, _, _, _, _, _, _, Caster, _, _, SpellID = UnitDebuff(...)
 
@@ -325,3 +334,16 @@ Register(70013, nil, nil, nil, nil, false, false) -- Quel'Delar's Compulsion
 function UnitAuraBySlot(unit, slot)end
 function UnitAuraSlots(unit, filter, maxCount, continuationToken)end
 ]]
+
+-- Publish: gap-fill only, ours stays reachable via CellClassicAPI.<name>
+Private.Provide("SpellIsPriorityAura", SpellIsPriorityAura)
+Private.Provide("SpellCanApplyAura", SpellCanApplyAura)
+Private.Provide("SpellAppliesOnlyYourself", SpellAppliesOnlyYourself)
+Private.Provide("SpellIsSelfBuff", SpellIsSelfBuff)
+Private.Provide("SpellGetVisibilityInfo", SpellGetVisibilityInfo)
+Private.Provide("C_UnitAura", C_UnitAura)
+Private.Provide("C_UnitBuff", C_UnitBuff)
+Private.Provide("C_UnitDebuff", C_UnitDebuff)
+Private.Provide("CompactUnitFrame_UtilShouldDisplayDebuff", CompactUnitFrame_UtilShouldDisplayDebuff)
+Private.Provide("UnitAuraBySlot", UnitAuraBySlot)
+Private.Provide("UnitAuraSlots", UnitAuraSlots)

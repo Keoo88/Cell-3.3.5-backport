@@ -1,8 +1,10 @@
---! Cell: this is a private, trimmed fork of Tsoukie's ClassicAPI.
---! If the standalone !!!ClassicAPI addon is installed (Gladdy requires it), it
---! loads first and owns these globals. Overwriting them with this older subset
---! mixes two incompatible halves of the same library, so bail out instead.
-if IsAddOnLoaded and IsAddOnLoaded("!!!ClassicAPI") then return end
+--! Cell: private, trimmed fork of Tsoukie's ClassicAPI.
+--! Coexistence rules live in Util/Coexist.lua: never bail out of a file, never
+--! overwrite a global somebody else owns (gap-fill only), keep our own copy in the
+--! private CellClassicAPI namespace. Names published here are not native to 3.3.5a
+--! (verified against milkyway-codex).
+--! The A-1 cache (_CellReverse/_CellDrawEdge, no GetReverse/GetDrawEdge on 3.3.5)
+--! lives in this file, so it must run in every client, with or without a foreign copy.
 
 local _, Private = ...
 
@@ -12,7 +14,7 @@ local GetTime = GetTime
 local Floor = math.floor
 local CreateFrame = CreateFrame
 
-function CooldownFrame_Set(Self, Start, Duration, Enable, ForceShowDrawEdge, ModRate)
+local function CooldownFrame_Set(Self, Start, Duration, Enable, ForceShowDrawEdge, ModRate)
 	if ( Enable and Enable ~= 0 and Start > 0 and Duration > 0 ) then
 		--self:Show()
 		Self:SetDrawEdge(ForceShowDrawEdge)
@@ -22,11 +24,11 @@ function CooldownFrame_Set(Self, Start, Duration, Enable, ForceShowDrawEdge, Mod
 	end
 end
 
-function CooldownFrame_Clear(Self)
+local function CooldownFrame_Clear(Self)
 	Self:Hide()
 end
 
-function CooldownFrame_SetDisplayAsPercentage(Self, Percentage)
+local function CooldownFrame_SetDisplayAsPercentage(Self, Percentage)
 	local Seconds = 100
 	--Self:Pause()
 	Self:SetCooldown(GetTime() - Seconds * Percentage, Seconds)
@@ -217,12 +219,16 @@ local function CooldownCaptureShow(Self)
 	local Swipe = Self._Swipe
 
 	if ( Swipe and Swipe.Parent ) then
-		local Reverse = Self:GetReverse() or nil
+		--! WotLK fix: no Cooldown:GetReverse/GetDrawEdge on 3.3.5 (the widget has
+		--! only SetCooldown/SetReverse, getters were never added), so calling them
+		--! errored out here before Swipe:Show(). Read the values cached by the
+		--! setters instead.
+		local Reverse = Self._CellReverse
 		if ( Reverse ~= Swipe.Reverse ) then
 			Swipe.Reverse = Reverse
 		end
 
-		local Edge = Self:GetDrawEdge() or nil
+		local Edge = Self._CellDrawEdge
 		if ( Edge ~= Swipe.DrawEdge ) then
 			Swipe.DrawEdge = Edge
 			CooldownCaptureEdge(Swipe, Edge)
@@ -310,3 +316,9 @@ local function CooldownCapture(Self, Enabled)
 end
 
 Private.CooldownCapture = CooldownCapture
+
+-- Publish: gap-fill only, ours stays reachable via CellClassicAPI.<name>
+local Provide = Private.Provide
+Provide("CooldownFrame_Set", CooldownFrame_Set)
+Provide("CooldownFrame_Clear", CooldownFrame_Clear)
+Provide("CooldownFrame_SetDisplayAsPercentage", CooldownFrame_SetDisplayAsPercentage)

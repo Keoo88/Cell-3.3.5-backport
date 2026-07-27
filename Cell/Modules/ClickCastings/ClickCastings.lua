@@ -241,77 +241,6 @@ wrapFrame:SetAttribute("_onstate-combatstate", [[
 RegisterStateDriver(wrapFrame, "combatstate", "[combat] true; false")
 
 local SetBindingClicks
-if Cell.isRetail then
-    SetBindingClicks = function (b)
-        b:SetAttribute("_onenter", [[
-            -- print("_onenter")
-            self:ClearBindings()
-            self:Run(self:GetAttribute("snippet"))
-
-            -- self:SetBindingClick(true, "SHIFT-MOUSEWHEELUP", self, "shiftSCROLLUP")
-            -- FIXME: --! 如果游戏按键设置（比如“视角”“载具控制”）中绑定了滚轮，那么 self:SetBindingClick(true, "MOUSEWHEELUP", self, "SCROLLUP") 会失效
-            -- self:SetBindingClick(true, "MOUSEWHEELUP", self, "SCROLLUP")
-            -- self:SetBindingClick(true, "MOUSEWHEELDOWN", self, "SCROLLDOWN")
-
-            -- self:SetBindingClick(true, "SHIFT-B", self, "shiftB")
-            -- self:SetBindingClick(true, "SHIFT-C", self, "shiftC")
-
-            --! update click-casting unit
-            -- local attrs = self:GetAttribute("cell")
-            -- -- print(attrs)
-            -- if attrs then
-            --     for _, k in pairs(table.new(strsplit("|", attrs))) do
-            --         self:SetAttribute(k, string.gsub(self:GetAttribute(k), "@%w+", "@"..self:GetAttribute("unit")))
-            --     end
-            -- end
-
-            --! update togglemenu
-            local menuKey = self:GetAttribute("menu")
-            if menuKey then
-                if PlayerInCombat() then
-                    self:SetAttribute(menuKey, nil)
-                else
-                    self:SetAttribute(menuKey, "togglemenu")
-                end
-            end
-        ]])
-
-        --! Wrap OnEnter exactly once per button. WrapScript ACCUMULATES wrappers
-        --! and never unwraps, and SetBindingClicks runs on every OnShow, so in a
-        --! raid the wrappers stack until entering a frame overflows ("chunk has
-        --! too many syntax levels") and ALL mouseover click-casting dies until
-        --! the next /reload.
-        if not b._cellOnEnterWrapped then
-            b._cellOnEnterWrapped = true
-            wrapFrame:WrapScript(b, "OnEnter", [[
-                -- print("OnEnter")
-                if mouseoverbutton then mouseoverbutton:ClearBindings() end
-                mouseoverbutton = self
-            ]])
-
-            --! Clear the tracked button on hide so a later poke cannot hit a
-            --! stale frame handle ("Invalid frame handle") after it hides.
-            wrapFrame:WrapScript(b, "OnHide", [[
-                if mouseoverbutton == self then mouseoverbutton = nil end
-            ]])
-        end
-
-        --! NOTE: if another frame shows in front of b, _onleave will NOT trigger. Use WrapScript to solve this issue.
-        b:SetAttribute("_onleave", [[
-            -- print("_onleave")
-            self:ClearBindings()
-        ]])
-
-        -- wrapFrame:WrapScript(b, "OnLeave", [[
-        --     -- print("OnLeave")
-        --     mouseoverbutton = nil
-        -- ]])
-
-        b:SetAttribute("_onhide", [[
-            self:ClearBindings()
-        ]])
-    end
-else
     SetBindingClicks = function(b)
         b:SetAttribute("_onenter", [[
             -- print("_onenter")
@@ -424,7 +353,6 @@ else
             end
         ]])
     end
-end
 
 -- FIXME: hope BLZ fix this bug
 local function GetMouseWheelBindKey(fullKey, noTypePrefix)
@@ -1421,7 +1349,11 @@ local function ShowActionsMenu(index, b)
 
                             CellSpellTooltip:SetOwner(peb, "ANCHOR_NONE")
                             CellSpellTooltip:SetPoint("TOPLEFT", peb, "BOTTOMLEFT", 0, -1)
-                            CellSpellTooltip:SetSpellByID(spellId, icon)
+                            --! WotLK fix: SetSpellByID on 3.3.5 is (id, isPet, showSubtext) - a texture path
+                            --! in slot 2 is truthy and sends the client to the PET spellbook. The icon used to
+                            --! be picked up by a global hooksecurefunc, which was removed; set it explicitly.
+                            CellSpellTooltip:SetSpellIcon(icon)
+                            CellSpellTooltip:SetSpellByID(spellId)
                             CellSpellTooltip:Show()
                         end)
                         peb:HookScript("OnHide", function()
@@ -1507,9 +1439,7 @@ local function UpdateCurrentText(isCommon)
     if isCommon then
         listPane:SetTitle(L["Current Profile"]..": "..L["Common"])
     else
-        if Cell.isRetail or Cell.isMists then
-            listPane:SetTitle(L["Current Profile"]..": ".."|T"..Cell.vars.playerSpecIcon..":12:12:0:1:12:12:1:11:1:11|t "..Cell.vars.playerSpecName)
-        elseif Cell.isCata or Cell.isWrath or Cell.isVanilla then
+        if Cell.isCata or Cell.isWrath or Cell.isVanilla then
             local name, icon = F.GetActiveTalentInfo()
             listPane:SetTitle(L["Current Profile"]..": ".."|T"..icon..":12:12:0:1:12:12:1:11:1:11|t "..name)
         end
@@ -1828,18 +1758,9 @@ function CheckConflicts()
             "\n|cFFFF3030"..L["Yes"].."|r - "..L["Remove"].."\n".."|cFFFF3030"..L["No"].."|r - "..L["Cancel"]
 
         local popup = Cell.CreateConfirmPopup(clickCastingsTab, 200, msg, function(self)
-            if Cell.isRetail then
-                --! NOTE: show-set-hide or commit
-                -- ShowUIPanel(SettingsPanel)
-                -- Settings.OpenToCategory(8)
-                Settings.SetValue("SELFCAST", "NONE", true)
-                -- HideUIPanel(SettingsPanel)
-                SettingsPanel:Commit()
-            else
                 SetModifiedClick("SELFCAST", "NONE")
                 -- SetModifiedClick("FOCUSCAST", "NONE")
                 SaveBindings(GetCurrentBindingSet())
-            end
         end, nil, true)
         popup:SetPoint("TOPLEFT", 117, -90)
     end
