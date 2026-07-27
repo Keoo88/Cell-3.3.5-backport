@@ -37,20 +37,25 @@ local L = Cell.L
 --! WotLK fix: these floors used to equal this build's own version (277), which made
 --! the accepted window exactly one version wide, so every import string exported by
 --! any other Cell build (e.g. anything from wago.io) was rejected as "Incompatible
---! Version". The floor is now the last schema-changing revision in Revise.lua (269).
---! Anything older than that relies on Revise.lua migrations, and those only ever run
---! against the local saved DB - never against imported data - so importing an older
---! payload would inject an outdated shape and error out later at runtime.
+--! Version". The floor is upstream's 246 again.
+--! The earlier 269 floor assumed imported payloads are never migrated. That is only half
+--! true: a profile string is copied into CellDB together with its own "revise" stamp and
+--! then ReloadUI runs Revise.lua against it, so revisions 246..264 do apply. Layout,
+--! indicator, click-casting and raid-debuff payloads are not migrated, but each import
+--! path validates them against Cell.defaults first (DoImport drops built-ins missing from
+--! indicatorIndices, refills missing ones, normalises powerFilters, filters dead spellIDs),
+--! so an older shape cannot reach runtime. Revise.lua ships 113 migrations (revise 13..264);
+--! the only upstream revision we dropped is 269, which touches Cell.isMists + the CN portal.
 --! WotLK fix: MIN_VERSION is ALSO the "unsupported saved DB" floor (Revise.lua:17/:32),
 --! so raising it to 269 made every local DB at revise 246..268 offer a full settings reset
 --! instead of migrating - Revise.lua:3317/3322/3335/3374/3391/3400 became unreachable.
---! The DB floor is back to upstream's 246; the import floor keeps 269 as MIN_IMPORT_VERSION.
+--! Both floors are upstream's 246 now: the DB floor for Revise.lua, the rest for imports.
 Cell.MIN_VERSION = 246          -- unsupported-DB floor, used by Revise.lua
-Cell.MIN_IMPORT_VERSION = 269   -- floor for accepted import strings
-Cell.MIN_CLICKCASTINGS_VERSION = 269
-Cell.MIN_LAYOUTS_VERSION = 269
-Cell.MIN_INDICATORS_VERSION = 269
-Cell.MIN_DEBUFFS_VERSION = 269
+Cell.MIN_IMPORT_VERSION = 246   -- floor for accepted import strings
+Cell.MIN_CLICKCASTINGS_VERSION = 246
+Cell.MIN_LAYOUTS_VERSION = 246
+Cell.MIN_INDICATORS_VERSION = 246
+Cell.MIN_DEBUFFS_VERSION = 246
 
 --[==[@debug@
 --@end-debug@]==]
