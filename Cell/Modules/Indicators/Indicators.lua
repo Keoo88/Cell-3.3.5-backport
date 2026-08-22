@@ -1,17 +1,16 @@
 local _, Cell = ...
+--! WotLK fix: bind Cell timers privately so standalone !!!ClassicAPI cannot change semantics.
+local C_Timer = Cell.C_Timer
 local L = Cell.L
 
---! custom: label for the jump (refresh) animation toggle, see SESSION_NOTES #20
---! (custom key - no upstream locale has it, so define it here)
-if not rawget(L, "showJump") then
-    if GetLocale() == "ruRU" then
-        L["showJump"] = "Анимация обновления (прыжок)"
-    elseif GetLocale() == "zhCN" then
-        L["showJump"] = "显示刷新跳动动画"
-    else
-        L["showJump"] = "Show refresh (jump) animation"
-    end
-end
+--! WotLK fix: подпись тумблера showJump ушла в файлы локалей (enUS/ruRU/zhCN), туда же,
+--! где живут остальные собственные ключи бэкпорта (showGlow, hideForTanks). Здесь стояла
+--! врезка `if GetLocale() == "ruRU" ... elseif "zhCN"`, и она ломалась о собственный
+--! переключатель языка Cell: язык панели берётся из CellDB.general.locale через
+--! LoadUserLocale, а GetLocale() отдаёт локаль КЛИЕНТА. При несовпадении (клиент ruRU +
+--! выбран English, или наоборот) ровно эта одна подпись оставалась не в тон панели.
+--! Плюс врезка выполнялась на загрузке файла, то есть до LoadUserLocale, и материализовала
+--! ключ раньше, чем выбранная локаль получала шанс его перекрыть.
 ---@type CellFuncs
 local F = Cell.funcs
 ---@type CellUnitButtonFuncs
@@ -120,9 +119,17 @@ local function UpdatePreviewButton()
     previewButtonBG:UpdateSize()
 
     previewButton.widgets.healthBar:SetStatusBarTexture(Cell.vars.texture)
-    previewButton.widgets.healthBar:GetStatusBarTexture():SetDrawLayer("ARTWORK", -7) --! VERY IMPORTANT
+    --! WotLK fix: guard Cell's preview textures locally rather than replacing
+    --! native StatusBar methods client-wide.
+    local healthTexture = previewButton.widgets.healthBar:GetStatusBarTexture()
+    if healthTexture then
+        healthTexture:SetDrawLayer("ARTWORK", -7) --! VERY IMPORTANT
+    end
     previewButton.widgets.powerBar:SetStatusBarTexture(Cell.vars.texture)
-    previewButton.widgets.powerBar:GetStatusBarTexture():SetDrawLayer("ARTWORK", -7) --! VERY IMPORTANT
+    local powerTexture = previewButton.widgets.powerBar:GetStatusBarTexture()
+    if powerTexture then
+        powerTexture:SetDrawLayer("ARTWORK", -7) --! VERY IMPORTANT
+    end
 
     -- health color
     local r, g, b, lossR, lossG, lossB = F.GetHealthBarColor(1, false, F.GetClassColor(Cell.vars.playerClass))
@@ -172,7 +179,8 @@ local function InitIndicator(indicatorName)
 
     elseif indicatorName == "statusText" then
         local count = 2
-        local maxCount = Cell.isRetail and 9 or 6
+        --! WotLK fix: ретейл-флаг свёрнут в константу 3.3.5 - Cell.is* заданы литералами в Utils.lua.
+        local maxCount = 6
         local ticker
         indicator:SetScript("OnShow", function()
             if indicator.showTimer then
@@ -353,9 +361,11 @@ local function InitIndicator(indicatorName)
         end)
         function indicator:SetColor(cType, cTable)
             if cType == "class_color" then
-                indicator.tex:SetColorTexture(F.GetClassColor(Cell.vars.playerClass))
+                --! WotLK fix: SetColorTexture на 3.3.5 нет - это нативная числовая форма
+                --! SetTexture(r, g, b[, a]); шим TextureBase в WidgetAPI удалён.
+                indicator.tex:SetTexture(F.GetClassColor(Cell.vars.playerClass))
             else
-                indicator.tex:SetColorTexture(cTable[1], cTable[2], cTable[3])
+                indicator.tex:SetTexture(cTable[1], cTable[2], cTable[3])
             end
         end
 
@@ -394,7 +404,9 @@ local function InitIndicator(indicatorName)
                     elseif self.highlightType == "current" or self.highlightType == "current+" then
                         self.highlight:SetVertexColor(r, g, b, 1)
                     elseif self.highlightType == "gradient" or self.highlightType == "gradient-half" then
-                        self.highlight:SetGradient("VERTICAL", CreateColor(r, g, b, 1), CreateColor(r, g, b, 0))
+                        --! WotLK fix: native Texture:SetGradientAlpha - 3.3.5 has no
+                        --! retail SetGradient(orientation, color, color) at all.
+                        self.highlight:SetGradientAlpha("VERTICAL", r, g, b, 1, r, g, b, 0)
                     end
                     if indicator.isVisible then self.highlight:Show() end
                 end
@@ -439,13 +451,15 @@ local function InitIndicator(indicatorName)
         for i = 1, 3 do
             indicator[i]:HookScript("OnShow", function()
                 indicator[i]:SetCooldown(GetTime(), 13, types[i], "Interface\\Icons\\INV_Misc_QuestionMark", 7)
-                indicator[i].cooldown:SetScript("OnCooldownDone", function()
+                --! WotLK fix: OnCooldownDone is not native on 3.3.5; use the
+                --! Cell-owned completion handler for this preview cooldown.
+                I.SetCooldownDoneHandler(indicator[i].cooldown, function()
                     indicator[i]:SetCooldown(GetTime(), 13, types[i], "Interface\\Icons\\INV_Misc_QuestionMark", 7)
                 end)
             end)
             indicator[i]:HookScript("OnHide", function()
                 indicator[i].cooldown:Hide()
-                indicator[i].cooldown:SetScript("OnCooldownDone", nil)
+                I.SetCooldownDoneHandler(indicator[i].cooldown, nil)
             end)
         end
 
@@ -454,13 +468,14 @@ local function InitIndicator(indicatorName)
         for _, f in ipairs(indicator) do
             f:HookScript("OnShow", function()
                 f:SetCooldown(GetTime(), 3, "Interface\\Icons\\ability_warlock_chaosbolt", 7)
-                f.cooldown:SetScript("OnCooldownDone", function()
+                --! WotLK fix: use Cell's instance-owned completion handler.
+                I.SetCooldownDoneHandler(f.cooldown, function()
                     f:SetCooldown(GetTime(), 3, "Interface\\Icons\\ability_warlock_chaosbolt", 7)
                 end)
             end)
             f:HookScript("OnHide", function()
                 f.cooldown:Hide()
-                f.cooldown:SetScript("OnCooldownDone", nil)
+                I.SetCooldownDoneHandler(f.cooldown, nil)
             end)
         end
 
@@ -477,13 +492,14 @@ local function InitIndicator(indicatorName)
         for i = 1, 3 do
             indicator[i]:HookScript("OnShow", function()
                 indicator[i]:SetCooldown(GetTime(), 13, spells[i][1], spells[i][2], 7)
-                indicator[i].cooldown:SetScript("OnCooldownDone", function()
+                --! WotLK fix: use Cell's instance-owned completion handler.
+                I.SetCooldownDoneHandler(indicator[i].cooldown, function()
                     indicator[i]:SetCooldown(GetTime(), 13, spells[i][1], spells[i][2], 7)
                 end)
             end)
             indicator[i]:HookScript("OnHide", function()
                 indicator[i].cooldown:Hide()
-                indicator[i].cooldown:SetScript("OnCooldownDone", nil)
+                I.SetCooldownDoneHandler(indicator[i].cooldown, nil)
             end)
         end
 
@@ -747,11 +763,10 @@ local function UpdateIndicators(layout, indicatorName, setting, value, value2)
                     indicator.init = false
                     InitIndicator(t["indicatorName"])
                 end
-                -- privateAuraOptions
-                if t["privateAuraOptions"] then
-                    indicator.cooldown:SetDrawSwipe(t["privateAuraOptions"][1])
-                    indicator.cooldown:SetHideCountdownNumbers(not (t["privateAuraOptions"][1] and t["privateAuraOptions"][2]))
-                end
+                --! WotLK fix: privateAuraOptions/shape здесь больше не читаются —
+                --! см. пояснение у ветки настроек ниже: оба ключа мертвы в этом
+                --! бэкпорте (нет приватных аур, PWS стал полосой), а появиться в
+                --! таблице могли только из импортированной ретейл-строки.
                 -- update glow
                 if t["glowOptions"] then
                     indicator:SetupGlow(t["glowOptions"])
@@ -759,10 +774,6 @@ local function UpdateIndicators(layout, indicatorName, setting, value, value2)
                 -- update fadeOut
                 if type(t["fadeOut"]) == "boolean" then
                     indicator:SetFadeOut(t["fadeOut"])
-                end
-                -- update shape
-                if t["shape"] then
-                    indicator:SetShape(t["shape"])
                 end
                 -- update smooth
                 if type(t["smooth"]) == "boolean" then
@@ -923,13 +934,13 @@ local function UpdateIndicators(layout, indicatorName, setting, value, value2)
                 indicator:Hide()
                 indicator:Show()
             end
-        elseif setting == "privateAuraOptions" then
-            indicator.cooldown:SetDrawSwipe(value[1])
-            indicator.cooldown:SetHideCountdownNumbers(not (value[1] and value[2]))
+        --! WotLK fix: ветки "privateAuraOptions" и "shape" убраны вместе с их
+        --! виджетами настроек: индикатор privateAuras — ретейловый (приватных аур
+        --! на 3.3.5 нет), а shape потерял смысл после перевода Power Word: Shield
+        --! на полосы. Ни один settingsTable этих ключей не содержал, значит панель
+        --! их не показывала и прислать их могла только импортированная ретейл-строка.
         elseif setting == "speed" then
             indicator:SetSpeed(value)
-        elseif setting == "shape" then
-            indicator:SetShape(value)
         elseif setting == "glowOptions" then
             indicator:SetupGlow(value)
             if indicator.SetCooldown then
@@ -1303,7 +1314,9 @@ local function CreateSyncPane()
     syncPane:SetPoint("TOPLEFT", 5, -60)
 
     -- tip
-    syncTip = Cell.CreateButton(syncPane, nil, "accent-hover", {17, 17}, nil, nil, nil, nil, nil, L["Indicator Sync"], L["syncTips"])
+    --! WotLK fix: было без local - кнопка-подсказка писалась в глобал _G.syncTip.
+    --! Cell не владеет глобалами. Все обращения к ней - в этих же пяти строках.
+    local syncTip = Cell.CreateButton(syncPane, nil, "accent-hover", {17, 17}, nil, nil, nil, nil, nil, L["Indicator Sync"], L["syncTips"])
     syncTip:SetPoint("TOPRIGHT")
     syncTip.tex = syncTip:CreateTexture(nil, "ARTWORK")
     syncTip.tex:SetAllPoints(syncTip)
@@ -1344,71 +1357,12 @@ end
 -------------------------------------------------
 local listFrame, renameBtn, deleteBtn
 
-local typeItems = {
-    {
-        ["text"] = L["Icons"],
-        ["value"] = "icons",
-    },
-    {
-        ["text"] = L["Icon"],
-        ["value"] = "icon",
-    },
-    {
-        ["text"] = L["Blocks"],
-        ["value"] = "blocks",
-    },
-    {
-        ["text"] = L["Block"],
-        ["value"] = "block",
-    },
-    {
-        ["text"] = L["Rect"],
-        ["value"] = "rect",
-    },
-    {
-        ["text"] = L["Bars"],
-        ["value"] = "bars",
-    },
-    {
-        ["text"] = L["Bar"],
-        ["value"] = "bar",
-    },
-    {
-        ["text"] = L["Overlay"],
-        ["value"] = "overlay",
-    },
-    {
-        ["text"] = L["Color"],
-        ["value"] = "color",
-    },
-    {
-        ["text"] = L["Text"],
-        ["value"] = "text",
-    },
-    {
-        ["text"] = L["Glow"],
-        ["value"] = "glow",
-    },
-    {
-        ["text"] = L["Border"],
-        ["value"] = "border",
-    },
-    {
-        ["text"] = L["Texture"],
-        ["value"] = "texture",
-    },
-}
-
-local auraTypeItems = {
-    {
-        ["text"] = L["Buff"],
-        ["value"] = "buff",
-    },
-    {
-        ["text"] = L["Debuff"],
-        ["value"] = "debuff",
-    },
-}
+--! WotLK fix: filled by BuildLocalizedTables() instead of at load time. Cell's L is an
+--! identity fallback (Locales/enUS.lua) and the translations only arrive from
+--! ns.LoadUserLocale(), which needs CellDB and therefore runs on ADDON_LOADED - after
+--! every file has already executed. A table built in the main chunk would keep the
+--! English keys for the whole session on any non-enUS client.
+local typeItems, auraTypeItems
 
 local function CreateListPane()
     local listPane = Cell.CreateTitledPane(indicatorsTab, L["Indicators"], 136, 487)
@@ -1539,10 +1493,83 @@ local function CreateSettingsPane()
 end
 
 local indicatorSettings
+
+--! WotLK fix: everything below reads L[...] (and Cell.GetAccentColorString()), so it is
+--! built on the first open of the Indicators tab instead of at load time - see the note
+--! at typeItems. The panel calls this from its own lazy init, which happens long after
+--! ns.LoadUserLocale(), so a ruRU/zhCN/... client finally sees the translated labels,
+--! hints and tooltips. Bonus on this client: 40+ concatenations and a 29-entry table no
+--! longer cost anything at login for players who never open the options.
+--! The settings lists stay flush-left on purpose - the lines are long enough already.
+local function BuildLocalizedTables()
+    typeItems = {
+        {
+            ["text"] = L["Icons"],
+            ["value"] = "icons",
+        },
+        {
+            ["text"] = L["Icon"],
+            ["value"] = "icon",
+        },
+        {
+            ["text"] = L["Blocks"],
+            ["value"] = "blocks",
+        },
+        {
+            ["text"] = L["Block"],
+            ["value"] = "block",
+        },
+        {
+            ["text"] = L["Rect"],
+            ["value"] = "rect",
+        },
+        {
+            ["text"] = L["Bars"],
+            ["value"] = "bars",
+        },
+        {
+            ["text"] = L["Bar"],
+            ["value"] = "bar",
+        },
+        {
+            ["text"] = L["Overlay"],
+            ["value"] = "overlay",
+        },
+        {
+            ["text"] = L["Color"],
+            ["value"] = "color",
+        },
+        {
+            ["text"] = L["Text"],
+            ["value"] = "text",
+        },
+        {
+            ["text"] = L["Glow"],
+            ["value"] = "glow",
+        },
+        {
+            ["text"] = L["Border"],
+            ["value"] = "border",
+        },
+        {
+            ["text"] = L["Texture"],
+            ["value"] = "texture",
+        },
+    }
+
+    auraTypeItems = {
+        {
+            ["text"] = L["Buff"],
+            ["value"] = "buff",
+        },
+        {
+            ["text"] = L["Debuff"],
+            ["value"] = "debuff",
+        },
+    }
+
 local DEBUFFS_TOOLTIP1 = L["This will make these icons not click-through-able"].."|"..L["Tooltips need to be enabled in General tab"]
 local DEBUFFS_TOOLTIP2 = L["This will make these icons not click-through-able"]
-
-
 
 indicatorSettings = {
 ["nameText"] = {"enabled", "color-class", "textWidth", "checkbutton:showGroupNumber", "vehicleNamePosition", "position", "frameLevel", "font-noOffset"},
@@ -1550,20 +1577,24 @@ indicatorSettings = {
 ["healthText"] = {"|cffff7727"..L["MODERATE CPU USAGE"], "enabled", "healthFormat", "position", "frameLevel", "font-noOffset"},
 ["powerText"] = {"enabled", "color-power", "powerFormat", "powerTextFilters", "checkbutton:hideIfEmptyOrFull", "position", "frameLevel", "font-noOffset"},
 ["statusIcon"] = {
-    -- "|A:dungeonskull:18:18|a "..
     "|TInterface\\LFGFrame\\LFG-Eye:18:18:0:0:512:256:72:120:72:120|t "..
     "|TInterface\\RaidFrame\\Raid-Icon-Rez:18:18|t "..
     "|TInterface\\TargetingFrame\\UI-PhasingIcon:18:18:0:0:31:31:3:28:3:28|t "..
-    "|A:horde_icon_and_flag-dynamicIcon:18:18|a "..
-    "|A:alliance_icon_and_flag-dynamicIcon:18:18|a ", "enabled", "size-square", "position", "frameLevel"},
+    --! WotLK fix: |A atlas escapes are unsupported by the 3.3.5 text renderer.
+    --! These native MPQ textures match the status-icon runtime fallback.
+    "|TInterface\\WorldStateFrame\\HordeFlag:18:18|t "..
+    "|TInterface\\WorldStateFrame\\AllianceFlag:18:18|t ", "enabled", "size-square", "position", "frameLevel"},
 ["roleIcon"] = {"enabled", "checkbutton:hideDamager", "size-square", "roleTexture", "position", "frameLevel"},
 ["leaderIcon"] = {"enabled", "checkbutton:hideInCombat", "size-square", "position"},
 ["combatIcon"] = {"enabled", "checkbutton:onlyEnableNotInCombat", "size-square", "position", "frameLevel"},
 ["readyCheckIcon"] = {"enabled", "size-square", "position", "frameLevel"},
 ["playerRaidIcon"] = {"enabled", "size-square", "alpha", "position", "frameLevel"},
 ["targetRaidIcon"] = {"enabled", "size-square", "alpha", "position", "frameLevel"},
-["aggroBlink"] = {"enabled", "size", "position", "frameLevel"},
-["aggroBorder"] = {"enabled", "thickness", "frameLevel"},
+--! WotLK fix: threatThreshold + checkbutton:hideForTanks - см. UnitButton_UpdateThreat.
+--! Порог и "не показывать танков" заведены на каждом из двух индикаторов отдельно:
+--! мигание и рамку включают независимо друг от друга.
+["aggroBlink"] = {"enabled", "threatThreshold", "checkbutton:hideForTanks:"..L["A tank holds the mob by design"], "size", "position", "frameLevel"},
+["aggroBorder"] = {"enabled", "threatThreshold", "checkbutton:hideForTanks:"..L["A tank holds the mob by design"], "thickness", "frameLevel"},
 ["aggroBar"] = {"enabled", "size", "position", "frameLevel"},
 ["shieldBar"] = {"enabled", "checkbutton:onlyShowOvershields", "color-alpha", "height", "shieldBarPosition", "frameLevel"},
 ["powerWordShield"] = {L["To show shield value, |cffff2727Glyph of Power Word: Shield|r is required"], "enabled", "checkbutton:shieldByMe", "size-width", "position", "frameLevel"},
@@ -1579,8 +1610,10 @@ indicatorSettings = {
 ["actions"] = {"|cffb7b7b7"..L["Play animation when the unit uses a specific spell/item. The list is global shared, not layout-specific."], "enabled", "actionsPreview", "actionsList"},
 ["crowdControls"] = {"enabled", "builtInCrowdControls", "customCrowdControls", "durationVisibility", "size-border", "num:3", "orientation", "position", "frameLevel", "font1:stackFont", "font2:durationFont"},
 ["healthThresholds"] = {"enabled", "thresholds", "thickness"},
-["missingBuffs"] = {"|cffb7b7b7"..(L["%s in Utilities must be enabled to make this indicator work."]:format(Cell.GetAccentColorString()..L["Buff Tracker"].."|r")), "enabled", "size-square", "orientation", "position", "frameLevel"},
+--! WotLK fix: checkbutton:showGlow - тумблер мигающей подсветки иконок.
+["missingBuffs"] = {"|cffb7b7b7"..(L["%s in Utilities must be enabled to make this indicator work."]:format(Cell.GetAccentColorString()..L["Buff Tracker"].."|r")), "enabled", "checkbutton:showGlow:"..L["The icon stays either way"], "size-square", "orientation", "position", "frameLevel"},
 }
+end
 
 local function ShowIndicatorSettings(id)
     -- if selected == id then return end
@@ -1697,7 +1730,10 @@ local function ShowIndicatorSettings(id)
             --! custom: showJump defaults to ENABLED when absent in old DBs
             --! (upstream always played the jump; nil = legacy behavior).
             --! Materialize the default so the checkbox and DB stay in sync.
-            if setting == "showJump" and type(dbValue) ~= "boolean" then
+            --! WotLK fix: showGlow (Missing Buffs) - то же самое: раньше подсветка
+            --! была вшита наглухо, значит отсутствие ключа = "включено". Без этого
+            --! галка показывала бы OFF, пока индикатор реально мигает.
+            if (setting == "showJump" or setting == "showGlow") and type(dbValue) ~= "boolean" then
                 dbValue = true
                 indicatorTable[setting] = true
             end
@@ -1872,6 +1908,10 @@ local function ShowIndicatorSettings(id)
             w:SetFunc(function(value)
                 CellDB["targetedSpellsList"] = value
                 Cell.vars.targetedSpellsList = F.ConvertTable(CellDB["targetedSpellsList"])
+                --! WotLK fix: раньше правка списка меняла только таблицы, а иконки
+                --! на экране оставались от старого списка (последняя часть GAP-029).
+                --! Фильтр расширился или сузился - значит перечитать источники.
+                I.RefreshTargetedSpells(true)
             end)
 
         -- targetedSpellsGlow
@@ -1881,6 +1921,11 @@ local function ShowIndicatorSettings(id)
                 CellDB["targetedSpellsGlow"] = value
                 Cell.vars.targetedSpellsGlow = CellDB["targetedSpellsGlow"]
                 CellIndicatorsPreviewButton.indicators.targetedSpells:ShowGlowPreview()
+                --! WotLK fix: превью обновлялось, а живое свечение на рейд-кнопках
+                --! оставалось прежним - тип и цвет читаются в момент отрисовки
+                --! (ShowCasts -> ShowGlow). Источники перечитывать не нужно, фильтр
+                --! не менялся, поэтому перерисовка без сканирования.
+                I.RefreshTargetedSpells()
             end)
 
         -- glowOptions
@@ -1972,6 +2017,23 @@ local function ShowIndicatorSettings(id)
             w:SetFunc(function(value)
                 -- NOTE: already changed in widget
                 Cell.Fire("UpdateIndicators", notifiedLayout, indicatorName, "format", indicatorTable["format"])
+            end)
+
+        --! WotLK fix: порог аггро. Ключ новый; Revise дозаполняет его каждый вход, но
+        --! если панель открыли на базе, куда он ещё не попал (импорт чужого профиля в
+        --! этой же сессии), SetValue(nil) уронил бы ползунок нативной ошибкой.
+        --! Материализуем дефолт - 100, прежнее поведение - и в самой базе, чтобы
+        --! показанное значение и то, по чему считают рамки, не расходились.
+        elseif currentSetting == "threatThreshold" then
+            local dbValue = indicatorTable[currentSetting]
+            if type(dbValue) ~= "number" then
+                dbValue = 100
+                indicatorTable[currentSetting] = 100
+            end
+            w:SetDBValue(dbValue)
+            w:SetFunc(function(value)
+                indicatorTable[currentSetting] = value
+                Cell.Fire("UpdateIndicators", notifiedLayout, indicatorName, currentSetting, value)
             end)
 
         -- common
@@ -2073,7 +2135,7 @@ LoadIndicatorList = function()
                 self:SetFrameStrata("LOW")
                 -- self:Hide() --! Hide() will cause OnDragStop trigger TWICE!!!
                 C_Timer.After(0.05, function()
-                    local b = F.GetMouseFocus()
+                    local b = GetMouseFocus()
                     self:SetFrameStrata(self.oldStrata)
                     self.oldStrata = nil
                     MoveIndicator(self.id, (b and b.typeIcon and not b.isBuiltIn) and b.id)
@@ -2160,9 +2222,8 @@ LoadIndicatorList = function()
                 else
                     LCG.PixelGlow_Start(i)
                 end
-                if i._PixelGlow then
-                    i._PixelGlow:SetIgnoreParentAlpha(true)
-                end
+                --! WotLK fix: parent-alpha isolation is unavailable on 3.3.5;
+                --! do not advertise or call an ineffective shared widget shim.
             end
         else
             if i:IsObjectType("Texture") or i:IsObjectType("FontString") then
@@ -2215,6 +2276,9 @@ local function ShowTab(tab)
     if tab == "indicators" then
         if not init then
             init = true
+            --! WotLK fix: must run before CreateListPane/CreateSettingsPane - it fills
+            --! typeItems, auraTypeItems and indicatorSettings with the LOADED locale.
+            BuildLocalizedTables()
             CreatePreviewButton()
             CreateLayoutPane()
             CreateSyncPane()

@@ -17,7 +17,9 @@ local function CreateTooltip(name, hasIcon)
         tooltip.iconBG = iconBG
         iconBG:SetSize(35, 35)
         iconBG:SetPoint("TOPRIGHT", tooltip, "TOPLEFT", -1, 0)
-        iconBG:SetColorTexture(Cell.GetAccentColorRGB())
+        --! WotLK fix: SetColorTexture на 3.3.5 нет - это нативная числовая форма
+        --! SetTexture(r, g, b[, a]); шим TextureBase в WidgetAPI удалён.
+        iconBG:SetTexture(Cell.GetAccentColorRGB())
         iconBG:Hide()
 
         local icon = tooltip:CreateTexture(nil, "ARTWORK")
@@ -69,7 +71,7 @@ local function CreateTooltip(name, hasIcon)
         tooltip:SetBackdropBorderColor(Cell.GetAccentColorRGB())
         if hasIcon then
             P.Repoint(tooltip.icon)
-            tooltip.iconBG:SetColorTexture(Cell.GetAccentColorRGB())
+            tooltip.iconBG:SetTexture(Cell.GetAccentColorRGB())
         end
     end
 end
@@ -112,11 +114,13 @@ function F.ShowTooltips(anchor, tooltipType, unit, aura, filter)
     elseif tooltipType == "spell" and unit and aura then
         -- GameTooltip:SetSpellByID(aura)
         GameTooltip:SetUnitAura(unit, aura, filter)
-    elseif tooltipType == "aura" and unit and aura then
-        if filter == "HARMFUL" then
-            GameTooltip:SetUnitDebuffByAuraInstanceID(unit, aura)
-        elseif filter == "HELPFUL" then
-            GameTooltip:SetUnitBuffByAuraInstanceID(unit, aura)
-        end
     end
+    --! WotLK fix: the "aura" branch called SetUnitDebuffByAuraInstanceID /
+    --! SetUnitBuffByAuraInstanceID - retail 10.x tooltip methods that do not exist
+    --! on 3.3.5 (кодекс знает только GameTooltip:SetUnitAura(unit, index, filter)),
+    --! so reaching it would have been "attempt to call method (a nil value)".
+    --! Unreachable here in the first place: an aura instance id is a retail concept,
+    --! and the only two callers (Built-in.lua debuffs / raidDebuffs) hand over the
+    --! aura INDEX that UnitButton_Cata_Wrath.lua stores as ind.index, which the
+    --! "spell" branch above resolves natively. Cut with its callers' dead elseif.
 end

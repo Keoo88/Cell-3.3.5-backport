@@ -1203,6 +1203,7 @@ do
             return
         end
         enabled[editbox] = nil
+        dirty[editbox] = nil
 
         -- revert settings for max bytes / letters
         editbox:SetMaxBytes(editbox.oldMaxBytes)
@@ -1230,7 +1231,12 @@ do
         -- change the text back to unformatted
         editbox:SetText(newGetText(editbox))
 
-        -- clear caches
+        --! WotLK fix: Fully release dormant per-editbox state if a future Cell
+        -- consumer disables and later re-enables FAIAP on a transient editor.
+        editbox.oldMaxBytes = nil
+        editbox.oldMaxLetters = nil
+        editbox.faiap_colorTable = nil
+        editbox.faiap_tabWidth = nil
         editboxIndentCache[editbox] = nil
         decodeCache[editbox] = nil
         editboxStringCache[editbox] = nil

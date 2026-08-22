@@ -122,12 +122,16 @@ local function GetAttributeKey(modifier, bindKey)
     if mouseKeyIDs[bindKey] then -- normal mouse button
         return modifier.."type"..mouseKeyIDs[bindKey]
     elseif bindKey == "ScrollUp" or bindKey == "ScrollDown" then -- mouse wheel
-        return modifier.."type-"..strupper(bindKey)
+        --! WotLK fix: wheel/keyboard bindings use synthetic click button names
+        --! (for example ctrlSCROLLUP), not normal mouse suffixes. Native
+        --! SecureButton_GetModifiedAttribute still prepends the physically held
+        --! modifier, so store these under the wildcard prefix to match it.
+        return "*"..modifier.."type-"..strupper(bindKey)
     else -- keyboard
         modifier = string.gsub(modifier, "alt%-", "alt")
         modifier = string.gsub(modifier, "ctrl%-", "ctrl")
         modifier = string.gsub(modifier, "shift%-", "shift")
-        return "type-"..modifier..bindKey
+        return "*type-"..modifier..bindKey
     end
 end
 
@@ -174,7 +178,9 @@ local function DecodeDB(t)
 
     if t[1] ~= "notBound" then
         local dash, key
-        modifier, dash, key = strmatch(t[1], "^(.*)type(-*)(.+)$")
+        --! WotLK fix: keyboard/wheel DB keys may carry the secure wildcard
+        --! prefix; it is an attribute lookup detail, not a user modifier.
+        modifier, dash, key = strmatch(t[1], "^%*?(.*)type(-*)(.+)$")
 
         if dash == "-" then
             if key == "SCROLLUP" then
@@ -206,39 +212,15 @@ end
 -- mouse wheel & keyboard
 -------------------------------------------------
 local wrapFrame = CreateFrame("Frame", "CellWrapFrame", nil, "SecureHandlerStateTemplate")
-wrapFrame:SetAttribute("_onstate-mouseoverstate", [[
-    -- print("mouseoverstate", newstate)
-    if newstate == "false" and mouseoverbutton then
-        if not mouseoverbutton:IsUnderMouse() then
-            mouseoverbutton:ClearBindings()
-            mouseoverbutton = nil
-        end
-    end
-]])
---! NOTE: not available for unit far away (different map)
-RegisterStateDriver(wrapFrame, "mouseoverstate", "[@mouseover, exists] true; false")
+--! WotLK fix: do not keep a permanent [@mouseover] state driver on 3.3.5.
+--! SecureStateDriver polls every 0.2 seconds and does not react immediately to
+--! UPDATE_MOUSEOVER_UNIT; the wrapped OnEnter/OnHide and _onleave paths already
+--! clear the same override bindings without that permanent polling cost.
 
---! update togglemenu_nocombat
-wrapFrame:SetAttribute("_onstate-combatstate", [[
-    -- print("combatstate", newstate)
-    --! WotLK fix: keep the combat state in this restricted environment. The OnEnter
-    --! wrapper below shares these variables (same way mouseoverbutton is shared) and
-    --! needs to know whether we are in combat, but no secure snippet on 3.3.5 can ask
-    --! the game directly. RegisterStateDriver fires once on registration, so this is
-    --! populated from load onwards.
-    combatstate = newstate
-    if mouseoverbutton then
-        local menuKey = mouseoverbutton:GetAttribute("menu")
-        if menuKey then
-            if newstate == "true" then
-                mouseoverbutton:SetAttribute(menuKey, nil)
-            else
-                mouseoverbutton:SetAttribute(menuKey, "menu") --! WotLK: was "togglemenu" (4.x+ only)
-            end
-        end
-    end
-]])
-RegisterStateDriver(wrapFrame, "combatstate", "[combat] true; false")
+--! WotLK fix: RestrictedEnvironment.lua defines PlayerInCombat() natively on
+--! 3.3.5. Query it directly from the wrapped secure OnEnter snippet instead of
+--! maintaining a permanent combat state driver and mutating the hovered button
+--! on every combat transition.
 
 local SetBindingClicks
     SetBindingClicks = function(b)
@@ -281,19 +263,20 @@ local SetBindingClicks
             -- print(attrs)
             if attrs then
                 for _, k in pairs(table.new(strsplit("|", attrs))) do
-                    self:SetAttribute(k, string.gsub(self:GetAttribute(k), "@%w+", "@"..clickCastingUnit))
+                    --! WotLK fix: rewrite only the value Cell still owns. A
+                    --! Clique-like addon may replace the same action attribute
+                    --! after our last rebuild; in that case leave it untouched.
+                    local marker = "cell-owned-"..k
+                    local value = self:GetAttribute(k)
+                    if value == self:GetAttribute(marker) then
+                        value = string.gsub(value, "@%w+", "@"..clickCastingUnit)
+                        self:SetAttribute(k, value)
+                        self:SetAttribute(marker, value)
+                    end
                     -- print(self:GetAttribute(k))
                 end
             end
 
-            --! update togglemenu
-            --! WotLK fix: this used to call PlayerInCombat(), which does not exist -
-            --! neither in the restricted environment of 3.3.5 nor anywhere in Cell - so
-            --! the whole snippet aborted here and the menu binding was never applied.
-            --! The combat check now lives in the OnEnter wrapper below, which runs in
-            --! wrapFrame's environment where the combat state is available. Doing it
-            --! from insecure code instead is not an option: SetAttribute on a secure
-            --! button is blocked once PLAYER_REGEN_DISABLED fires.
         ]])
 
         if not b._cellOnEnterWrapped then
@@ -312,13 +295,24 @@ local SetBindingClicks
                 end
                 mouseoverbutton = self
 
-                --! update togglemenu / togglemenu_nocombat
+                --! WotLK fix: PlayerInCombat() is a native restricted helper
+                --! in 3.3.5; no synthetic combatstate driver is required.
                 local menuKey = self:GetAttribute("menu")
                 if menuKey then
-                    if combatstate == "true" then
-                        self:SetAttribute(menuKey, nil)
-                    else
-                        self:SetAttribute(menuKey, "menu")
+                    --! WotLK fix: mutate the no-combat menu action only while
+                    --! its current value is still the value Cell recorded. This
+                    --! avoids overwriting a later Clique-like binding.
+                    local marker = "cell-owned-"..menuKey
+                    local ownedValue = self:GetAttribute(marker)
+                    local currentValue = self:GetAttribute(menuKey)
+                    if currentValue == ownedValue or (currentValue == nil and ownedValue == false) then
+                        if PlayerInCombat() then
+                            self:SetAttribute(menuKey, nil)
+                            self:SetAttribute(marker, false)
+                        else
+                            self:SetAttribute(menuKey, "menu")
+                            self:SetAttribute(marker, "menu")
+                        end
                     end
                 end
             ]])
@@ -336,10 +330,14 @@ local SetBindingClicks
             self:ClearBindings()
         ]])
 
-        -- wrapFrame:WrapScript(b, "OnLeave", [[
-        --     -- print("OnLeave")
-        --     mouseoverbutton = nil
-        -- ]])
+        --! WotLK fix: clear the shared handle from the real OnLeave path rather
+        --! than relying on the removed 0.2s mouseover state-driver poll.
+        if not b._cellOnLeaveWrapped then
+            b._cellOnLeaveWrapped = true
+            wrapFrame:WrapScript(b, "OnLeave", [[
+                if mouseoverbutton == self then mouseoverbutton = nil end
+            ]])
+        end
 
         b:SetAttribute("_onhide", [[
             self:ClearBindings()
@@ -356,13 +354,15 @@ local SetBindingClicks
 
 -- FIXME: hope BLZ fix this bug
 local function GetMouseWheelBindKey(fullKey, noTypePrefix)
-    local modifier, key = strmatch(fullKey, "^(.*)type%-(.+)$")
+    local modifier, key = strmatch(fullKey, "^%*?(.*)type%-(.+)$")
     modifier = string.gsub(modifier, "-", "")
 
     if noTypePrefix then
         return modifier..key
     else
-        return "type-"..modifier..key -- type-ctrlSCROLLUP
+        --! WotLK fix: wildcard prefix is required for synthetic wheel click
+        --! names when a physical modifier is held (SecureTemplates.lua).
+        return "*type-"..modifier..key -- *type-ctrlSCROLLUP
     end
 end
 
@@ -370,7 +370,7 @@ function F.GetBindingSnippet()
     local bindingClicks = {}
     for _, t in pairs(clickCastingTable) do
         if t[1] ~= "notBound" then
-            local modifier, key = strmatch(t[1], "^(.*)type%-(.+)$")
+            local modifier, key = strmatch(t[1], "^%*?(.*)type%-(.+)$")
             if key then
                 -- if key == "SCROLLUP" then
                 --     bindingClicks[key] = [[self:SetBindingClick(true, "MOUSEWHEELUP", self, "SCROLLUP")]]
@@ -418,80 +418,111 @@ end
 --! Clique/oUF on WotLK) and translate "togglemenu" -> "menu" when applying
 --! bindings (see ApplyClickCastings and the secure snippets).
 local ShowUnitMenu
-if not Cell.isRetail then
-    local dropdown = CreateFrame("Frame", "CellUnitButtonDropDown", UIParent, "UIDropDownMenuTemplate")
-    UIDropDownMenu_Initialize(dropdown, function(self)
-        local unit = self.unit
-        if not unit or not UnitExists(unit) then return end
-        local menu, name, id
-        if UnitIsUnit(unit, "player") then
-            menu = "SELF"
-        elseif UnitIsUnit(unit, "vehicle") then
-            menu = "VEHICLE"
-        elseif UnitIsUnit(unit, "pet") then
-            menu = "PET"
-        elseif UnitIsPlayer(unit) then
-            local raidIndex = UnitInRaid(unit)
-            if raidIndex then
-                menu = "RAID_PLAYER"
-                id = raidIndex + 1 -- UnitInRaid is 0-based on 3.3.5
-                name = GetRaidRosterInfo(id)
-            elseif UnitInParty(unit) then
-                menu = "PARTY"
-            else
-                menu = "PLAYER"
-            end
+--! Guard `if not Cell.isRetail` вырезан - флаг задан литералом false в
+--! Utils.lua, ветка решалась статически. Тело поднято на верхний уровень;
+--! upvalue ShowUnitMenu объявлен строкой выше и там же остаётся.
+local dropdown = CreateFrame("Frame", "CellUnitButtonDropDown", UIParent, "UIDropDownMenuTemplate")
+UIDropDownMenu_Initialize(dropdown, function(self)
+    local unit = self.unit
+    if not unit or not UnitExists(unit) then return end
+    local menu, name, id
+    if UnitIsUnit(unit, "player") then
+        menu = "SELF"
+    elseif UnitIsUnit(unit, "vehicle") then
+        menu = "VEHICLE"
+    elseif UnitIsUnit(unit, "pet") then
+        menu = "PET"
+    elseif UnitIsPlayer(unit) then
+        local raidIndex = UnitInRaid(unit)
+        if raidIndex then
+            menu = "RAID_PLAYER"
+            id = raidIndex + 1 -- UnitInRaid is 0-based on 3.3.5
+            name = GetRaidRosterInfo(id)
+        elseif UnitInParty(unit) then
+            menu = "PARTY"
         else
-            menu = "TARGET"
-            name = RAID_TARGET_ICON
+            menu = "PLAYER"
         end
-        if menu then
-            UnitPopup_ShowMenu(self, menu, unit, name, id)
-        end
-    end, "MENU")
-
-    ShowUnitMenu = function(self)
-        local unit = self:GetAttribute("unit")
-        if not unit then return end
-        HideDropDownMenu(1)
-        dropdown.unit = unit
-        ToggleDropDownMenu(1, nil, dropdown, "cursor", 0, 0)
+    else
+        menu = "TARGET"
+        name = RAID_TARGET_ICON
     end
+    if menu then
+        UnitPopup_ShowMenu(self, menu, unit, name, id)
+    end
+end, "MENU")
+
+ShowUnitMenu = function(self)
+    local unit = self:GetAttribute("unit")
+    if not unit then return end
+    HideDropDownMenu(1)
+    dropdown.unit = unit
+    ToggleDropDownMenu(1, nil, dropdown, "cursor", 0, 0)
 end
 
 -------------------------------------------------
 -- update click-castings
 -------------------------------------------------
-local previousClickCastings
+--! WotLK fix: the queued-frame prototype has no live RegisterFrame producer on
+--! this client; every active path updates Cell's real unit-button registry.
+--! Keep one deferred full rebuild after combat and remove the inert queued-only
+--! state/listener instead of maintaining a callback that can never be fired.
+local pendingClickCastingsUpdate
+local clickCastingsCombatFrame = CreateFrame("Frame")
+clickCastingsCombatFrame:SetScript("OnEvent", function(self)
+    self:UnregisterEvent("PLAYER_REGEN_ENABLED")
+    if pendingClickCastingsUpdate then
+        local noReload = pendingClickCastingsUpdate[1]
+        pendingClickCastingsUpdate = nil
+        F.UpdateClickCastings(noReload)
+    end
+end)
+
 local function ClearClickCastings(b)
-    if not previousClickCastings then return end
-    b:SetAttribute("cell", nil)
-    b:SetAttribute("menu", nil)
-    for _, t in pairs(previousClickCastings) do
+    local owned = b._cellClickCastingAttributes
+    if not owned then return end
+
+    --! WotLK fix: Cell buttons can also be registered by Clique-like addons.
+    --! The secure marker follows Cell's dynamic @cell rewrite, so cleanup can
+    --! distinguish Cell's latest value from a later foreign replacement.
+    for attr in pairs(owned) do
+        local marker = "cell-owned-"..attr
+        local ownedValue = b:GetAttribute(marker)
+        local currentValue = b:GetAttribute(attr)
+        if currentValue == ownedValue or (currentValue == nil and ownedValue == false) then
+            b:SetAttribute(attr, nil)
+        end
+        b:SetAttribute(marker, nil)
+    end
+    b._cellClickCastingAttributes = nil
+end
+
+local function TrackClickCastingAttributes(b)
+    local owned = {}
+    local function Track(attr)
+        local value = b:GetAttribute(attr)
+        if value ~= nil then
+            owned[attr] = true
+            b:SetAttribute("cell-owned-"..attr, value)
+        end
+    end
+
+    Track("cell")
+    Track("menu")
+    for _, t in pairs(clickCastingTable) do
         local bindKey = t[1]
         if strfind(bindKey, "SCROLL") then
-            bindKey = GetMouseWheelBindKey(t[1])
+            bindKey = GetMouseWheelBindKey(bindKey)
         end
 
-        b:SetAttribute(bindKey, nil)
-        local attr = string.gsub(bindKey, "type", "spell")
-        b:SetAttribute(attr, nil)
-        attr = string.gsub(bindKey, "type", "macro")
-        b:SetAttribute(attr, nil)
-        attr = string.gsub(bindKey, "type", "macrotext")
-        b:SetAttribute(attr, nil)
-        attr = string.gsub(bindKey, "type", "item")
-        b:SetAttribute(attr, nil)
-        -- attr = string.gsub(bindKey, "type", "click")
-        -- b:SetAttribute(attr, nil)
-        -- if t[2] == "spell" then
-        --     local attr = string.gsub(bindKey, "type", "spell")
-        --     b:SetAttribute(attr, nil)
-        -- elseif t[2] == "macro" then
-        --     local attr = string.gsub(bindKey, "type", "macrotext")
-        --     b:SetAttribute(attr, nil)
-        -- end
+        Track(bindKey)
+        Track(string.gsub(bindKey, "type", "spell"))
+        Track(string.gsub(bindKey, "type", "macro"))
+        Track(string.gsub(bindKey, "type", "macrotext"))
+        Track(string.gsub(bindKey, "type", "item"))
+        Track(string.gsub(bindKey, "type", t[2]))
     end
+    b._cellClickCastingAttributes = owned
 end
 
 --! store attribute keys, update them in _onenter
@@ -531,7 +562,7 @@ local function ApplyClickCastings(b)
             b:SetAttribute("menu", bindKey)
             --! WotLK fix: only the key was remembered, the button never got a secure
             --! action type, so "Menu (not in combat)" did nothing at all. Seed "menu"
-            --! here; the combat state driver clears it again while in combat.
+            --! here; secure OnEnter clears it while PlayerInCombat() is true.
             b:SetAttribute(bindKey, "menu")
         ------------------------------------------------------------------
         --* 已修复：实际上载具（宠物按钮）无法选中的原因是没有 SetAttribute("toggleForVehicle", false)
@@ -541,7 +572,8 @@ local function ApplyClickCastings(b)
         --     b:SetAttribute(attr, "/tar [@cell]")
         --     UpdatePlaceholder(b, attr)
         ------------------------------------------------------------------
-        elseif t[2] == "togglemenu" and not Cell.isRetail then
+        --! Ретейл-хвост `and not Cell.isRetail` вырезан (флаг - литерал false).
+        elseif t[2] == "togglemenu" then
             --! WotLK: secure type is "menu" (calls self.menu), togglemenu is 4.x+
             b:SetAttribute(bindKey, "menu")
         else
@@ -579,7 +611,8 @@ local function ApplyClickCastings(b)
                 condition = F.IsResurrectionForDead(spellName) and ",dead" or ",nodead"
             end
 
-            local unit = Cell.isRetail and "@mouseover,exists" or "@cell,exists"
+            --! Ретейл-ветка вырезана: на 3.3.5 всегда "@cell,exists".
+            local unit = "@cell,exists"
 
             -- "sMaRt" resurrection
             local sMaRt = ""
@@ -587,13 +620,10 @@ local function ApplyClickCastings(b)
                 if strfind(smartResurrection, "^normal") then
                     local normalResurrection = F.GetNormalResurrection(Cell.vars.playerClass)
                     if normalResurrection then
-                        if Cell.isRetail then -- mass resurrections
-                            for cond, spell in pairs(normalResurrection) do
-                                sMaRt = sMaRt .. ";["..unit..",dead,nocombat,"..cond.."] "..spell
-                            end
-                        else
-                            sMaRt = sMaRt .. ";["..unit..",dead,nocombat] "..normalResurrection
-                        end
+                        --! Ретейл-ветка массовых воскрешений вырезана: на 3.3.5
+                        --! F.GetNormalResurrection отдаёт одну строку-заклинание,
+                        --! а не таблицу условий.
+                        sMaRt = sMaRt .. ";["..unit..",dead,nocombat] "..normalResurrection
                     end
                 end
                 if strfind(smartResurrection, "combat$") then
@@ -610,7 +640,7 @@ local function ApplyClickCastings(b)
                 b:SetAttribute(bindKey, "macro")
                 local attr = string.gsub(bindKey, "type", "macrotext")
                 b:SetAttribute(attr, "/tar ["..unit.."]\n/cast ["..unit..condition.."] "..spellName..sMaRt..fix)
-                if not Cell.isRetail then UpdatePlaceholder(b, attr) end
+                UpdatePlaceholder(b, attr) --! ретейл-guard вырезан
             else
                 -- NOTE: "spell" is not ideal, ��无效/过远的目标上会处于“等待选中目标”的状态，即鼠标指针有一圈灰/蓝色材质
                 -- local attr = string.gsub(bindKey, "type", "spell")
@@ -622,7 +652,7 @@ local function ApplyClickCastings(b)
                 else
                     b:SetAttribute(attr, "/cast ["..unit..condition.."] "..spellName..sMaRt..fix)
                 end
-                if not Cell.isRetail then UpdatePlaceholder(b, attr) end
+                UpdatePlaceholder(b, attr) --! ретейл-guard вырезан
             end
         elseif t[2] == "macro" then
             local attr = string.gsub(bindKey, "type", "macro")
@@ -640,6 +670,14 @@ local function ApplyClickCastings(b)
 end
 
 function F.UpdateClickCastOnFrame(frame, snippet)
+    --! WotLK fix: individual protected frames can be registered while combat
+    --! is active. Defer a full rebuild rather than mutating secure attributes.
+    if InCombatLockdown() then
+        pendingClickCastingsUpdate = {true}
+        clickCastingsCombatFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+        return
+    end
+
     if frame then
         ClearClickCastings(frame)
         -- update bindingClicks
@@ -647,10 +685,20 @@ function F.UpdateClickCastOnFrame(frame, snippet)
         SetBindingClicks(frame)
         -- load db and set attribute
         ApplyClickCastings(frame)
+        TrackClickCastingAttributes(frame)
     end
 end
 
-function F.UpdateClickCastings(noReload, onlyqueued)
+function F.UpdateClickCastings(noReload)
+    --! WotLK fix: every operation below mutates protected unit-button
+    --! attributes/scripts. Queue one latest update until combat ends instead of
+    --! allowing profile/UI callbacks to trigger blocked actions and partial DB.
+    if InCombatLockdown() then
+        pendingClickCastingsUpdate = {noReload}
+        clickCastingsCombatFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+        return
+    end
+
     F.Debug("|cff77ff77UpdateClickCastings:|r useCommon:", Cell.vars.clickCastings["useCommon"])
     clickCastingTable = Cell.vars.clickCastings["useCommon"] and Cell.vars.clickCastings["common"] or Cell.vars.clickCastings[Cell.vars.playerSpecID]
 
@@ -674,38 +722,12 @@ function F.UpdateClickCastings(noReload, onlyqueued)
     local snippet = F.GetBindingSnippet()
     F.Debug(snippet)
 
-    -- REVIEW:
-    -- local clickFrames = Cell.clickCastFrames
-    -- if onlyqueued then
-    --     clickFrames = Cell.clickCastFrameQueue
-    -- end
-    -- for b, val in pairs(clickFrames) do
-    --     Cell.clickCastFrameQueue[b] = nil
-    --     -- clear if attribute already set
-    --     ClearClickCastings(b)
-    --     if val then
-    --         -- update bindingClicks
-    --         b:SetAttribute("snippet", snippet)
-    --         SetBindingClicks(b)
-
-    --         -- load db and set attribute
-    --         ApplyClickCastings(b)
-    --     end
-    -- end
-
     F.IterateAllUnitButtons(function(b)
         F.UpdateClickCastOnFrame(b, snippet)
     end, false, true)
 
-    previousClickCastings = F.Copy(clickCastingTable)
 end
 Cell.RegisterCallback("UpdateClickCastings", "UpdateClickCastings", F.UpdateClickCastings)
-
-local function UpdateQueuedClickCastings()
-    -- fix latent upstream bug: bare UpdateClickCastings() global does not exist (only F.UpdateClickCastings)
-    F.UpdateClickCastings(true, true)
-end
-Cell.RegisterCallback("UpdateQueuedClickCastings", "UpdateQueuedClickCastings", UpdateQueuedClickCastings)
 
 -------------------------------------------------
 -- profiles dropdown
@@ -1192,7 +1214,8 @@ local function ShowActionsMenu(index, b)
             end,
         })
 
-        if (Cell.isVanilla or Cell.isWrath or Cell.isCata) and Cell.vars.playerClass == "WARLOCK" then
+        --! Guard по флейворам вырезан - на 3.3.5 он всегда истина.
+        if Cell.vars.playerClass == "WARLOCK" then
             tinsert(items, {
                 ["text"] = F.GetSpellInfo(20707),
                 ["onClick"] = function()
@@ -1257,7 +1280,9 @@ local function ShowActionsMenu(index, b)
 
         for slot = 1, 17 do
             local itemId = GetInventoryItemID("player", slot)
-            if itemId and C_Item.IsUsableItem(itemId) then
+            --! WotLK fix: use the native 3.3.5 API directly so standalone
+            --! !!!ClassicAPI cannot change this menu's item-eligibility contract.
+            if itemId and IsUsableItem(itemId) then
                 local text = GetInventoryItemLink("player", slot) or ""
                 text = string.gsub(text, "[%[%]]", "")
 
@@ -1439,10 +1464,9 @@ local function UpdateCurrentText(isCommon)
     if isCommon then
         listPane:SetTitle(L["Current Profile"]..": "..L["Common"])
     else
-        if Cell.isCata or Cell.isWrath or Cell.isVanilla then
-            local name, icon = F.GetActiveTalentInfo()
-            listPane:SetTitle(L["Current Profile"]..": ".."|T"..icon..":12:12:0:1:12:12:1:11:1:11|t "..name)
-        end
+        --! Guard по флейворам вырезан - на 3.3.5 он всегда истина.
+        local name, icon = F.GetActiveTalentInfo()
+        listPane:SetTitle(L["Current Profile"]..": ".."|T"..icon..":12:12:0:1:12:12:1:11:1:11|t "..name)
     end
 end
 
@@ -1608,8 +1632,11 @@ CreateBindingListButton = function(modifier, bindKey, bindType, bindAction, i)
         if bindAction ~= "" then
             if strfind(bindAction, ":") then
                 local spellId, rank = strsplit(":", bindAction)
-                b.bindActionDisplay = F.GetSpellInfo(spellId).."|cff777777("..rank..")|r"
-                b:ShowSpellIcon(spellId)
+                --! WotLK fix: stale ranked spell IDs can be absent from the
+                --! 3.3.5 spell cache; do not concatenate nil while loading DB.
+                local spellName = F.GetSpellInfo(spellId)
+                b.bindActionDisplay = spellName and (spellName.."|cff777777("..rank..")|r") or ("|cFFFF3030"..L["Invalid"])
+                b:ShowSpellIcon(spellName and spellId or nil)
             elseif type(bindAction) ~= "number" then
                 b.bindActionDisplay = "|cFFFF3030"..L["Invalid"]
                 b:ShowSpellIcon()
@@ -1741,7 +1768,10 @@ end
 -------------------------------------------------
 -- check conflicts
 -------------------------------------------------
-function CheckConflicts()
+--! WotLK fix: было `function CheckConflicts()` - запись в глобал _G.CheckConflicts.
+--! Имя универсальное настолько, что конфликт с чужим аддоном - вопрос времени, а Cell
+--! не владеет глобалами. Читатель один и в этом же файле (:1839), ниже определения.
+local function CheckConflicts()
     local selfCast = GetModifiedClick("SELFCAST")
     -- local focusCast = GetModifiedClick("FOCUSCAST")
 

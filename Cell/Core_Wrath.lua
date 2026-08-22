@@ -1,5 +1,7 @@
 ---@class Cell
 local Cell = select(2, ...)
+--! WotLK fix: bind Cell timers privately so standalone !!!ClassicAPI cannot change semantics.
+local C_Timer = Cell.C_Timer
 _G.Cell = Cell
 
 Cell.isRetail = false
@@ -37,29 +39,31 @@ local L = Cell.L
 --! WotLK fix: these floors used to equal this build's own version (277), which made
 --! the accepted window exactly one version wide, so every import string exported by
 --! any other Cell build (e.g. anything from wago.io) was rejected as "Incompatible
---! Version". The floor is upstream's 246 again.
---! The earlier 269 floor assumed imported payloads are never migrated. That is only half
---! true: a profile string is copied into CellDB together with its own "revise" stamp and
---! then ReloadUI runs Revise.lua against it, so revisions 246..264 do apply. Layout,
---! indicator, click-casting and raid-debuff payloads are not migrated, but each import
---! path validates them against Cell.defaults first (DoImport drops built-ins missing from
---! indicatorIndices, refills missing ones, normalises powerFilters, filters dead spellIDs),
---! so an older shape cannot reach runtime. Revise.lua ships 113 migrations (revise 13..264);
---! the only upstream revision we dropped is 269, which touches Cell.isMists + the CN portal.
+--! Version". The floor is now the last schema-changing revision in Revise.lua (269).
+--! Anything older than that relies on Revise.lua migrations, and those only ever run
+--! against the local saved DB - never against imported data - so importing an older
+--! payload would inject an outdated shape and error out later at runtime.
 --! WotLK fix: MIN_VERSION is ALSO the "unsupported saved DB" floor (Revise.lua:17/:32),
 --! so raising it to 269 made every local DB at revise 246..268 offer a full settings reset
 --! instead of migrating - Revise.lua:3317/3322/3335/3374/3391/3400 became unreachable.
---! Both floors are upstream's 246 now: the DB floor for Revise.lua, the rest for imports.
+--! The DB floor is back to upstream's 246; the import floor keeps 269 as MIN_IMPORT_VERSION.
 Cell.MIN_VERSION = 246          -- unsupported-DB floor, used by Revise.lua
-Cell.MIN_IMPORT_VERSION = 246   -- floor for accepted import strings
-Cell.MIN_CLICKCASTINGS_VERSION = 246
-Cell.MIN_LAYOUTS_VERSION = 246
-Cell.MIN_INDICATORS_VERSION = 246
-Cell.MIN_DEBUFFS_VERSION = 246
+Cell.MIN_IMPORT_VERSION = 269   -- floor for accepted import strings
+Cell.MIN_CLICKCASTINGS_VERSION = 269
+Cell.MIN_LAYOUTS_VERSION = 269
+Cell.MIN_INDICATORS_VERSION = 269
+Cell.MIN_DEBUFFS_VERSION = 269
 
 --[==[@debug@
 --@end-debug@]==]
--- local debugMode = true
+--! WotLK fix: было `-- local debugMode = true` - объявление закомментировано, а чтение
+--! на следующих строках осталось, то есть F.Debug читала ГЛОБАЛ _G.debugMode. Cell не
+--! владеет глобалами (CLAUDE.md §3) и тем более не должен верить, что прочитанное имя -
+--! его собственное: любой аддон с `debugMode = true` (имя настолько общее, что это лишь
+--! вопрос времени) включил бы игроку спам отладки Cell в чат. Локал объявлен явно и
+--! выключен; чтобы включить отладку, достаточно поменять false на true. В апстриме тут
+--! настоящий локал (Cell-retail/Core_Wrath.lua:39).
+local debugMode = false
 function F.Debug(arg, ...)
     if debugMode then
         if type(arg) == "string" or type(arg) == "number" then
@@ -89,6 +93,13 @@ CellParent:SetFrameLevel(0)
 -- layout
 -------------------------------------------------
 local delayedLayoutGroupType
+--! WotLK fix: generation counter for the 50 ms window between PLAYER_REGEN_ENABLED
+--! and the timer below. The slot was never cleared when consumed, so a fresh
+--! F.UpdateLayout arriving out of combat inside that window ran immediately and was
+--! then overwritten by the deferred replay of the stale group type. Latch a copy,
+--! clear the slot, and compare generations before replaying. ElvUI clears its own
+--! deferred slot the same way (ActionBars.lua:305-307).
+local layoutGeneration = 0
 local delayedFrame = CreateFrame("Frame")
 delayedFrame:SetScript("OnEvent", function()
     delayedFrame:UnregisterEvent("PLAYER_REGEN_ENABLED")
@@ -98,18 +109,61 @@ delayedFrame:SetScript("OnEvent", function()
     --! all in one frame. This one is the heaviest (it broadcasts UpdateLayout,
     --! UpdateIndicators, UpdateAppearance, UpdateRaidDebuffs and more), so move it off
     --! that frame. The two sort jobs already debounce themselves by 0.2s.
+    local groupType = delayedLayoutGroupType
+    local generation = layoutGeneration
+    delayedLayoutGroupType = nil
     C_Timer.After(0.05, function()
-        F.UpdateLayout(delayedLayoutGroupType)
+        --! WotLK fix: nil guard - F.UpdateLayout(nil) would index the layout table
+        --! with a nil key and leave Cell.vars.currentLayoutTable nil.
+        if groupType and generation == layoutGeneration then
+            F.UpdateLayout(groupType)
+        end
     end)
 end)
+
+--! WotLK fix: resolves which auto-switch table is in force, same rule retail uses
+--! (Cell-retail/Core.lua:87-92): if a per-talent-group table exists, that wins; otherwise
+--! fall back to the shared per-role table. Presence IS the mode flag - no separate boolean
+--! to keep in sync with the data, and no migration, because every existing character
+--! already has both talent-group tables and therefore stays in Spec mode exactly as before.
+--! The Role|Spec switch in the Layouts pane creates or deletes
+--! CellCharacterDB["layoutAutoSwitch"][activeTalentGroup] to flip the mode.
+--! The role table lives in CellDB (account-wide, so one Healer profile serves every healer
+--! the player has); the spec tables stay in CellCharacterDB, where they were. Name is
+--! "layoutAutoSwitchRole" and not "layoutAutoSwitch": the latter is already taken -
+--! ImportExport.lua:130 reads imported["layoutAutoSwitch"] as the retail account-level key
+--! and writes it into CellCharacterDB at :182.
+--! Separate from F.UpdateLayout on purpose: that one refuses to do anything in combat, but
+--! this touches nothing protected - only table references and two strings - so the Layouts
+--! pane can flip the mode mid-combat and still show the right table. The frames themselves
+--! are rebuilt later, by the deferred UpdateLayout.
+function F.UpdateLayoutAutoSwitchVars()
+    local switchTable = CellCharacterDB["layoutAutoSwitch"][Cell.vars.activeTalentGroup]
+    if switchTable then
+        Cell.vars.layoutAutoSwitchBy = "spec"
+    else
+        Cell.vars.layoutAutoSwitchBy = "role"
+        --! WotLK fix: playerTalentRole can still be unknown here - the talent tree is
+        --! unreadable for the first second after login (see CheckDivineAegis below).
+        --! DAMAGER is the fallback, and UpdateTalentRole re-keys as soon as the tree
+        --! answers, so the wrong profile can only be on screen for that first second
+        --! of the very first login on a character; afterwards the cached role in
+        --! CellCharacterDB["talentRoles"] makes even that correct.
+        switchTable = CellDB["layoutAutoSwitchRole"][Cell.vars.playerTalentRole or "DAMAGER"]
+    end
+    Cell.vars.layoutAutoSwitch = switchTable
+end
 
 function F.UpdateLayout(layoutGroupType)
     if InCombatLockdown() then
         delayedLayoutGroupType = layoutGroupType
         delayedFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
     else
+        --! WotLK fix: bump the generation so a deferred replay scheduled before this
+        --! call knows it is stale and skips itself.
+        layoutGeneration = layoutGeneration + 1
 
-        Cell.vars.layoutAutoSwitch = CellCharacterDB["layoutAutoSwitch"][Cell.vars.activeTalentGroup]
+        F.UpdateLayoutAutoSwitchVars()
 
         local layout = Cell.vars.layoutAutoSwitch[layoutGroupType]
         Cell.vars.layoutGroupType = layoutGroupType
@@ -139,18 +193,52 @@ function F.UpdateLayout(layoutGroupType)
     end
 end
 
-local bgMaxPlayers = {
-    [2197] = 40, -- 科尔拉克的复仇
-}
-
 -- layout auto switch
 local instanceType
+
+--! WotLK fix: build 12340 has neither GetInstanceInfo's later map ID nor the
+--! extended GetBattlegroundInfo tuple, and the maxPlayers it does return is not
+--! trustworthy inside a battleground -- ElvUI 6.09 on this same client overrides
+--! it the same way (Modules/UnitFrames/Groups/Raid.lua:74-79). The previous call
+--! here went to the global C_GetInstanceInfo() from Libs/ClassicAPI/Util/API.lua,
+--! a file that is no longer loaded, so it was a nil call on every battleground
+--! entry. The capacity is derived privately instead, and never from a shared
+--! global: Cell does not own C_GetInstanceInfo and must not read it as its own.
+--!
+--! Key is the GetMapInfo() map file name -- a texture folder name, identical in
+--! every locale, unlike GetRealZoneText/GetBattlefieldStatus which return
+--! localized strings. It needs the world map to point at the current zone;
+--! FrameXML does that itself (WatchFrame.lua:237 calls SetMapToCurrentZone on
+--! PLAYER_ENTERING_WORLD), and Cell must not call SetMapToCurrentZone on its own
+--! because that mutates global map state other addons read.
+--! Two fallbacks cover the case where the player has the map open elsewhere:
+--! a raid of more than 15 can only be a 40-man battleground, and below that the
+--! native maxPlayers is still better than nothing. Cell only needs "40-man or
+--! not" here, so an unknown map degrades to battleground15, not to an error.
+local BATTLEGROUND_SIZE = {
+    AlteracValley = 40,
+    IsleofConquest = 40,
+    LakeWintergrasp = 40,
+    WarsongGulch = 10,
+    ArathiBasin = 15,
+    NetherstormArena = 15, -- Eye of the Storm
+    StrandoftheAncients = 15,
+}
+
+local function GetBattlegroundSize()
+    local map = GetMapInfo()
+    local size = map and BATTLEGROUND_SIZE[map]
+    if size then return size end
+
+    if GetNumRaidMembers() > 15 then return 40 end
+
+    local _, _, _, _, maxPlayers = GetInstanceInfo()
+    return maxPlayers
+end
+
 local function PreUpdateLayout()
     if instanceType == "pvp" then
-        -- NOTE: on 3.3.5a GetInstanceInfo has no 8th return (instanceMapID),
-        -- so fall back to the native 5th return (maxPlayers) for AV/IoC (40-man)
-        local name, _, _, _, maxPlayers, _, _, id = GetInstanceInfo()
-        local size = bgMaxPlayers[id] or maxPlayers
+        local size = GetBattlegroundSize()
         if size and size > 15 then
             Cell.vars.inBattleground = 40
             F.UpdateLayout("battleground40", true)
@@ -193,9 +281,10 @@ function eventFrame:VARIABLES_LOADED()
     SetCVar("predictedHealth", 1)
 end
 
-local IsInRaid = IsInRaid
-local IsInGroup = IsInGroup
-local GetNumGroupMembers = GetNumGroupMembers
+--! WotLK fix: consume Cell-private group adapters; do not depend on shared compatibility globals.
+local IsInRaid = Cell.IsInRaid
+local IsInGroup = Cell.IsInGroup
+local GetNumGroupMembers = Cell.GetNumGroupMembers
 local GetRaidRosterInfo = GetRaidRosterInfo
 local UnitGUID = UnitGUID
 -- local IsInBattleGround = C_PvP.IsBattleground -- NOTE: can't get valid value immediately after PLAYER_ENTERING_WORLD
@@ -273,8 +362,13 @@ function eventFrame:ADDON_LOADED(arg1)
         -- tools ----------------------------------------------------------------------------------
         if type(CellDB["tools"]) ~= "table" then
             CellDB["tools"] = {
-                ["battleResTimer"] = {true, false, {}},
-                ["buffTracker"] = {false, "left-to-right", 27, {}, {}},
+                --! WotLK fix: ключа battleResTimer больше нет - галки "Battle Res Timer"
+                --! и "Detached" убраны из Рейдовых инструментов 2026-08-19, читать его
+                --! стало некому (см. Cell/Utilities/RaidTools.lua).
+                --! WotLK fix: шестой элемент - подсветка иконки, когда баффа нет на самом
+                --! игроке. Раньше глоу был вшит наглухо; для существующих баз ключ
+                --! добирает Revise (ищи buffTracker[6]).
+                ["buffTracker"] = {false, "left-to-right", 27, {}, {}, true},
                 ["deathReport"] = {false, 10},
                 ["readyAndPull"] = {false, "text_button", {"default", 7}, {}},
                 ["marks"] = {false, false, "target_h", {}},
@@ -450,6 +544,29 @@ function eventFrame:ADDON_LOADED(arg1)
             }
         end
 
+        --! WotLK fix: the per-role half of Layout Auto Switch, account-wide on purpose -
+        --! a player with three healers wants one Healer profile, not three copies. The
+        --! per-spec half above stays per-character. Both tables always exist; which one is
+        --! in force is decided by F.UpdateLayout (see the comment there).
+        if type(CellDB["layoutAutoSwitchRole"]) ~= "table" then
+            CellDB["layoutAutoSwitchRole"] = {}
+        end
+        for _, role in pairs({"TANK", "HEALER", "DAMAGER"}) do
+            if type(CellDB["layoutAutoSwitchRole"][role]) ~= "table" then
+                CellDB["layoutAutoSwitchRole"][role] = F.Copy(Cell.defaults.layoutAutoSwitch)
+            end
+        end
+
+        --! WotLK fix: remember the role of each talent group. There is no GetSpecialization
+        --! and no GetPrimaryTalentTree on build 12340 (both verified absent from the codex),
+        --! so the role has to be read off the talent trees - and those are unreadable for
+        --! about a second after login. Without this cache the first layout of every login
+        --! would be built under the fallback role and then rebuilt, which is a visible
+        --! flicker; with it, only the very first login on a character can be wrong.
+        if type(CellCharacterDB["talentRoles"]) ~= "table" then
+            CellCharacterDB["talentRoles"] = {}
+        end
+
         -- dispelBlacklist ------------------------------------------------------------------------
         if type(CellDB["dispelBlacklist"]) ~= "table" then
             CellDB["dispelBlacklist"] = I.GetDefaultDispelBlacklist()
@@ -515,6 +632,13 @@ function eventFrame:ADDON_LOADED(arg1)
         Cell.vars.actions = I.ConvertActions(CellDB["actions"])
 
         -- misc -----------------------------------------------------------------------------------
+        -- NOTE: "## Version:" in Cell.toc is frozen at "r277-release" on purpose and is never
+        -- bumped on this backport. It is parsed with "%d+" right below and stored into
+        -- CellDB["revise"] (Revise.lua), so dbRevision is always 277: a new migration guarded by
+        -- "dbRevision < 278" would therefore fire on EVERY login. Repair saved data in place
+        -- instead (see RepairAgainstDefaults in Revise.lua), not through a revision threshold.
+        -- If the version ever does change, keep the "rNNN" shape -- "1.0" parses to 1, which is
+        -- below MIN_VERSION and pops the settings-reset dialog for every existing user.
         Cell.version = GetAddOnMetadata("Cell", "version")
         Cell.versionNum = tonumber(string.match(Cell.version, "%d+"))
         if not CellDB["revise"] then CellDB["firstRun"] = true end
@@ -526,6 +650,18 @@ function eventFrame:ADDON_LOADED(arg1)
         -- validation -----------------------------------------------------------------------------
         -- validate layout
         for talent, t in pairs(CellCharacterDB["layoutAutoSwitch"]) do
+            for groupType, layout in pairs(t) do
+                if layout ~= "hide" and not CellDB["layouts"][layout] then
+                    t[groupType] = "default"
+                end
+            end
+        end
+
+        --! WotLK fix: the role tables need the same guard. A layout deleted while the
+        --! character was offline (layouts are account-wide, so another character can do
+        --! that) would otherwise leave a dangling name here, and F.UpdateLayout would set
+        --! currentLayoutTable to nil - every indicator then reads fields off nil.
+        for _, t in pairs(CellDB["layoutAutoSwitchRole"]) do
             for groupType, layout in pairs(t) do
                 if layout ~= "hide" and not CellDB["layouts"][layout] then
                     t[groupType] = "default"
@@ -573,6 +709,19 @@ Cell.vars.raidSetup = {
     ["DAMAGER"]={["ALL"]=0},
 }
 
+--! WotLK fix: вынесено из DoGroupRosterUpdate. Права меняются и без смены
+--! состава: повышение в лидеры/ассисты роста не трогает, а на 3.3.5 это
+--! отдельное событие PARTY_LEADER_CHANGED (обработчик ниже). Один и тот же
+--! пересчёт зовут два источника, чтобы Marks/ReadyAndPull не оставались
+--! заблокированными до следующего изменения группы.
+local function UpdatePermission()
+    if Cell.vars.hasPermission ~= F.HasPermission() or Cell.vars.hasPartyMarkPermission ~= F.HasPermission(true) then
+        Cell.vars.hasPermission = F.HasPermission()
+        Cell.vars.hasPartyMarkPermission = F.HasPermission(true)
+        Cell.Fire("PermissionChanged")
+    end
+end
+
 local function DoGroupRosterUpdate()
     if IsInRaid() then
         if Cell.vars.groupType ~= "raid" then
@@ -598,7 +747,7 @@ local function DoGroupRosterUpdate()
             --! WotLK fix: GetRaidRosterInfo has no 12th return (combatRole) on 3.3.5;
             --! use the same resolver everything else in Cell uses.
             local _, _, _, _, _, class = GetRaidRosterInfo(i)
-            local role = Cell_UnitGroupRolesAssigned("raid"..i)
+            local role = Cell.UnitGroupRolesAssigned("raid"..i)
             if not role or role == "NONE" then role = "DAMAGER" end
             -- update ALL
             Cell.vars.raidSetup[role]["ALL"] = Cell.vars.raidSetup[role]["ALL"] + 1
@@ -667,26 +816,44 @@ local function DoGroupRosterUpdate()
         end
     end
 
-    if Cell.vars.hasPermission ~= F.HasPermission() or Cell.vars.hasPartyMarkPermission ~= F.HasPermission(true) then
-        Cell.vars.hasPermission = F.HasPermission()
-        Cell.vars.hasPartyMarkPermission = F.HasPermission(true)
-        Cell.Fire("PermissionChanged")
-    end
+    UpdatePermission()
 end
 
---! Freeze fix: on 3.3.5 a single roster change reaches Cell up to three times - once
---! via the GROUP_ROSTER_UPDATE proxy in Polyfills.lua, and once via each of the
---! PARTY_MEMBERS_CHANGED / RAID_ROSTER_UPDATE handlers that re-call this function.
---! Every pass walks the roster, clears 40 raid slots and can fire a full layout
---! rebuild, which is what makes forming a group stutter. Collapse the duplicates that
---! land in the same frame; GetTime() is constant within a frame, so this drops only
---! genuine repeats. Callers that must recompute synchronously pass force.
-local lastRosterFrame
-function eventFrame:GROUP_ROSTER_UPDATE(force)
-    local now = GetTime()
-    if not force and lastRosterFrame == now then return end
-    lastRosterFrame = now
+--! WotLK fix: PARTY_MEMBERS_CHANGED and RAID_ROSTER_UPDATE are the only native
+--! 3.3.5a roster signals. Normalize both through one Cell-owned route, coalesce
+--! same-frame bursts on the next frame (party-to-raid conversion can emit
+--! both), then notify
+--! internal consumers once through Cell's callback bus. Never forward the
+--! RAID_ROSTER_UPDATE reason string as the truthy `force` argument.
+local rosterUpdatePending
+local rosterDispatchFrame = CreateFrame("Frame")
+rosterDispatchFrame:Hide()
+rosterDispatchFrame:SetScript("OnUpdate", function(self)
+    self:Hide()
+    if not rosterUpdatePending then return end
+
+    rosterUpdatePending = nil
     DoGroupRosterUpdate()
+    if Cell.loaded then
+        Cell.Fire("GroupRosterUpdate")
+    end
+end)
+
+local function GroupRosterUpdate(force)
+    if force then
+        rosterUpdatePending = nil
+        rosterDispatchFrame:Hide()
+        DoGroupRosterUpdate()
+        if Cell.loaded then
+            Cell.Fire("GroupRosterUpdate")
+        end
+        return
+    end
+
+    if not rosterUpdatePending then
+        rosterUpdatePending = true
+        rosterDispatchFrame:Show()
+    end
 end
 
 local inInstance
@@ -732,12 +899,12 @@ function eventFrame:PLAYER_ENTERING_WORLD()
         --! stale ("party") for a moment, so layout auto-switch applied the wrong (group)
         --! profile. Recompute the real group type from the live API before applying the
         --! layout, and re-check shortly after in case the arena party is torn down later.
-        eventFrame:GROUP_ROSTER_UPDATE(true) --! force: the layout below depends on it
+        GroupRosterUpdate(true) --! force: the layout below depends on it
         PreUpdateLayout()
         inInstance = false
         Cell.Fire("LeaveInstance")
-        C_Timer.After(0.3, function() eventFrame:GROUP_ROSTER_UPDATE() end)
-        C_Timer.After(1, function() eventFrame:GROUP_ROSTER_UPDATE() end)
+        C_Timer.After(0.3, function() GroupRosterUpdate() end)
+        C_Timer.After(1, function() GroupRosterUpdate() end)
 
         --! Freeze fix: collectgarbage("collect") is a synchronous full sweep of the
         --! entire Lua heap (~180MB with a loaded UI). It stops the client dead for a
@@ -757,8 +924,8 @@ function eventFrame:PLAYER_ENTERING_WORLD()
     --! profile refresh. On reload/login force a roster refresh if already grouped so
     --! names/indicators populate.
     if IsInRaid() or IsInGroup() then
-        C_Timer.After(0.1, function() eventFrame:GROUP_ROSTER_UPDATE() end)
-        C_Timer.After(0.5, function() eventFrame:GROUP_ROSTER_UPDATE() end)
+        C_Timer.After(0.1, function() GroupRosterUpdate() end)
+        C_Timer.After(0.5, function() GroupRosterUpdate() end)
         C_Timer.After(0.6, function()
             if Cell.vars.groupType == "party" or Cell.vars.groupType == "solo" then
                 if Cell.frames.partyFrame and Cell.frames.partyFrame:IsShown() then
@@ -773,15 +940,64 @@ function eventFrame:PLAYER_ENTERING_WORLD()
     end
 end
 
+--! WotLK fix: at PLAYER_LOGIN the talent tree is not populated yet on build 12340.
+--! GetTalentInfo(1, 24) returns nothing at all - no name, no rank - so the rank ladder
+--! below matched nothing and the multiplier was left nil. PLAYER_TALENT_UPDATE only
+--! fires when points are gained or spent (codex: "Fires when the player gains or spends
+--! talent points"), so nothing re-read the tree afterwards. Run 13 (2026-08-10) caught
+--! it in the client: the tree was unreadable in the first probe and readable one second
+--! later with rank 3, yet divineAegisMultiplier stayed nil for the next 553 seconds -
+--! until the loading screen into the dungeon happened to re-fire the event. For those
+--! nine minutes the Divine Aegis branch of the CLEU handler
+--! (RaidFrames/UnitButton_Cata_Wrath.lua:2884) skipped every shield, because it guards
+--! on that very var. Retry until the tree answers instead of reading it once.
+local divineAegisRetries, divineAegisRetryPending
 local function CheckDivineAegis()
     if Cell.vars.playerClass == "PRIEST" then
-        local rank = select(5, GetTalentInfo(1, 22))
+        --! WotLK fix: 22 is an unadapted Cata constant - upstream carries the same
+        --! index in Core_Cata.lua:675 and Core_Wrath.lua:675 for two DIFFERENT
+        --! talent trees. On 3.3.5 Divine Aegis sits at index 24 of the Discipline
+        --! tree; that is what AbsorbsMonitor-1.0.lua:1824 read - a library that was
+        --! embedded in Cell and written for this client (deleted 2026-08-09 because
+        --! LoadLibs_Classic.xml never loaded it; the evidence lives on in git
+        --! history, `git show HEAD:Cell/Libs/AbsorbsMonitor-1.0/AbsorbsMonitor-1.0.lua`).
+        --! Its full Discipline scan was 1,2 / 1,9 / 1,16 / 1,24 / 1,27. With 22 the
+        --! rank of a different talent
+        --! was read, so divineAegisMultiplier got a wrong value or stayed nil and
+        --! the Divine Aegis branch of the CLEU handler
+        --! (RaidFrames/UnitButton_Cata_Wrath.lua:2850) never accumulated a shield.
+        local name, _, _, _, rank = GetTalentInfo(1, 24)
+
+        --! WotLK fix: no name means the tree is not loaded yet, not that the talent is
+        --! missing - re-ask instead of silently keeping nil. Bounded at 30 tries (~30 s)
+        --! so a client that never answers cannot leave a timer running forever, and
+        --! single-flighted so the three call sites below cannot stack parallel chains.
+        if not name then
+            if not divineAegisRetryPending then
+                divineAegisRetries = (divineAegisRetries or 0) + 1
+                if divineAegisRetries <= 30 then
+                    divineAegisRetryPending = true
+                    C_Timer.After(1, function()
+                        divineAegisRetryPending = false
+                        CheckDivineAegis()
+                    end)
+                end
+            end
+            return
+        end
+        divineAegisRetries = nil
+
         if rank == 1 then
             Cell.vars.divineAegisMultiplier = 0.1
         elseif rank == 2 then
             Cell.vars.divineAegisMultiplier = 0.2
         elseif rank == 3 then
             Cell.vars.divineAegisMultiplier = 0.3
+        else
+            --! WotLK fix: the ladder had no else branch, so a respec that drops the
+            --! talent (or switches to the other talent group without it) kept crediting
+            --! shields at the old rank until reload.
+            Cell.vars.divineAegisMultiplier = nil
         end
     end
 end
@@ -793,16 +1009,92 @@ local function UpdateSpecVars(skipTalentUpdate)
     -- end
 end
 
+--! WotLK fix: keeps Cell.vars.playerTalentRole in step with the talent trees, for the Role
+--! mode of Layout Auto Switch. Same readiness trap as CheckDivineAegis below: right after
+--! login GetTalentTabInfo answers nothing, so a single read would silently produce the
+--! wrong role. Falls back to the value cached for this talent group, retries until the
+--! trees answer (bounded at 30 tries, single-flighted), and rebuilds the layout only when
+--! the role actually turned out different from what is already on screen.
+--! skipRekey is for the two call sites that are about to rebuild the layout themselves -
+--! it is deliberately NOT passed on to the retry, because by the time the retry fires that
+--! rebuild has long happened and a changed role does need a second one.
+local talentRoleRetries, talentRoleRetryPending
+local function UpdateTalentRole(skipRekey, isRetry)
+    local group = Cell.vars.activeTalentGroup
+    if not group then return end
+
+    local role = F.GetPlayerTalentRole()
+
+    if role then
+        talentRoleRetries = nil
+        CellCharacterDB["talentRoles"][group] = role
+    else
+        --! WotLK fix: the trees are unreadable, which is not the same as "no role" - fall
+        --! back to what this talent group resolved to last time and ask again in a second.
+        --! Falling through to the comparison below instead of returning matters: switching
+        --! talent group lands here too, and the cached role for the new group can differ
+        --! from the one on screen.
+        role = CellCharacterDB["talentRoles"][group]
+        --! WotLK fix: the 30-try bound is per event, not per session. Without this reset the
+        --! counter would stay spent forever: one pathological login where the trees never
+        --! answered would leave every later ACTIVE_TALENT_GROUP_CHANGED / PLAYER_TALENT_UPDATE
+        --! with a single read and no retry at all. A real event is a fresh reason to ask, and
+        --! it cannot spin - while the trees are readable the branch above clears the counter,
+        --! and while they are not, these events are rare.
+        if not talentRoleRetryPending then
+            --! Inside the pending guard on purpose: an event arriving while a retry is
+            --! already in flight must leave that chain on its own budget, not hand it a
+            --! fresh one every time (PLAYER_TALENT_UPDATE fires per point moved).
+            if not isRetry then
+                talentRoleRetries = nil
+            end
+            talentRoleRetries = (talentRoleRetries or 0) + 1
+            if talentRoleRetries <= 30 then
+                talentRoleRetryPending = true
+                C_Timer.After(1, function()
+                    talentRoleRetryPending = false
+                    UpdateTalentRole(nil, true)
+                end)
+            end
+        end
+    end
+
+    if Cell.vars.playerTalentRole ~= role then
+        Cell.vars.playerTalentRole = role
+        --! WotLK fix: re-point the vars before anything reads them. In Role mode the role
+        --! IS the key, so it just changed under everyone; PreUpdateLayout below would do
+        --! this too, but only out of combat - in combat it merely queues itself, and the
+        --! Layouts pane redrawing on the callback would show the old role's table.
+        F.UpdateLayoutAutoSwitchVars()
+        if not skipRekey and Cell.vars.layoutAutoSwitchBy == "role" then
+            PreUpdateLayout()
+        end
+        Cell.Fire("LayoutAutoSwitchChanged")
+    end
+end
+
 function eventFrame:PLAYER_LOGIN()
     -- NOTE: Cell no longer registers with LibSharedMedia to avoid triggering callbacks
     -- that interfere with other addons. See Utils.lua for full explanation.
     -- F.RegisterWithLSM()  -- Now a no-op
 
     eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
-    eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
-    -- WotLK 3.3.5a: Additional events for group roster changes
+    --! WotLK fix: GROUP_ROSTER_UPDATE is not a native 3.3.5a event.
     eventFrame:RegisterEvent("PARTY_MEMBERS_CHANGED")
     eventFrame:RegisterEvent("RAID_ROSTER_UPDATE")
+    --! WotLK fix: эти два апстрим держал закомментированными в
+    --! UnitButton_Cata_Wrath.lua (3656-3657) с пометкой "GROUP_ROSTER_UPDATE" -
+    --! на ретейле то одно событие покрывает и повышение, и выдачу роли. На
+    --! 3.3.5 GROUP_ROSTER_UPDATE нет, а PARTY_MEMBERS_CHANGED /
+    --! RAID_ROSTER_UPDATE ни повышение в пати, ни назначение роли через LFD не
+    --! ловят: состав группы при этом не меняется. Blizzard на этом клиенте
+    --! обрабатывает оба события отдельно от роста (FrameXML
+    --! PartyMemberFrame.lua:324 - корона, PlayerFrame.lua:242 - иконка роли).
+    --! Регистрируем один раз здесь и раздаём узкими событиями шины: гнать это
+    --! через GroupRosterUpdate() дороже - полный проход перезапускает инспекты
+    --! LibGroupInfo и рассылку Comm/Nicknames, которым тут обновляться нечего.
+    eventFrame:RegisterEvent("PARTY_LEADER_CHANGED")
+    eventFrame:RegisterEvent("PLAYER_ROLES_ASSIGNED")
     eventFrame:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
     eventFrame:RegisterEvent("PLAYER_TALENT_UPDATE")
     --! WotLK fix: was UI_SCALE_CHANGED - a retail event that does not exist on 3.3.5
@@ -816,25 +1108,24 @@ function eventFrame:PLAYER_LOGIN()
 
     CheckDivineAegis()
 
-    --! init bgMaxPlayers
-    for i = 1, GetNumBattlegroundTypes() do
-        local bgName, _, _, _, _, _, bgId, maxPlayers = GetBattlegroundInfo(i)
-        if bgId then
-            bgMaxPlayers[bgId] = maxPlayers
-        end
-    end
+    --! WotLK fix: the extended GetBattlegroundInfo tuple is not available on
+    --! build 12340; battleground capacity is derived in GetBattlegroundSize().
 
     Cell.vars.playerGUID = UnitGUID("player")
 
     -- update spec vars
     UpdateSpecVars()
+    --! WotLK fix: must run before GroupRosterUpdate below - that is what builds the first
+    --! layout, and in Role mode the key it uses comes from here. skipRekey: the rebuild is
+    --! two lines away, no point asking for a second one.
+    UpdateTalentRole(true)
 
     --! init Cell.vars.currentLayout and Cell.vars.currentLayoutTable
-    eventFrame:GROUP_ROSTER_UPDATE()
+    GroupRosterUpdate()
     -- update click-castings
     Cell.Fire("UpdateClickCastings")
     -- update indicators
-    -- Cell.Fire("UpdateIndicators") -- NOTE: already update in GROUP_ROSTER_UPDATE -> GroupTypeChanged -> F.UpdateLayout
+    -- Cell.Fire("UpdateIndicators") -- NOTE: already updated through GroupRosterUpdate -> GroupTypeChanged -> F.UpdateLayout
     -- update texture and font
     Cell.Fire("UpdateAppearance")
     Cell.UpdateOptionsFont(CellDB["appearance"]["optionsFontSizeOffset"], CellDB["appearance"]["useGameFont"])
@@ -906,19 +1197,44 @@ hooksecurefunc("SetCVar", function(cvar)
     end
 end)
 
--- WotLK 3.3.5a: Route additional roster events to GROUP_ROSTER_UPDATE handler
+--! WotLK fix: normalize native roster events. RAID_ROSTER_UPDATE carries a
+--! reason string on 3.3.5a, but the shared route intentionally ignores it.
 function eventFrame:PARTY_MEMBERS_CHANGED()
-    eventFrame:GROUP_ROSTER_UPDATE()
+    GroupRosterUpdate()
 end
 
-function eventFrame:RAID_ROSTER_UPDATE()
-    eventFrame:GROUP_ROSTER_UPDATE()
+function eventFrame:RAID_ROSTER_UPDATE(reason)
+    GroupRosterUpdate()
+end
+
+--! WotLK fix: смена лидера/ассиста роста не меняет, поэтому раньше ни права
+--! (Marks, ReadyAndPull), ни корона на кнопках не пересчитывались до
+--! какого-нибудь постороннего полного обновления. Пересчёт прав - точно тот же,
+--! что в конце DoGroupRosterUpdate, короне достаточно узкого события.
+function eventFrame:PARTY_LEADER_CHANGED()
+    UpdatePermission()
+    if Cell.loaded then
+        Cell.Fire("LeaderChanged")
+    end
+end
+
+--! WotLK fix: назначение роли через интерфейс подземелий состава не меняет, так
+--! что states.role, иконка роли и фильтры силы TANK/HEALER висели на старом
+--! значении. Права от роли не зависят - только раздача.
+function eventFrame:PLAYER_ROLES_ASSIGNED()
+    if Cell.loaded then
+        Cell.Fire("RolesAssigned")
+    end
 end
 
 function eventFrame:ACTIVE_TALENT_GROUP_CHANGED()
     -- not in combat & spec CHANGED
     if not InCombatLockdown() and (Cell.vars.activeTalentGroup ~= GetActiveTalentGroup()) then
         UpdateSpecVars()
+        --! WotLK fix: before the fire below, which is what re-keys the layout - the new
+        --! talent group can have a different role. skipRekey because "ActiveTalentGroupChanged"
+        --! already lands on PreUpdateLayout (see the registration at the top of this file).
+        UpdateTalentRole(true)
 
         Cell.Fire("UpdateClickCastings")
         Cell.Fire("ActiveTalentGroupChanged", Cell.vars.activeTalentGroup)
@@ -930,6 +1246,13 @@ end
 -- check Divine Aegis
 function eventFrame:PLAYER_TALENT_UPDATE()
     CheckDivineAegis()
+    --! WotLK fix: no skipRekey here - this is the plain respec case. Moving points inside
+    --! the same talent group does not change GetActiveTalentGroup(), so
+    --! ACTIVE_TALENT_GROUP_CHANGED never fires and nothing else would notice that a
+    --! Holy priest just became Shadow. The re-key inside is conditional on the role
+    --! actually changing, so the point-by-point spam of this event costs three
+    --! GetTalentTabInfo calls and nothing more.
+    UpdateTalentRole()
     -- UpdateSpecVars(true)
     F.UpdateClickCastingProfileLabel()
 end
@@ -976,6 +1299,25 @@ function SlashCmdList.CELL(msg, editbox)
 
     elseif command == "options" or command == "opt" then
         F.ShowOptionsFrame()
+
+    --! WotLK fix: тумблер режима мувера снаружи опций. Кнопка Unlock живёт в
+    --! Options > Utilities > Raid Tools, а этот пейн в бою целиком закрыт
+    --! combat-маской (F.ApplyCombatProtectionToFrame), плюс сам список Utilities
+    --! раскрывается только по наведению - тумблер фактически ненаходим. Слэш
+    --! работает всегда и в бою тоже: он не трогает protected-состояние, только
+    --! показывает/скрывает мувер-рамки инструментов.
+    elseif command == "unlock" or command == "lock" or command == "mover" then
+        if Cell.uFuncs and Cell.uFuncs.SetMoverShown then
+            local show
+            if command == "unlock" then
+                show = true
+            elseif command == "lock" then
+                show = false
+            end -- "mover" -> nil -> toggle
+            Cell.uFuncs.SetMoverShown(show)
+        else
+            F.Print("Raid Tools module not loaded.")
+        end
 
     elseif command == "minimap" then
         if type(CellDB["minimapButton"]) ~= "table" then
@@ -1064,8 +1406,15 @@ function SlashCmdList.CELL(msg, editbox)
 
     else
         F.Print(L["Available slash commands"]..":")
-        print(" |cFFFFB5C5/cell debug|r: toggle debug mode or use subcommands (v, r, c, h).")
+        --! WotLK fix: the upstream line advertised only (v, r, c, h), but this
+        --! backport added ~15 diagnostic subcommands (dump, shims, env, roles,
+        --! movers, threat, readycheck, raiddebuffs, log, ...) that are the whole
+        --! point of asking a tester for data. They were unreachable by anyone
+        --! who did not already know they exist, so point at the list instead of
+        --! repeating a stale four-letter subset here.
+        print(" |cFFFFB5C5/cell debug|r: toggle debug mode. |cFFFFB5C5/cell debug h|r: list all debug subcommands.")
         print(" |cFFFFB5C5/cell options|r, |cFFFFB5C5/cell opt|r: "..L["show Cell options frame"]..".")
+        print(" |cFFFFB5C5/cell unlock|r, |cFFFFB5C5/cell lock|r, |cFFFFB5C5/cell mover|r: "..L["show or hide the movers of Marks Bar, Buff Tracker and ReadyCheck/PullTimer buttons"]..".")
         print(" |cFFFFB5C5/cell minimap|r: "..L["toggle the minimap button"]..".")
         print(" |cFFFFB5C5/cell healers|r: "..L["create a \"Healers\" indicator"]..".")
         print(" |cFFFFB5C5/cell rescale|r: "..strlower(L["Apply Recommended Scale"])..".")

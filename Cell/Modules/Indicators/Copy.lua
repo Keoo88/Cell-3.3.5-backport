@@ -139,7 +139,11 @@ Validate = function()
 end
 
 Toggle = function(index, isSelect, unhighlight)
-    b = indicatorButtons[index]
+    --! WotLK fix: было `b = ...` без local - запись в глобал _G.b на каждый клик по
+    --! индикатору. Cell не владеет глобалами: односимвольное имя `b` может занимать
+    --! кто угодно, и мы бы его затирали. Внутри функции значение не переживает вызов,
+    --! так что это чистая опечатка. Та же строка в Export.lua:185.
+    local b = indicatorButtons[index]
     if isSelect then
         selectedIndicators[index] = true
         b:SetBackdropColor(unpack(b.hoverColor))

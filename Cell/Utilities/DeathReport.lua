@@ -1,18 +1,21 @@
 local _, Cell = ...
-
---! WotLK fix (coexistence): CombatLogGetCurrentEventInfo is a TRANSLATOR of the
---! native COMBAT_LOG_EVENT varargs, not a retail-style no-arg getter. The global
---! may belong to the standalone !!!ClassicAPI, whose copy has different semantics,
---! so always prefer OUR implementation from the private CellClassicAPI namespace.
-local CombatLogGetCurrentEventInfo = (_G.CellClassicAPI and _G.CellClassicAPI.CombatLogGetCurrentEventInfo) or _G.CombatLogGetCurrentEventInfo
-
+--! WotLK fix: bind Cell timers privately so standalone !!!ClassicAPI cannot change semantics.
+local C_Timer = Cell.C_Timer
 local L = Cell.L
 local F = Cell.funcs
 
 local UnitIsFeignDeath = UnitIsFeignDeath
-local IsInGroup = IsInGroup
-local IsEncounterInProgress = IsEncounterInProgress
-local GetSpellLink = C_Spell.GetSpellLink or GetSpellLink
+--! WotLK fix: consume Cell-private group adapters.
+local IsInGroup = Cell.IsInGroup
+local IsInRaid = Cell.IsInRaid
+--! WotLK fix: убран `local IsEncounterInProgress = IsEncounterInProgress`. Функции на
+--! 3.3.5 нет (добавлена в 5.0), так что локал всегда был nil, и оба места в файле (:70,
+--! :162) и без него зовут приватный Cell.IsEncounterInProgress из Polyfills.lua:767.
+--! Мёртвая привязка опасна тем, что читает чужой глобал: аддон, объявивший своё
+--! IsEncounterInProgress, подсунул бы Cell чужую реализацию (CLAUDE.md §3).
+--! WotLK fix: bind the native 3.3.5 spell-link API directly; do not require a
+--! partial global C_Spell namespace from Cell's compatibility layer.
+local GetSpellLink = GetSpellLink
 
 ----------------------------------------------------
 -- vars
@@ -59,11 +62,8 @@ end
 local function Send(msg)
     -- F.Print(strupper(ACTION_UNIT_DIED)..": "..msg)
     if Cell.hasHighestPriority then
-        if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
-            SendChatMessage(strupper(ACTION_UNIT_DIED)..": "..msg, "INSTANCE_CHAT")
-        else
-            SendChatMessage(strupper(ACTION_UNIT_DIED)..": "..msg, IsInRaid() and "RAID" or "PARTY")
-        end
+        --! WotLK fix: stock 3.3.5a has no INSTANCE_CHAT channel.
+        SendChatMessage(strupper(ACTION_UNIT_DIED)..": "..msg, IsInRaid() and "RAID" or "PARTY")
     end
 end
 
@@ -71,7 +71,7 @@ local function Report(guid)
     if not deathLogs[guid] or deathLogs[guid]["reported"] then return end
     deathLogs[guid]["reported"] = true
 
-    if instanceType == "raid" and IsEncounterInProgress() then
+    if instanceType == "raid" and Cell.IsEncounterInProgress() then
         count = count + 1
         if count > limit then
             return
@@ -141,13 +141,10 @@ function frame:PLAYER_ENTERING_WORLD()
 
     if instanceType == "pvp" or instanceType == "arena" then
         frame:UnregisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
-        frame:UnregisterEvent("GROUP_ROSTER_UPDATE")
         return
-    else
-        frame:RegisterEvent("GROUP_ROSTER_UPDATE")
     end
 
-    if not init then frame:GROUP_ROSTER_UPDATE() end
+    if not init then frame:GroupRosterUpdate() end
     if isIn then
         inInstance = true
         if instanceType == "raid" then
@@ -162,9 +159,11 @@ function frame:PLAYER_ENTERING_WORLD()
 end
 
 local timer
-function frame:GROUP_ROSTER_UPDATE()
+--! WotLK fix: consume Core_Wrath's private roster callback instead of the
+--! non-native GROUP_ROSTER_UPDATE frame event.
+function frame:GroupRosterUpdate()
     if IsInGroup() then
-        if IsEncounterInProgress() then
+        if Cell.IsEncounterInProgress() then
             -- frame:RegisterEvent("ENCOUNTER_END") --! WotLK: event does not exist on 3.3.5 (added 5.4) - was silently inert; priority re-check simply waits for the next roster update
         else
             if timer then timer:Cancel() end
@@ -178,59 +177,70 @@ function frame:GROUP_ROSTER_UPDATE()
     init = true
 end
 
-function frame:COMBAT_LOG_EVENT_UNFILTERED(...)
-    --! WotLK fix: this handler receives the TRANSLATED retail layout from the ClassicAPI
-    --! CombatLogGetCurrentEventInfo shim (see the dispatcher below) - i.e. WITH the
-    --! hideCaster AND both raidFlags slots. The old unpack dropped the two raidFlags
-    --! slots, so destGUID landed on sourceRaidFlags and every branch below misfired.
-    --! The select() offsets (13 ENVIRONMENTAL / 12 SWING / 15 SPELL) are retail offsets
-    --! and are correct for the translated payload - they stay as they are.
-    local timestamp, event, hideCaster, sourceGUID, sourceName, sourceFlags, sourceRaidFlags, destGUID, destName, destFlags, destRaidFlags, arg12, arg13, arg14 = ...
+--! WotLK fix: consume native 3.3.5 CLEU directly. The common payload is
+--! timestamp, event, sourceGUID/name/flags, destGUID/name/flags; event data
+--! starts at slot 9. This removes ownership of death reporting from the
+--! global ClassicAPI retail-layout translator.
+--! WotLK perf: слоты объявлены параметрами вместо ... . В Lua 5.1 vararg-функция
+--! платит adjust_varargs на входе и опкод VARARG на каждую распаковку, а сверх
+--! этого здесь было до трёх C-вызовов select() на каждое событие урона. Самый
+--! длинный вариант - SPELL_DAMAGE (суффикс с 12-го слота, critical на 18-м),
+--! поэтому объявлено ровно восемнадцать. Незаполненные слоты в рантайме бесплатны.
+function frame:COMBAT_LOG_EVENT_UNFILTERED(timestamp, event, sourceGUID, sourceName,
+    sourceFlags, destGUID, destName, destFlags,
+    arg9, arg10, arg11, arg12, arg13, arg14, arg15, arg16, arg17, arg18)
+
     local amount, overkill, school, resisted, blocked, absorbed, critical -- glancing, crushing
 
-    -- arg12, arg13, arg14,
-    -- UNIT_DIED: recapID, unconsciousOnDeath
-    -- ENVIRONMENTAL: environmentalType
+    -- arg9, arg10, arg11:
+    -- UNIT_DIED: event-specific data, if any
+    -- ENVIRONMENTAL: environmentalType, then damage suffix
     -- SPELL/RANGE: spellId, spellName, spellSchool
 
     -- if string.find(destGUID, "^Player") then -- debug
     --! WotLK fix: 3.3.5 combat-log GUIDs are hex ("0x0000000000012345"), the
     --! "Player-realm-id" format arrived in 6.0. F.IsPlayer handles both.
     if F.IsPlayer(destGUID) and F.IsFriend(destFlags) then
+        --! WotLK perf: one chain instead of six independent ifs. `event` cannot be
+        --! two things at once, so every test after the matching one was dead work -
+        --! and this runs on the combat log, where the overwhelming majority of lines
+        --! match none of them and used to pay all six comparisons.
         if event == "SPELL_INSTAKILL" then
             UpdateDeathLog(destGUID, timestamp, "INSTAKILL", destName)
-        end
 
-        if event == "ENVIRONMENTAL_DAMAGE" then
-            amount, overkill, school, resisted, blocked, absorbed, critical = select(13, ...)
+        elseif event == "ENVIRONMENTAL_DAMAGE" then
+            --! WotLK perf: суффикс лежит по фиксированным позициям (кодекс,
+            --! ENVIRONMENTAL_DAMAGE): 9 - environmentalType, дальше amount.
+            --! Раньше здесь был C-вызов select(10, ...) на каждое такое событие.
+            amount, overkill, school, resisted, blocked, absorbed, critical = arg10, arg11, arg12, arg13, arg14, arg15, arg16
             amount = amount == 0 and absorbed or amount
             -- _G.ENVIRONMENTAL_DAMAGE.." "..
-            UpdateDeathLog(destGUID, timestamp, "ENVIRONMENTAL", destName, strlower(_G["ACTION_ENVIRONMENTAL_DAMAGE_" .. strupper(arg12)]), nil, amount)
-        end
+            UpdateDeathLog(destGUID, timestamp, "ENVIRONMENTAL", destName, strlower(_G["ACTION_ENVIRONMENTAL_DAMAGE_" .. strupper(arg9)]), nil, amount)
 
-        if event == "SWING_DAMAGE" then
-            amount, overkill, school, resisted, blocked, absorbed, critical = select(12, ...)
+        elseif event == "SWING_DAMAGE" then
+            --! WotLK perf: у SWING нет префиксных аргументов - суффикс начинается
+            --! с девятого слота (кодекс, SWING_DAMAGE). select(9, ...) не нужен.
+            amount, overkill, school, resisted, blocked, absorbed, critical = arg9, arg10, arg11, arg12, arg13, arg14, arg15
             UpdateDeathLog(destGUID, timestamp, "SWING", destName, nil, school, amount, overkill or -1, resisted, blocked, absorbed, critical, sourceName)
-        end
 
-        if event == "SPELL_DAMAGE" or event == "SPELL_PERIODIC_DAMAGE" or event == "RANGE_DAMAGE" then
-            if not blacklist[arg12] then
-                amount, overkill, school, resisted, blocked, absorbed, critical = select(15, ...)
-                local spellLink = GetSpellLink(arg12)
+        elseif event == "SPELL_DAMAGE" or event == "SPELL_PERIODIC_DAMAGE" or event == "RANGE_DAMAGE" then
+            if not blacklist[arg9] then
+                --! WotLK perf: префикс SPELL/RANGE занимает слоты 9-11
+                --! (spellId, spellName, spellSchool), суффикс идёт с двенадцатого.
+                amount, overkill, school, resisted, blocked, absorbed, critical = arg12, arg13, arg14, arg15, arg16, arg17, arg18
+                local spellLink = GetSpellLink(arg9)
                 UpdateDeathLog(destGUID, timestamp, "SPELL", destName, spellLink, school, amount, overkill or -1, resisted, blocked, absorbed, critical, sourceName)
             end
-        end
 
-        if event == "SPELL_AURA_APPLIED" then
-            -- print(arg12, arg13, arg14)
-            if arg12 == 27827 or arg12 == 358164 then -- 救赎之魂 or 灵魂疲惫
+        elseif event == "SPELL_AURA_APPLIED" then
+            -- print(arg9, arg10, arg11)
+            if arg9 == 27827 or arg9 == 358164 then -- 救赎之魂 or 灵魂疲惫
                 C_Timer.After(0.25, function()
                     Report(destGUID)
                 end)
             end
-        end
 
-        if event == "UNIT_DIED" and not UnitIsFeignDeath(destName) then
+        elseif event == "UNIT_DIED" and not UnitIsFeignDeath(destName) then
             C_Timer.After(0.5, function()
                 if not deathLogs[destGUID] then deathLogs[destGUID] = {["name"]=destName} end
                 Report(destGUID)
@@ -239,19 +249,22 @@ function frame:COMBAT_LOG_EVENT_UNFILTERED(...)
     end
 end
 
-frame:SetScript("OnEvent", function(self, event, ...)
+--! WotLK perf: frame слушает ровно два события - CLEU и PLAYER_ENTERING_WORLD
+--! (у второго payload из одного значения, кодекс). Восемнадцати слотов хватает
+--! обоим, поэтому диспетчер объявлен именованными параметрами и не является
+--! vararg-функцией: в Lua 5.1 объявление ... стоит adjust_varargs при входе и
+--! опкод VARARG на каждую распаковку, а CLEU в рейде - сотни вызовов в секунду.
+frame:SetScript("OnEvent", function(self, event,
+    a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18)
+
     if event == "COMBAT_LOG_EVENT_UNFILTERED" then
-        --! WotLK fix: the ClassicAPI CombatLogGetCurrentEventInfo shim is a TRANSLATOR
-        --! (native varargs in -> retail layout out); called WITHOUT arguments it returns
-        --! nothing, so every field was nil and string.find(destGUID) errored on the very
-        --! first combat log event. Pass the native varargs through (AoEHealing pattern).
-        if CombatLogGetCurrentEventInfo then
-            self:COMBAT_LOG_EVENT_UNFILTERED(CombatLogGetCurrentEventInfo(...))
-        else
-            self:COMBAT_LOG_EVENT_UNFILTERED(...)
-        end
+        --! WotLK fix: the death-report handler owns native CLEU parsing and no
+        --! longer depends on the global CombatLogGetCurrentEventInfo translator.
+        self:COMBAT_LOG_EVENT_UNFILTERED(a1, a2, a3, a4, a5, a6, a7, a8,
+            a9, a10, a11, a12, a13, a14, a15, a16, a17, a18)
     else
-        self[event](self, ...)
+        self[event](self, a1, a2, a3, a4, a5, a6, a7, a8,
+            a9, a10, a11, a12, a13, a14, a15, a16, a17, a18)
     end
 end)
 
@@ -275,7 +288,11 @@ local function UpdateTools(which)
     if not which or which == "deathReport" then
         if CellDB["tools"]["deathReport"][1] then
             frame:RegisterEvent("PLAYER_ENTERING_WORLD")
-            frame:RegisterEvent("GROUP_ROSTER_UPDATE")
+            Cell.RegisterCallback(
+                "GroupRosterUpdate",
+                "DeathReport_GroupRosterUpdate",
+                frame.GroupRosterUpdate
+            )
 
             limit = CellDB["tools"]["deathReport"][2]
             count = 0
@@ -285,6 +302,10 @@ local function UpdateTools(which)
             enabled = true
         else
             frame:UnregisterAllEvents()
+            Cell.UnregisterCallback(
+                "GroupRosterUpdate",
+                "DeathReport_GroupRosterUpdate"
+            )
             wipe(deathLogs)
             enabled = false
         end

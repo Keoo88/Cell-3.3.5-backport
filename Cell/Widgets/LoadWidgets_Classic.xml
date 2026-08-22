@@ -1,9 +1,17 @@
 <Ui xmlns="http://www.blizzard.com/wow/ui/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
     xsi:schemaLocation="http://www.blizzard.com/wow/ui/ https://raw.githubusercontent.com/Gethe/wow-ui-source/live/Interface/FrameXML/UI_shared.xsd">
-    <!--! WotLK fix: no BackdropTemplate include here. A working virtual template of that
-         name is already declared in Libs\ClassicAPI\Templates\Backdrop.xml, which the TOC
-         loads earlier (Libs\ClassicAPI\Load.xml). Declaring a second virtual frame with an
-         already taken name throws an XML load error and one of the two is discarded. -->
+    <!--! WotLK fix: Cell uses native 3.3.5 Frame backdrop methods directly; no
+         BackdropTemplate inheritance is required by the active widget graph.
+         2026-08-08: loading of this very file aborted in the P0-B1 run because
+         Widgets_IndicatorSettings.lua called the raw global GetClassColor, which
+         3.3.5 does not have and an external addon had been supplying. That call
+         now uses F.GetClassColor / F.GetClassColorStr (GAP-015).
+         2026-08-11: the no-consumer claim above is now machine-checked, not
+         grepped - the GAP-015 site read "SecureUnitButtonTemplate,BackDropTemplate",
+         a comma list in a different letter case, which a plain grep for the
+         published name misses. Run `python audit/tools/dormant_check.py`: it
+         splits template lists, compares case-insensitively, and reports
+         BackdropTemplate dead across every consumption channel. -->
     <Script file="Animation.lua"/>
     <Script file="Widgets.lua"/>
     <Script file="Widgets_IndicatorSettings.lua"/>

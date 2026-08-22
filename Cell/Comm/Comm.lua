@@ -1,23 +1,52 @@
 local _, Cell = ...
+--! WotLK fix: bind Cell timers privately so standalone !!!ClassicAPI cannot change semantics.
+local C_Timer = Cell.C_Timer
 local L = Cell.L
 local F = Cell.funcs
+--! WotLK fix: consume Cell-private group adapters.
+local IsInGroup = Cell.IsInGroup
+local IsInRaid = Cell.IsInRaid
+local GetNumGroupMembers = Cell.GetNumGroupMembers
+--! WotLK fix: realm normalization is private to Cell.
+local GetNormalizedRealmName = Cell.GetNormalizedRealmName
 
 local LibDeflate = LibStub:GetLibrary("LibDeflate")
-local deflateConfig = {level = 9}
 local Serializer = LibStub:GetLibrary("LibSerialize")
 local Comm = LibStub:GetLibrary("AceComm-3.0")
 
 local function Serialize(data)
     local serialized = Serializer:Serialize(data) -- serialize
-    local compressed = LibDeflate:CompressDeflate(serialized, deflateConfig) -- compress
+    --! WotLK fix: уровень сжатия больше не задаётся вручную. Здесь стоял
+    --! {level = 9} - максимум, самый дорогой режим поиска совпадений. Если конфиг не
+    --! передан, LibDeflate выбирает уровень сам по размеру данных
+    --! (Libs/LibDeflate/LibDeflate.lua:1782-1790): 7 для строк меньше 2 КБ, 5 до
+    --! 64 КБ, 3 для больших. Это ровно те пороги, под которые библиотеку и
+    --! настраивали. На 3.3.5 Lua 5.1 без JIT, а сжимаются здесь целые лэйауты и
+    --! списки рейд-дебаффов - разница во времени заметная, выигрыш в размере от 9-го
+    --! уровня против выбранного библиотекой - единицы процентов, и всё равно
+    --! отправка идёт кусками через AceComm с троттлингом.
+    local compressed = LibDeflate:CompressDeflate(serialized) -- compress
     return LibDeflate:EncodeForWoWAddonChannel(compressed) -- encode
 end
 
 local function Deserialize(encoded)
     local decoded = LibDeflate:DecodeForWoWAddonChannel(encoded) -- decode
+    --! WotLK fix: DecodeForWoWAddonChannel returns nil on a malformed payload, and
+    --! DecompressDeflate then errors on a nil argument instead of returning nil -
+    --! a garbled addon message from any sender would throw inside the AceComm
+    --! callback. Checked before use now.
+    if not decoded then
+        F.Debug("Error decoding addon message")
+        return
+    end
     local decompressed = LibDeflate:DecompressDeflate(decoded) -- decompress
     if not decompressed then
-        F.Debug("Error decompressing: " .. errorMsg)
+        --! WotLK fix: errorMsg was never declared anywhere in this file, so this
+        --! branch - the one that reports the failure - raised "attempt to
+        --! concatenate global 'errorMsg' (a nil value)" itself. DecompressDeflate
+        --! returns only nil on failure, it has no second error return, so there is
+        --! nothing to print but the fact of the failure.
+        F.Debug("Error decompressing addon message")
         return
     end
     local success, data = Serializer:Deserialize(decompressed) -- deserialize
@@ -42,14 +71,8 @@ end
 -----------------------------------------
 local sendChannel
 local function UpdateSendChannel()
-    -- 3.3.5a has no INSTANCE_CHAT addon channel; fall back to RAID/PARTY so AceComm doesn't error.
-    if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
-        sendChannel = IsInRaid() and "RAID" or "PARTY"
-    elseif IsInRaid() then
-        sendChannel = "RAID"
-    else
-        sendChannel = "PARTY"
-    end
+    --! WotLK fix: 3.3.5a has no instance-group category or INSTANCE_CHAT addon channel.
+    sendChannel = IsInRaid() and "RAID" or "PARTY"
 end
 
 -----------------------------------------
@@ -60,14 +83,23 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     self[event](self, ...)
 end)
 
-eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
-function eventFrame:GROUP_ROSTER_UPDATE()
+--! WotLK fix: consume Core_Wrath's private roster callback instead of the
+--! non-native GROUP_ROSTER_UPDATE frame event.
+local function GroupRosterUpdate()
     if IsInGroup() then
-        eventFrame:UnregisterEvent("GROUP_ROSTER_UPDATE")
+        Cell.UnregisterCallback(
+            "GroupRosterUpdate",
+            "Comm_GroupRosterUpdate"
+        )
         UpdateSendChannel()
         Comm:SendCommMessage("CELL_VERSION", Cell.version, sendChannel, nil, "NORMAL")
     end
 end
+Cell.RegisterCallback(
+    "GroupRosterUpdate",
+    "Comm_GroupRosterUpdate",
+    GroupRosterUpdate
+)
 
 eventFrame:RegisterEvent("PLAYER_LOGIN")
 function eventFrame:PLAYER_LOGIN()
@@ -92,7 +124,9 @@ end)
 Comm:RegisterComm("CELL_MARKS", function(prefix, message, channel, sender)
     if sender == UnitName("player") then return end
     local data = Deserialize(message)
-    if Cell.vars.hasPartyMarkPermission and CellDB["tools"]["marks"][1] and (strfind(CellDB["tools"]["marks"][3], "^target") or strfind(CellDB["tools"]["marks"][3], "^both")) and data then
+    --! WotLK fix: половина ИЛИ с "^both" вырезана вместе с веткой world-меток -
+    --! режимов осталось два, оба target_*. См. audit/STUDY_GAPS.md §2.23.
+    if Cell.vars.hasPartyMarkPermission and CellDB["tools"]["marks"][1] and strfind(CellDB["tools"]["marks"][3], "^target") and data then
         sender = F.GetClassColorStr(select(2, UnitClass(sender)))..sender.."|r"
 
         if data[1] then -- lock
@@ -126,9 +160,19 @@ local myPriority
 local highestPriority = 99
 Cell.hasHighestPriority = false
 
+--! WotLK fix: keep the legacy UnitName tuple private to Cell instead of loading
+--! ClassicAPI/Unit.lua solely to publish a retail-style global UnitFullName.
+local function GetUnitNameParts(unit)
+    local name, realm = UnitName(unit)
+    if UnitIsUnit(unit, "player") and not realm then
+        realm = GetNormalizedRealmName()
+    end
+    return name, realm
+end
+
 local function UpdatePriority()
     myPriority = 99
-    if UnitIsGroupLeader("player") then
+    if Cell.UnitIsGroupLeader("player") then
         myPriority = 0
     else
         if IsInRaid() then
@@ -140,13 +184,13 @@ local function UpdatePriority()
             end
         elseif IsInGroup() then -- party
             local players = {}
-            local pName, pRealm = UnitFullName("player")
+            local pName, pRealm = GetUnitNameParts("player")
             pRealm = pRealm or GetRealmName()
             pName = pName.."-"..pRealm
             tinsert(players, pName)
 
             for i = 1, GetNumGroupMembers()-1 do
-                local name, realm = UnitFullName("party"..i)
+                local name, realm = GetUnitNameParts("party"..i)
                 tinsert(players, name.."-"..(realm or pRealm))
             end
             table.sort(players)
@@ -227,19 +271,26 @@ end
 local function filterFunc(self, event, msg, player, arg1, arg2, arg3, flag, channelId, ...)
     local newMsg = ""
 
-    local type = msg:match("%[Cell:(.+): .+]")
+    --! WotLK fix: the separator was a colon here while every sender writes a dot -
+    --! "[Cell.Layout: ...]" (Modules/Layouts/Layouts.lua:1588) and "[Cell.Debuffs:
+    --! ...]" (Modules/RaidDebuffs/RaidDebuffs_Classic.lua:577, :688, :691). So no
+    --! share string Cell itself produces ever matched, and the clickable link the
+    --! receiver is supposed to get never appeared - they saw the raw bracket text.
+    --! Inherited from upstream, where the same mismatch exists. The class [%.:]
+    --! accepts both spellings so a message from any Cell build is recognised.
+    local type = msg:match("%[Cell[%.:](.+): .+]")
     if type == "Debuffs" then
-        local bossName, instanceName, playerName = msg:match("%[Cell:Debuffs: (.+) %((.+)%) %- ([^%s]+%-[^%s]+)%]")
+        local bossName, instanceName, playerName = msg:match("%[Cell[%.:]Debuffs: (.+) %((.+)%) %- ([^%s]+%-[^%s]+)%]")
         if bossName and instanceName and playerName then
             newMsg = "|Hgarrmission:cell-debuffs|h|cFFFF0066["..L[type]..": "..bossName.." ("..instanceName..") - "..playerName.."]|h|r"
         else
-            instanceName, playerName = msg:match("%[Cell:Debuffs: (.+) %- ([^%s]+%-[^%s]+)%]")
+            instanceName, playerName = msg:match("%[Cell[%.:]Debuffs: (.+) %- ([^%s]+%-[^%s]+)%]")
             if instanceName and playerName then
                 newMsg = "|Hgarrmission:cell-debuffs|h|cFFFF0066["..L[type]..": "..instanceName.." - "..playerName.."]|h|r"
             end
         end
     elseif type == "Layout" then
-        local layoutName, playerName = msg:match("%[Cell:Layout: (.+) %- ([^%s]+%-[^%s]+)%]")
+        local layoutName, playerName = msg:match("%[Cell[%.:]Layout: (.+) %- ([^%s]+%-[^%s]+)%]")
         if layoutName and playerName then
             if layoutName == "default" then
                 -- NOTE: convert "default"
@@ -267,8 +318,17 @@ ChatFrame_AddMessageEventFilter("CHAT_MSG_WHISPER", filterFunc)
 ChatFrame_AddMessageEventFilter("CHAT_MSG_WHISPER_INFORM", filterFunc)
 ChatFrame_AddMessageEventFilter("CHAT_MSG_BN_WHISPER", filterFunc)
 ChatFrame_AddMessageEventFilter("CHAT_MSG_BN_WHISPER_INFORM", filterFunc)
-ChatFrame_AddMessageEventFilter("CHAT_MSG_INSTANCE_CHAT", filterFunc)
-ChatFrame_AddMessageEventFilter("CHAT_MSG_INSTANCE_CHAT_LEADER", filterFunc)
+--! WotLK fix: CHAT_MSG_INSTANCE_CHAT / _LEADER do not exist on 3.3.5 - the
+--! instance chat channel arrived with Cataclysm; on this client the same traffic
+--! comes through CHAT_MSG_BATTLEGROUND / _LEADER (FrameXML ChatFrame.lua:148,
+--! ChatTypeGroup["BATTLEGROUND"]). Registering the retail names was not an error,
+--! ChatFrame_AddMessageEventFilter just files them under a key nothing ever emits
+--! (ChatFrame.lua:2962-2977), so a share string pasted into battleground chat was
+--! never turned into a link. Swapped for the events this client actually fires.
+--! BN_WHISPER above stays: Real ID shipped in 3.3.5 and both events are real here
+--! (ChatFrame.lua:246-249) even though codex.py answers НЕТ for them.
+ChatFrame_AddMessageEventFilter("CHAT_MSG_BATTLEGROUND", filterFunc)
+ChatFrame_AddMessageEventFilter("CHAT_MSG_BATTLEGROUND_LEADER", filterFunc)
 
 local isRequesting
 
@@ -394,8 +454,22 @@ local function ShowReceivingFrame(type, playerName, name1, name2)
     Cell.frames.receivingFrame:ShowFrame(type, playerName, name1, name2)
 end
 
+--! WotLK fix: SetItemRef on 3.3.5 knows only the player / channel / GMChat schemes
+--! and falls through for everything else to ShowUIPanel(ItemRefTooltip) +
+--! ItemRefTooltip:SetHyperlink(link) (FrameXML ItemRef.lua:174-183). "garrmission"
+--! is a retail scheme this client has never heard of, so clicking a Cell share link
+--! popped an empty ItemRefTooltip window next to Cell's own dialog. The scheme name
+--! itself is kept - an arbitrary |H tag does render and route as a link here, ElvUI
+--! ships |Hurl: and |Helvmoji: on this same client - so only the stray window is
+--! cleaned up, and only on links we recognise as ours. This runs as a post-hook,
+--! after the panel was shown, which is exactly when it can be taken back.
 hooksecurefunc("SetItemRef", function(link, text)
     if isRequesting then return end
+    if link == "garrmission:cell-debuffs" or link == "garrmission:cell-layout" then
+        if ItemRefTooltip and ItemRefTooltip:IsShown() then
+            ItemRefTooltip:Hide()
+        end
+    end
     if link == "garrmission:cell-debuffs" then
         local bossName, instanceName, playerName = text:match("|Hgarrmission:cell%-debuffs|h|cFFFF0066%[.+: (.+) %((.+)%) %- ([^%s]+%-[^%s]+)%]|h|r")
         if bossName and instanceName and playerName then

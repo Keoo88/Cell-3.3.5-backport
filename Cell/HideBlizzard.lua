@@ -45,7 +45,8 @@ local function HideFrame(frame)
 end
 
 function F.HideBlizzardParty()
-    _G.UIParent:UnregisterEvent("GROUP_ROSTER_UPDATE")
+    --! WotLK fix: GROUP_ROSTER_UPDATE is not native on 3.3.5a; do not rely on
+    --! Cell's removed synthetic registration to alter shared UIParent state.
 
     if _G.CompactPartyFrame then
         _G.CompactPartyFrame:UnregisterAllEvents()
@@ -68,7 +69,8 @@ function F.HideBlizzardParty()
 end
 
 function F.HideBlizzardRaid()
-    _G.UIParent:UnregisterEvent("GROUP_ROSTER_UPDATE")
+    --! WotLK fix: GROUP_ROSTER_UPDATE is not native on 3.3.5a; do not rely on
+    --! Cell's removed synthetic registration to alter shared UIParent state.
 
     if _G.CompactRaidFrameContainer then
         _G.CompactRaidFrameContainer:UnregisterAllEvents()

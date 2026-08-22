@@ -116,7 +116,6 @@ L["Changelogs"] = "변경 로그"
 L["Check all visible enemy nameplates."] = "보이는 모든 적의 이름표를 확인하세요."
 L["Check If Exists"] = "존재 여부 확인"
 L["Check if your group members need some raid buffs"] = "그룹 구성원에게 공격대 버프가 필요한지 확인"
-L["circledStackNums"] = "원 안에 숫자 표시"
 L["Class Color"] = "직업 색상"
 L["Class Color (dark)"] = "직업 색상 (어두운)"
 L["Class Filter"] = "직업 필터"
@@ -219,7 +218,11 @@ L["enableHighlight"] = "유닛 강조 버튼"
 L["Enter: apply\nESC: discard"] = "Enter: 적용\nESC: 취소"
 L["Entire"] = "전체"
 L["Error"] = "오류"
-L["Even if disabled, the settings below affect \"Externals + Defensives\" indicator"] = "비활성화된 경우에도 아래 설정은 \“외생기 + 생존기\” 표시기에 영향을 미칩니다."
+--! WotLK fix: убраны два бэкслеша перед “ и ” в переводе. Кавычки типографские, а
+--! не ", escape'ить их не нужно. Lua 5.1 неизвестный escape молча проглатывает
+--! (llex.c: default -> save_and_next), поэтому в клиенте строка грузилась верно, но
+--! грамматики 5.2+ её отвергают, и audit/luacheck.py навсегда держал 117 OK / 1 FAIL.
+L["Even if disabled, the settings below affect \"Externals + Defensives\" indicator"] = "비활성화된 경우에도 아래 설정은 “외생기 + 생존기” 표시기에 영향을 미칩니다."
 L["Export"] = "내보내기"
 L["External Cooldowns"] = "외생기 재사용 대기 시간"
 L["Externals + Defensives"] = "외생기 + 생존기"

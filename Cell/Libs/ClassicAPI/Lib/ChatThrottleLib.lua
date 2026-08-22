@@ -1,8 +1,8 @@
---! Cell: private, trimmed fork of Tsoukie's ClassicAPI.
---! Coexistence rules live in Util/Coexist.lua: never bail out of a file, never
---! overwrite a global somebody else owns (gap-fill only), keep our own copy in the
---! private CellClassicAPI namespace. Names published here are not native to 3.3.5a
---! (verified against milkyway-codex).
+--! Cell: this is a private, trimmed fork of Tsoukie's ClassicAPI.
+--! If the standalone !!!ClassicAPI addon is installed (Gladdy requires it), it
+--! loads first and owns these globals. Overwriting them with this older subset
+--! mixes two incompatible halves of the same library, so bail out instead.
+if IsAddOnLoaded and IsAddOnLoaded("!!!ClassicAPI") then return end
 
 --
 -- ChatThrottleLib by Mikk
@@ -39,12 +39,9 @@ if _G.ChatThrottleLib then
 		return
 	elseif not _G.ChatThrottleLib.securelyHooked then
 		print("ChatThrottleLib: Warning: There's an ANCIENT ChatThrottleLib.lua (pre-wow 2.0, <v16) in an addon somewhere. Get the addon updated or copy in a newer ChatThrottleLib.lua (>=v16) in it!")
-		-- ATTEMPT to unhook; this'll behave badly if someone else has hooked...
-		-- ... and if someone has securehooked, they can kiss that goodbye too... >.<
-		_G.SendChatMessage = _G.ChatThrottleLib.ORIG_SendChatMessage
-		if _G.ChatThrottleLib.ORIG_SendAddonMessage then
-			_G.SendAddonMessage = _G.ChatThrottleLib.ORIG_SendAddonMessage
-		end
+		--! WotLK fix: do not attempt the legacy direct unhook here. Reassigning
+		--! shared chat APIs can discard secure hooks installed by Blizzard or other
+		--! addons. Preserve the current owner and attach v25's secure post-hooks.
 	end
 	_G.ChatThrottleLib.ORIG_SendChatMessage = nil
 	_G.ChatThrottleLib.ORIG_SendAddonMessage = nil

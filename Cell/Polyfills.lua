@@ -4,67 +4,25 @@ _G.Cell = _G.Cell or ns or {}
 local Cell = _G.Cell
 
 -------------------------------------------------
--- Coexistence helpers
---! WotLK fix (coexistence): Cell must behave the same with and without the
---! standalone !!!ClassicAPI addon, so this file follows the same three rules as
---! Cell/Libs/ClassicAPI/Util/Coexist.lua: never overwrite a global somebody else
---! owns, fill missing keys only, and keep our own implementation reachable from
---! the Cell table. The library loads before Polyfills (Cell.toc: Load.xml, then
---! Polyfills.lua), so the helpers are normally already there; the fallbacks below
---! keep this file working on its own.
+-- Private class-info contract
 -------------------------------------------------
-local CAPI = _G.CellClassicAPI
+--! WotLK fix: stock 3.3.5a has no native C_CreatureInfo/GetClassInfo contract.
+--! Preserve a custom-core or standalone !!!ClassicAPI owner when it exists, but
+--! keep Cell's stock Wrath fallback private instead of publishing a broad modern
+--! namespace and an unused, non-localized race table to every addon.
+local wrathClassFiles = {
+    [1] = "WARRIOR",
+    [2] = "PALADIN",
+    [3] = "HUNTER",
+    [4] = "ROGUE",
+    [5] = "PRIEST",
+    [6] = "DEATHKNIGHT",
+    [7] = "SHAMAN",
+    [8] = "MAGE",
+    [9] = "WARLOCK",
+    [11] = "DRUID",
+}
 
-local CoexistProvide = (CAPI and CAPI.__Provide) or function(name, value)
-    if rawget(_G, name) == nil then
-        _G[name] = value
-    end
-    return value
-end
-
-local CoexistMerge = (CAPI and CAPI.__Merge) or function(name, source)
-    local current = rawget(_G, name)
-    if type(current) ~= "table" then
-        _G[name] = source
-        return source
-    end
-    for key, value in pairs(source) do
-        if current[key] == nil then
-            current[key] = value
-        end
-    end
-    return current
-end
-
-
-local CoexistAdopt = (CAPI and CAPI.__Adopt) or function(name, value)
-    if rawget(_G, name) == nil then
-        _G[name] = value
-    end
-    return value
-end
-
---! WotLK fix (coexistence): three names used to be built TWICE by our own code -
---! once in Libs\ClassicAPI and once here - so which implementation ran depended on
---! load order (/cell debug shims reported them as duplicates). The blocks below now
---! reuse the library copy when it exists and only add what it lacks, so there is
---! exactly one C_Timer / PixelUtil / GetPhysicalScreenSize in the client.
-local function FillMissing(target, source)
-    for key, value in pairs(source) do
-        if target[key] == nil then
-            target[key] = value
-        end
-    end
-    return target
-end
-
--------------------------------------------------
--- GetClassInfo contract shim
--- The global has two different contracts depending on which copy of ClassicAPI
--- owns it: Cell's fork returns a tuple, the standalone !!!ClassicAPI addon
--- aliases it to the ClassInfo *table*. Always read it through this helper so
--- Cell works no matter which one loaded.
--------------------------------------------------
 function Cell.GetClassInfoTuple(classID)
     local info
     if C_CreatureInfo and C_CreatureInfo.GetClassInfo then
@@ -77,793 +35,176 @@ function Cell.GetClassInfoTuple(classID)
         local a, b, c = GetClassInfo(classID)
         if type(a) == "table" then
             return a.className, a.classFile, a.classID
+        elseif a ~= nil then
+            return a, b, c
         end
-        return a, b, c
+    end
+
+    local classFile = wrathClassFiles[classID]
+    if classFile then
+        local localized = LOCALIZED_CLASS_NAMES_MALE and LOCALIZED_CLASS_NAMES_MALE[classFile]
+        return localized or classFile, classFile, classID
     end
 end
 
 -------------------------------------------------
--- securecallfunction polyfill
--- Some 3.3.5 builds lack this helper; Ace libraries expect it.
+-- securecallfunction compatibility
 -------------------------------------------------
-if type(securecallfunction) ~= "function" then
+--! WotLK fix: stock 3.3.5a exposes native securecall but not the later
+--! securecallfunction alias consumed by embedded CallbackHandler. Delegate
+--! directly so return count, error handling, and secure execution semantics stay
+--! native; never approximate this contract with pcall or a fixed return count.
+if type(securecallfunction) ~= "function" and type(securecall) == "function" then
     function securecallfunction(func, ...)
-        if type(func) ~= "function" then return end
-        local ok, r1, r2, r3, r4, r5 = pcall(func, ...)
-        if ok then
-            return r1, r2, r3, r4, r5
-        end
-        -- Swallow errors to mimic securecallfunction behavior in newer clients
+        return securecall(func, ...)
     end
 end
 
 
 -------------------------------------------------
--- PROJECT / FLAVOR SHIM FOR 3.3.5a
+-- PRIVATE PROJECT / FLAVOR STATE FOR 3.3.5a
 -------------------------------------------------
--- On real Retail/Classic, WOW_PROJECT_ID is a number.
--- On 3.3.5a private clients it's usually nil — but some (e.g. Ascension with
--- "Classic API" disabled) define it as MAINLINE, which makes the addon take
--- retail code paths (C_Spell, C_AddOns, ...) and crash. Never trust the
--- client's claim: detect the real build via GetBuildInfo and force Wrath
--- whenever the interface version is pre-4.0.
-local _cellBuild = tonumber(select(4, GetBuildInfo())) or 0
-if type(WOW_PROJECT_ID) ~= "number" or _cellBuild < 40000 then
-    -- Fake Blizzard project constants (define if missing)
-    WOW_PROJECT_MAINLINE          = WOW_PROJECT_MAINLINE or 1
-    WOW_PROJECT_CLASSIC           = WOW_PROJECT_CLASSIC or 2
-    WOW_PROJECT_WRATH_CLASSIC     = WOW_PROJECT_WRATH_CLASSIC or 11
-    WOW_PROJECT_CATACLYSM_CLASSIC = WOW_PROJECT_CATACLYSM_CLASSIC or 12
-    WOW_PROJECT_MISTS_CLASSIC     = WOW_PROJECT_MISTS_CLASSIC or 13
-
-    -- Tell the addon we're Wrath Classic
-    WOW_PROJECT_ID = WOW_PROJECT_WRATH_CLASSIC
-
-    -- Guard against WOW_PROJECT_MAINLINE colliding with the forced ID
-    if WOW_PROJECT_MAINLINE == WOW_PROJECT_ID then
-        WOW_PROJECT_MAINLINE = 1
-        WOW_PROJECT_ID = 11
-        WOW_PROJECT_WRATH_CLASSIC = 11
-    end
-
-    -- Expansion level constants: nil == nil comparisons elsewhere
-    -- (e.g. Cell.isTWW) must not accidentally become true
-    LE_EXPANSION_LEVEL_CURRENT = LE_EXPANSION_LEVEL_CURRENT or 2
-    LE_EXPANSION_WAR_WITHIN    = LE_EXPANSION_WAR_WITHIN or 10
-end
-
--- Initialize flavor + flags once based on WOW_PROJECT_ID
-if not Cell.flavor then
-    if WOW_PROJECT_ID == WOW_PROJECT_WRATH_CLASSIC then
-        Cell.flavor = "wrath"
-    elseif WOW_PROJECT_ID == WOW_PROJECT_MAINLINE then
-        Cell.flavor = "retail"
-    elseif WOW_PROJECT_ID == WOW_PROJECT_CLASSIC then
-        Cell.flavor = "vanilla"
-    elseif WOW_PROJECT_ID == WOW_PROJECT_CATACLYSM_CLASSIC then
-        Cell.flavor = "cata"
-    elseif WOW_PROJECT_ID == WOW_PROJECT_MISTS_CLASSIC then
-        Cell.flavor = "mists"
-    else
-        Cell.flavor = "retail"
-    end
-end
-
-Cell.isRetail  = (Cell.flavor == "retail")
-Cell.isWrath   = (Cell.flavor == "wrath")
-Cell.isVanilla = (Cell.flavor == "vanilla")
-Cell.isCata    = (Cell.flavor == "cata")
-Cell.isMists   = (Cell.flavor == "mists")
-Cell.isTWW     = false -- definitely not TWW on 3.3.5a
+--! WotLK fix: this backport targets Interface 30300 regardless of retail-style
+--! project constants exposed by a custom core. Keep the decision private to Cell:
+--! rewriting WOW_PROJECT_ID or Blizzard expansion constants changes code paths in
+--! every foreign addon and can make them select an unsupported compatibility mode.
+Cell.flavor = "wrath"
+Cell.isRetail = false
+Cell.isWrath = true
+Cell.isVanilla = false
+Cell.isCata = false
+Cell.isMists = false
+Cell.isTWW = false
 
 -------------------------------------------------
 
-if not IsMetaKeyDown then
-    function IsMetaKeyDown() return false end
-end
+--! WotLK fix: IsMetaKeyDown is not a stock 3.3.5a API and has one Cell consumer.
+--! Widgets.lua binds a private false fallback instead of advertising this global
+--! input capability to every addon.
 
-if not CreateVector2D then
-    function CreateVector2D(x, y)
-        return {
-            x = x or 0,
-            y = y or 0,
-            GetXY = function(self) return self.x, self.y end,
-            SetXY = function(self, x, y) self.x = x; self.y = y end
-        }
-    end
-end
+--! WotLK fix: CreateVector2D has no active Cell consumer. Do not publish a
+--! partial retail vector object solely for a commented-out rotation experiment.
 
--- Initialize supporters tables if not present
-Cell.supporters1 = Cell.supporters1 or {}
-Cell.supporters2 = Cell.supporters2 or {}
+--! WotLK fix: пустые Cell.supporters1/supporters2 были заглушкой под панель
+--! спонсоров, которой в бэкпорте больше нет: Supporters.lua и
+--! Indicators/Supporter.lua удалены, CreateSupportersPane() в Modules/About
+--! закомментирован. Читателей у таблиц не осталось ни одного, а сами они на
+--! старте создавали два лишних объекта в Cell.
 
 -------------------------------------------------
 -- Polyfills for WotLK 3.3.5a
 -------------------------------------------------
 
--------------------------------------------------
--- Screen size polyfill for WotLK
--------------------------------------------------
---! WotLK fix (coexistence): the standalone !!!ClassicAPI publishes its own
---! GetPhysicalScreenSize built on GetScreenWidth/GetScreenHeight - those are UI
---! units that move with UIParent scale, so pixel-perfect math on top of them
---! drifts. Always build our gxResolution based version, keep it as
---! Cell.GetPhysicalScreenSize for our own math, and hand it to the global only
---! when the name is free.
-do
-        -- Real physical resolution from the gxResolution CVar (ElvUI 3.3.5 technique).
-        -- GetScreenWidth/Height return UI units (scale-dependent) and break
-        -- pixel-perfect math, so only fall back to them if the CVar is unreadable.
-        local function GetPhysicalScreenSize()
-            local resolution = GetCVar and GetCVar("gxResolution")
-            if resolution then
-                local w, h = resolution:match("(%d+)x(%d+)")
-                if w and h then
-                    return tonumber(w), tonumber(h)
-                end
-            end
-            return GetScreenWidth(), GetScreenHeight()
-        end
-
-    --! Single owner: the library copy (Libs\ClassicAPI\Util\PixelUtil.lua) is the
-    --! same gxResolution technique plus a resolution-list fallback, so prefer it and
-    --! keep the local above only as a standalone fallback.
-    GetPhysicalScreenSize = (CAPI and CAPI.GetPhysicalScreenSize) or GetPhysicalScreenSize
-
-    Cell.GetPhysicalScreenSize = GetPhysicalScreenSize
-    CoexistAdopt("GetPhysicalScreenSize", GetPhysicalScreenSize)
-end
+--! WotLK fix: LibCustomGlow owns its texture-sheet animator privately. Do not
+--! publish AnimateTexCoords solely for one embedded-library consumer.
 
 -------------------------------------------------
--- PixelUtil polyfill (doesn't exist in WotLK)
+-- PixelUtil ownership
 -------------------------------------------------
---! WotLK fix (coexistence): was `if not PixelUtil then` - with the standalone
---! !!!ClassicAPI loaded Cell skipped its own table entirely and did pixel math
---! through a foreign implementation. Build ours always, expose it as
---! Cell.PixelUtil, and give the global only the functions nobody defined yet.
-do
-    local PixelUtil = {}
-
-    -- Polyfill for GetNearestPixelSize
-    -- Returns a pixel-perfect size based on the desired size and scale
-    function PixelUtil.GetNearestPixelSize(desiredSize, scale)
-        if not desiredSize or desiredSize == 0 then
-            return 0
-        end
-
-        -- Handle nil or zero scale
-        if not scale or scale == 0 then
-            scale = 1
-        end
-
-        -- Round to nearest pixel
-        local pixelSize = desiredSize * scale
-        if pixelSize >= 0 then
-            pixelSize = math.floor(pixelSize + 0.5)
-        else
-            pixelSize = math.ceil(pixelSize - 0.5)
-        end
-
-        -- Ensure minimum size of 1 pixel
-        if desiredSize > 0 and pixelSize < 1 then
-            pixelSize = 1
-        elseif desiredSize < 0 and pixelSize > -1 then
-            pixelSize = -1
-        end
-
-        return pixelSize / scale
-    end
-
-    -- Polyfill for SetPoint
-    -- Just wraps the standard SetPoint method
-    function PixelUtil.SetPoint(frame, ...)
-        if frame and frame.SetPoint then
-            frame:SetPoint(...)
-        end
-    end
-
-    -- Polyfill for GetPixelToUIUnitFactor (used in some addons)
-    function PixelUtil.GetPixelToUIUnitFactor()
-        local scale = UIParent:GetEffectiveScale()
-        return 1 / (768 / GetScreenHeight()) / scale
-    end
-
-    --! Single owner: the library table has the full set (SetWidth/SetHeight/SetSize/
-    --! SetStatusBarValue and a minPixels-aware GetNearestPixelSize), so build on it and
-    --! add only what it lacks. Cell.PixelUtil used to point at this thinner table, which
-    --! meant a call to a key only the library defines would have been a nil call.
-    if ( CAPI and type(CAPI.PixelUtil) == "table" ) then
-        PixelUtil = FillMissing(CAPI.PixelUtil, PixelUtil)
-    end
-
-    Cell.PixelUtil = PixelUtil
-    CoexistMerge("PixelUtil", PixelUtil)
-end
+--! WotLK fix: ClassicAPI/Util/PixelUtil.lua creates only Cell.PixelUtil. Stock
+--! 3.3.5a has no GetPhysicalScreenSize/PixelUtil globals, so the embedded copy
+--! does not publish them or interfere with a standalone/foreign owner.
 
 
-if not CreateVector2D then
-    function CreateVector2D(x, y)
-        return {
-            x = x or 0,
-            y = y or 0,
-            GetXY = function(self) return self.x, self.y end,
-            SetXY = function(self, x, y) self.x = x; self.y = y end
-        }
-    end
-end
+--! WotLK fix: CreateVector2D has no active Cell consumer and remains absent.
+
+
+--! WotLK fix: the old CellDropdownList placeholder was a disconnected global
+--! frame. The real Cell dropdown list is owned privately by Widgets.lua, which
+--! now exposes Cell.HideDropdownList() to the few modules that need to close it.
+
+
+--! WotLK fix: Cell.SetTextureGradient is gone. Texture:SetGradientAlpha(orientation,
+--! r,g,b,a, r,g,b,a) is native on 3.3.5 (codex), and the adapter only existed to
+--! translate the retail color-object form SetGradient(orientation, color, color),
+--! which this client does not have. All 12 call sites passed the full nine
+--! arguments with explicit alphas, so the `a1 or 1` defaults were dead and the
+--! helper was a literal pass-through; they now call the native method directly.
+--! The native Texture:SetGradient/SetGradientAlpha methods stay untouched - Cell
+--! must not replace the shared Texture metatable client-wide.
+
+--! WotLK fix: GetNumLines, IsTruncated и SetEnabled принадлежат активному провайдеру
+--! WidgetAPI, который грузится раньше этого файла. Встроенный провайдер ставит только
+--! отсутствующие методы; при живом !!!ClassicAPI владельцем остаётся он. Не зондировать
+--! общие метатаблицы второй раз и не создавать второго владельца-фолбэка.
+--! SetColorTexture из этого списка выпал 2026-08-16: шим удалён из WidgetAPI вместе с
+--! конкретным зондом Texture. На 3.3.5 цвет задаёт нативная числовая форма
+--! Texture:SetTexture(r, g, b[, a]) (кодекс), шим только звал её же, и все 88 вызовов
+--! Cell переведены на неё напрямую. Полифиллу тут ставить нечего: имени SetColorTexture
+--! в аддоне больше нет ни в одной точке.
+--! Существующие реализации Texture:SetAtlas не трогаются вообще: 2026-08-11 шим
+--! SetAtlas удалён из WidgetAPI (атласов на 3.3.5 нет как системы, а данные читались
+--! из _G.C_Texture, которого Cell не публикует). Полифиллу тем более нечего тут
+--! ставить - в Cell не осталось ни одной живой точки вызова SetAtlas или SetShown.
+
+
+--! WotLK fix: 3.3.5 cannot independently enable mouse clicks and motion. Cell's
+--! only consumer now owns its legacy EnableMouse behavior directly; do not add
+--! SetMouseClickEnabled/SetMouseMotionEnabled to the shared Frame metatable.
 
 
 -------------------------------------------------
--- CellDropdownList shim
--- Retail has a shared dropdown list frame; Wrath port just needs a dummy to hide.
+--! WotLK fix: Cell never rotates FontStrings. Do not advertise unsupported
+--! FontString:SetRotation as a successful shared no-op.
 -------------------------------------------------
-if not CellDropdownList then
-    local f = CreateFrame("Frame", "CellDropdownList", UIParent)
-    f:Hide()
-    _G.CellDropdownList = f
-end
-
-
-
--- Texture:SetGradient polyfill to support CreateColor tables on 3.3.5a
-do
-    local tex = UIParent:CreateTexture()
-    local mt = getmetatable(tex)
-
-    if mt and mt.__index then
-        local origSetGradient = mt.__index.SetGradient
-        local origSetGradientAlpha = mt.__index.SetGradientAlpha
-
-        local function unpackColor(c)
-            local t = type(c)
-            if t ~= "table" and t ~= "userdata" then return end
-            local ok, r, g, b, a = pcall(function()
-                if c.GetRGBA then
-                    return c:GetRGBA()
-                end
-                return c.r, c.g, c.b, c.a or 1
-            end)
-            if ok then
-                return r, g, b, a
-            end
-        end
-
-        -- accept either (orientation, color1, color2) or the classic numeric signature
-        if origSetGradient and not mt.__index._CellSetGradientPolyfill then
-            function mt.__index:SetGradient(orientation, ...)
-                local c1, c2 = ...
-                if c1 ~= nil and type(c1) ~= "number" and c2 ~= nil and type(c2) ~= "number" then
-                    local r1, g1, b1, a1 = unpackColor(c1)
-                    local r2, g2, b2, a2 = unpackColor(c2)
-                    if r1 and r2 and origSetGradientAlpha then
-                        return origSetGradientAlpha(self, orientation, r1, g1, b1, a1 or 1, r2, g2, b2, a2 or 1)
-                    end
-                end
-                return origSetGradient(self, orientation, ...)
-            end
-            mt.__index._CellSetGradientPolyfill = true
-        end
-
-        if origSetGradientAlpha and not mt.__index._CellSetGradientAlphaPolyfill then
-            function mt.__index:SetGradientAlpha(orientation, ...)
-                local args = {...}
-                if #args == 2 and type(args[1]) ~= "number" then
-                    local r1, g1, b1, a1 = unpackColor(args[1])
-                    local r2, g2, b2, a2 = unpackColor(args[2])
-                    if r1 and r2 then
-                        return origSetGradientAlpha(self, orientation, r1, g1, b1, a1 or 1, r2, g2, b2, a2 or 1)
-                    end
-                end
-                return origSetGradientAlpha(self, orientation, ...)
-            end
-            mt.__index._CellSetGradientAlphaPolyfill = true
-        end
-
-        -- Texture:SetColorTexture polyfill for WotLK 3.3.5
-        -- In retail, SetColorTexture(r, g, b, a) creates a solid color texture
-        -- In WotLK, we use SetTexture with the RGBA values directly
-        if not mt.__index.SetColorTexture then
-            function mt.__index:SetColorTexture(r, g, b, a)
-                -- In WotLK, SetTexture with 4 numeric args creates a solid color
-                self:SetTexture(r or 1, g or 1, b or 1, a or 1)
-            end
-        end
-
-        -- Wrap Texture:SetAtlas to handle missing atlases in WotLK 3.3.5
-        -- WotLK has fewer atlases than retail, so we need to gracefully handle missing ones
-        --! NOTE: this wrapper lands on the SHARED Texture metatable, so it
-        --! affects EVERY addon's textures (it only exists when another addon,
-        --! e.g. an ElvUI backport, already defined SetAtlas).
-        if mt.__index.SetAtlas and not mt.__index._CellSetAtlasWrapped then
-            local originalSetAtlas = mt.__index.SetAtlas
-            function mt.__index:SetAtlas(atlasName, useAtlasSize, filterMode)
-                -- Try to call the original SetAtlas
-                local success = pcall(originalSetAtlas, self, atlasName, useAtlasSize, filterMode)
-                if not success then
-                    --! WotLK fix: was SetTexture(nil), but on 3.3.5 that
-                    --! renders an OPAQUE WHITE rectangle instead of clearing
-                    --! (broke other addons' textures, e.g. the ElvUI castbar
-                    --! spark showed as a white block whenever Cell was
-                    --! enabled). Use a fully transparent solid color instead.
-                    self:SetTexture(0, 0, 0, 0)
-                end
-            end
-            mt.__index._CellSetAtlasWrapped = true
-        end
-    end
-end
-
-
--- Mouse click / motion polyfill for Wrath
-do
-    local region = CreateFrame("Frame")
-    local mt = getmetatable(region)
-    --! WotLK fix: `do ... end` is a BLOCK, not a function, so a bare `return`
-    --! here returns from the whole CHUNK - if the guard ever fired, everything
-    --! below this point (SetShown, CreateColor, C_Timer, UnitClassBase, the
-    --! GROUP_ROSTER_UPDATE proxy, ...) would silently never load, with no error.
-    --! Use a positive `if` around the body instead.
-    if mt and mt.__index then
-        local idx = mt.__index
-
-        -- Retail: ScriptRegion:SetMouseClickEnabled(bool)
-        if not idx.SetMouseClickEnabled then
-            function idx:SetMouseClickEnabled(enabled)
-                -- Wrath only has EnableMouse(bool) for both hover+click
-                if self.EnableMouse then
-                    self:EnableMouse(not not enabled)
-                end
-            end
-        end
-
-        -- Retail: ScriptRegion:SetMouseMotionEnabled(bool)
-        if not idx.SetMouseMotionEnabled then
-            function idx:SetMouseMotionEnabled(enabled)
-                if self.EnableMouse then
-                    self:EnableMouse(not not enabled)
-                end
-            end
-        end
-    end
-end
-
-
-
-
--- SetShown polyfill for WotLK (method added in 5.0.4; missing on 3.3.5).
--- Pure additive polyfill on the shared widget metatables: only installed
--- when the method does not exist, never overwrites anything (safe for
--- other addons, same pattern as IsTruncated below).
--- Covers Frame, Texture and FontString - the three region types Cell
--- calls :SetShown() on (Base.lua stack/duration, UnitButton gapTexture).
-do
-    local function InstallSetShown(object)
-        local mt = getmetatable(object)
-        if mt and mt.__index and not mt.__index.SetShown then
-            function mt.__index:SetShown(show)
-                if show then
-                    self:Show()
-                else
-                    self:Hide()
-                end
-            end
-        end
-    end
-
-    -- All probe frames must be hidden: a freshly created frame is shown by
-    -- default, and a shown EditBox with default autoFocus grabs keyboard
-    -- focus and silently eats ALL key presses (broke keybindings).
-    local function Probe(frameType)
-        local f = CreateFrame(frameType, nil, UIParent)
-        if f.SetAutoFocus then
-            f:SetAutoFocus(false) -- EditBox: never steal keyboard focus
-            f:ClearFocus()
-        end
-        f:Hide()
-        return f
-    end
-
-    local probeFrame = Probe("Frame")
-    InstallSetShown(probeFrame)              -- Frame (+ Button/StatusBar etc. if shared)
-    InstallSetShown(probeFrame:CreateTexture())     -- Texture
-    InstallSetShown(probeFrame:CreateFontString())  -- FontString
-    -- widget types with distinct metatables on 3.3.5
-    InstallSetShown(Probe("Button"))
-    InstallSetShown(Probe("StatusBar"))
-    InstallSetShown(Probe("Cooldown"))
-    InstallSetShown(Probe("EditBox"))
-    InstallSetShown(Probe("Slider"))
-    InstallSetShown(Probe("CheckButton"))
-    InstallSetShown(Probe("ScrollFrame"))
-end
-
--- FontString IsTruncated polyfill for WotLK
-do
-    local fs = UIParent:CreateFontString()
-    local mt = getmetatable(fs)
-
-    if mt and mt.__index and not mt.__index.IsTruncated then
-        function mt.__index:IsTruncated()
-            -- Check if text width exceeds the font string's width
-            local stringWidth = self:GetStringWidth()
-            local frameWidth = self:GetWidth()
-
-            -- If width is 0, assume not truncated
-            if frameWidth == 0 then
-                return false
-            end
-
-            -- Check if string width exceeds available width
-            return stringWidth > frameWidth
-        end
-    end
-end
 
 -------------------------------------------------
--- FontString SetRotation polyfill for WotLK
--- Text rotation doesn't exist in WotLK, so this is a no-op
+--! WotLK fix: Cell formats accent/rainbow text privately in Widgets.lua. Do not
+--! publish CreateColor/WrapTextInColorCode or add methods to a foreign Color
+--! metatable solely for Cell. Standalone !!!ClassicAPI keeps its own color API;
+--! the embedded Color modules remain inactive to avoid shared table mutation.
 -------------------------------------------------
-do
-    local fs = UIParent:CreateFontString()
-    local mt = getmetatable(fs)
-
-    if mt and mt.__index and not mt.__index.SetRotation then
-        function mt.__index:SetRotation(angle)
-            -- WotLK doesn't support text rotation, no-op to prevent errors
-            -- Alternative: use vertical text with newlines at the call site
-        end
-    end
-end
 
 -------------------------------------------------
--- CreateColor polyfill for WotLK
--- In retail, CreateColor creates a Color object with helper methods
--- In WotLK, we need to create a table with the same interface
+--! WotLK fix: do not add retail colorStr fields or methods to entries in
+--! Blizzard's shared RAID_CLASS_COLORS/CUSTOM_CLASS_COLORS tables. Cell derives
+--! its own color escape strings from native r/g/b values at the call sites.
 -------------------------------------------------
-if not CreateColor then
-    function CreateColor(r, g, b, a)
-        local color = {r = r or 1, g = g or 1, b = b or 1, a = a or 1}
-
-        function color:GetRGB()
-            return self.r, self.g, self.b
-        end
-
-        function color:GetRGBA()
-            return self.r, self.g, self.b, self.a
-        end
-
-        function color:WrapTextInColorCode(text)
-            -- Format: |cAARRGGBB + text + |r
-            -- AA = alpha (255 for opaque), RR = red, GG = green, BB = blue
-            local a = math.floor((self.a or 1) * 255)
-            local r = math.floor(self.r * 255)
-            local g = math.floor(self.g * 255)
-            local b = math.floor(self.b * 255)
-            return string.format("|c%02x%02x%02x%02x%s|r", a, r, g, b, text)
-        end
-
-        return color
-    end
-else
-    -- CreateColor exists, but WrapTextInColorCode might not
-    -- Add WrapTextInColorCode to existing Color objects if missing
-    local testColor = CreateColor(1, 1, 1, 1)
-    if testColor and not testColor.WrapTextInColorCode then
-        local mt = getmetatable(testColor)
-        if mt and mt.__index then
-            function mt.__index:WrapTextInColorCode(text)
-                local a = math.floor((self.a or 1) * 255)
-                local r = math.floor(self.r * 255)
-                local g = math.floor(self.g * 255)
-                local b = math.floor(self.b * 255)
-                return string.format("|c%02x%02x%02x%02x%s|r", a, r, g, b, text)
-            end
-        end
-    end
-end
 
 -------------------------------------------------
--- RAID_CLASS_COLORS.colorStr polyfill for 3.3.5a
--- The .colorStr field was added in 4.2; on 3.3.5 it is nil, which breaks
--- Cell's accent color init (Widgets.lua: "|c"..colorStr concat with nil)
--- and F.GetClassColorStr. Derive it from the r/g/b values.
--- (Same approach as WeakAuras-WotLK Compatibility.lua)
+--! WotLK fix: Frame:CreateFontString is native on 3.3.5 and must retain its
+--! Blizzard contract. Cell passes a font template or calls SetFont explicitly
+--! at its own no-template call sites, so no shared-metatable wrapper is needed.
 -------------------------------------------------
-do
-    local function fill(colors)
-        if type(colors) ~= "table" then return end
-        for _, color in pairs(colors) do
-            if type(color) == "table" and color.r and not color.colorStr then
-                color.colorStr = string.format("ff%02x%02x%02x",
-                    math.floor(color.r * 255 + 0.5),
-                    math.floor(color.g * 255 + 0.5),
-                    math.floor(color.b * 255 + 0.5))
-            end
-        end
-    end
-    fill(RAID_CLASS_COLORS)
-    fill(CUSTOM_CLASS_COLORS)
-end
+
+--! WotLK fix: Cell.SmoothStatusBarMixin is owned privately by the active
+--! ClassicAPI smoothing module. Do not publish or consume a shared global mixin
+--! whose behavior and lifetime depend on foreign addon load order.
 
 -------------------------------------------------
--- Global WrapTextInColorCode polyfill for 3.3.5a
--- The global (from retail's util) doesn't exist on 3.3.5; Cell calls it in
--- Cell.WrapTextInAccentColor. Tolerates color strings that already carry a
--- leading "|c" (Cell's accentColor.s does) to avoid double-prefixing.
+--! WotLK fix: SetStatusBarTexture and GetStatusBarTexture are native 3.3.5
+--! methods. Do not replace the shared StatusBar metatable or create fallback
+--! textures on Blizzard/foreign bars. Cell guards the few client-sensitive
+--! texture uses locally after assigning each bar's texture.
 -------------------------------------------------
-if not WrapTextInColorCode then
-    function WrapTextInColorCode(text, colorHexString)
-        local hex = tostring(colorHexString or "ffffffff"):gsub("^|c", "")
-        return ("|c%s%s|r"):format(hex, tostring(text))
-    end
-end
-
--------------------------------------------------
--- Frame CreateFontString polyfill for WotLK
--- Ensures all created font strings have a default font set
--- This prevents "Font not set" errors when calling SetText
--------------------------------------------------
-do
-    local frame = CreateFrame("Frame")
-    local mt = getmetatable(frame)
-
-    if mt and mt.__index and not mt.__index._CellFontStringCreationPolyfill then
-        local origCreateFontString = mt.__index.CreateFontString
-
-        if origCreateFontString then
-            function mt.__index:CreateFontString(name, layer, inheritsFrom)
-                local fontString = origCreateFontString(self, name, layer, inheritsFrom)
-
-                -- WotLK Fix: If no font object was inherited, set a default font to prevent errors
-                -- Check if font is already set (from inheritsFrom)
-                local currentFont, currentSize, currentFlags = fontString:GetFont()
-                if not currentFont then
-                    -- Set a safe default font
-                    fontString:SetFont(STANDARD_TEXT_FONT, 12, "")
-                end
-
-                return fontString
-            end
-
-            mt.__index._CellFontStringCreationPolyfill = true
-        end
-    end
-end
-
--- SmoothStatusBarMixin polyfill for WotLK
-if not SmoothStatusBarMixin then
-    SmoothStatusBarMixin = {}
-
-    function SmoothStatusBarMixin:OnLoad()
-        -- no-op on 3.3.5
-    end
-
-    function SmoothStatusBarMixin:SetSmoothedValue(value)
-        if self.SetValue then
-            self:SetValue(value)
-        end
-    end
-
-    function SmoothStatusBarMixin:SetMinMaxSmoothedValue(minVal, maxVal)
-        if self.SetMinMaxValues then
-            self:SetMinMaxValues(minVal, maxVal)
-        end
-    end
-
-    -- Retail uses this to reset the smoothing state; on 3.3.5 we just snap to current value.
-    function SmoothStatusBarMixin:ResetSmoothedValue()
-        if self.GetValue and self.SetValue then
-            self:SetValue(self:GetValue())
-        end
-    end
-end
-
--------------------------------------------------
--- StatusBar GetStatusBarTexture polyfill for WotLK
--- In WotLK, GetStatusBarTexture() can return nil immediately after SetStatusBarTexture
--- We wrap it to ensure it always returns a valid texture
--------------------------------------------------
-do
-    local sb = CreateFrame("StatusBar")
-    local mt = getmetatable(sb)
-
-    if mt and mt.__index then
-        local origGetStatusBarTexture = mt.__index.GetStatusBarTexture
-        local origSetStatusBarTexture = mt.__index.SetStatusBarTexture
-
-        -- Wrap SetStatusBarTexture to cache the texture path
-        --! NOTE: this wrapper lands on the SHARED StatusBar metatable and
-        --! affects EVERY addon's bars. It must never touch textures it did
-        --! not create itself.
-        if origSetStatusBarTexture then
-            function mt.__index:SetStatusBarTexture(texture, layer, sublayer)
-                if type(texture) == "string" then
-                    self._cellCachedTexturePath = texture
-                    --! WotLK fix: only sync the fallback if WE created it.
-                    --! A texture found by the region scan can be a foreign
-                    --! region (e.g. the ElvUI aurabar SPARK, created via
-                    --! statusBar:CreateTexture) - overwriting it with the
-                    --! flat bar texture rendered the spark as a solid white
-                    --! rectangle. Scanned caches are dropped instead: the
-                    --! native SetStatusBarTexture recreates the internal
-                    --! texture, so the next Get can re-resolve it properly.
-                    if self._cellStatusBarTexture then
-                        if self._cellStatusBarTextureCreated then
-                            self._cellStatusBarTexture:SetTexture(texture)
-                        else
-                            self._cellStatusBarTexture = nil
-                        end
-                    end
-                end
-                return origSetStatusBarTexture(self, texture, layer, sublayer)
-            end
-        end
-
-        -- Wrap GetStatusBarTexture to ensure it returns a texture.
-        -- With Ascension's "Classic API" disabled, the native call can return
-        -- nil permanently, so fall back to scanning the bar's regions for the
-        -- internal texture, and as a last resort create one ourselves.
-        if origGetStatusBarTexture then
-            function mt.__index:GetStatusBarTexture()
-                local tex = origGetStatusBarTexture(self)
-                if tex then return tex end
-
-                -- If texture is nil but we have a cached path, try setting it again
-                if self._cellCachedTexturePath then
-                    origSetStatusBarTexture(self, self._cellCachedTexturePath)
-                    tex = origGetStatusBarTexture(self)
-                    if tex then return tex end
-                end
-
-                -- cached result from a previous region scan
-                if self._cellStatusBarTexture then
-                    return self._cellStatusBarTexture
-                end
-
-                --! WotLK fix: scan is restricted to ARTWORK-layer textures
-                --! (the statusbar's internal fill lives there) that match
-                --! the cached path when one is known. The old "first texture
-                --! wins" scan could capture foreign regions like the ElvUI
-                --! aurabar spark (OVERLAY) - see SetStatusBarTexture note.
-                for i = 1, select("#", self:GetRegions()) do
-                    local region = select(i, self:GetRegions())
-                    if region and region.IsObjectType and region:IsObjectType("Texture")
-                        and region.GetDrawLayer and region:GetDrawLayer() == "ARTWORK"
-                        and (not self._cellCachedTexturePath or region:GetTexture() == self._cellCachedTexturePath)
-                    then
-                        self._cellStatusBarTexture = region
-                        self._cellStatusBarTextureCreated = nil
-                        return region
-                    end
-                end
-
-                -- last resort: create a texture and assign it as the bar texture
-                -- (3.3.5 SetStatusBarTexture accepts a Texture object)
-                tex = self:CreateTexture(nil, "ARTWORK")
-                if self._cellCachedTexturePath then
-                    tex:SetTexture(self._cellCachedTexturePath)
-                end
-                origSetStatusBarTexture(self, tex)
-                self._cellStatusBarTexture = tex
-                self._cellStatusBarTextureCreated = true
-                return tex
-            end
-        end
-    end
-end
 
 -------------------------------------------------
 -- Retail unit API polyfills
 -------------------------------------------------
 
-if not UnitInOtherParty then
-    -- Retail API: returns true if unit is in a different party/instance group.
-    -- WotLK/Ascension doesn't have that concept, so just say "no".
-    function UnitInOtherParty(unit)
-        return false
-    end
-end
+--! WotLK fix: Cell.UnitInOtherParty is gone. 3.3.5 ships no UnitInOtherParty in
+--! the C API (codex) and FrameXML never mentions it, so the adapter was a literal
+--! `return false` with no probe of a native function - unlike Cell.UnitInPhase
+--! below, which still probes for a custom-core implementation. Its only consumer,
+--! the LFG-Eye branch in Indicators/StatusIcon.lua, was unreachable on every
+--! client and was removed together with it. Cell neither publishes nor reads a
+--! global of that name (rule 3): a foreign addon stays free to define its own.
 
--- UnitHasIncomingResurrection
-if not UnitHasIncomingResurrection then
-    -- Retail API (4.0+): returns true if a resurrection is being cast on the unit.
-    -- Backed by LibResComm-1.0 (comm-based res tracking between addon users,
-    -- same approach as WeakAuras-WotLK). Falls back to false without the lib.
-    local resComm
-    local function GetResComm()
-        if resComm == nil then
-            resComm = (LibStub and LibStub("LibResComm-1.0", true)) or false
-        end
-        return resComm or nil
-    end
-
-    function UnitHasIncomingResurrection(unit)
-        local comm = GetResComm()
-        if not comm then return false end
-        local name = unit and UnitName(unit)
-        if not name then return false end
-        return comm:IsUnitBeingRessed(name) and true or false
-    end
-
-    -- Synthetic INCOMING_RESURRECT_CHANGED dispatch ---------------------------
-    -- The event doesn't exist on 3.3.5; track frames that register it (same
-    -- metatable hook pattern as the heal prediction proxy) and fire their
-    -- OnEvent handler from LibResComm callbacks.
-    local rezFrames = setmetatable({}, { __mode = "k" })
-
-    do
-        local sample = CreateFrame("Frame")
-        local mt = getmetatable(sample)
-        mt = mt and mt.__index
-        if mt and mt.RegisterEvent and not mt._CellIncResHook then
-            hooksecurefunc(mt, "RegisterEvent", function(self, event)
-                if event == "INCOMING_RESURRECT_CHANGED" then
-                    rezFrames[self] = true
-                end
-            end)
-            hooksecurefunc(mt, "UnregisterEvent", function(self, event)
-                if event == "INCOMING_RESURRECT_CHANGED" then
-                    rezFrames[self] = nil
-                end
-            end)
-            hooksecurefunc(mt, "UnregisterAllEvents", function(self)
-                rezFrames[self] = nil
-            end)
-            mt._CellIncResHook = true
-        end
-    end
-
-    local function NameToUnit(name)
-        if UnitName("player") == name then return "player" end
-        local n = GetNumRaidMembers and GetNumRaidMembers() or 0
-        if n > 0 then
-            for i = 1, n do
-                if UnitName("raid"..i) == name then return "raid"..i end
-            end
-        else
-            for i = 1, 4 do
-                if UnitExists("party"..i) and UnitName("party"..i) == name then
-                    return "party"..i
-                end
-            end
-        end
-    end
-
-    local function FireIncomingRes(targetName)
-        if not targetName then return end
-        local unit = NameToUnit(targetName)
-        if not unit then return end
-        for frame in pairs(rezFrames) do
-            local handler = frame:GetScript("OnEvent")
-            if handler then
-                pcall(handler, frame, "INCOMING_RESURRECT_CHANGED", unit)
-            end
-        end
-    end
-
-    local rezCallbackOwner = {}
-    local rezInitFrame = CreateFrame("Frame", "CellIncomingResProxy")
-    rezInitFrame:RegisterEvent("PLAYER_LOGIN")
-    rezInitFrame:SetScript("OnEvent", function(self)
-        self:UnregisterEvent("PLAYER_LOGIN")
-        local comm = GetResComm()
-        if not comm then return end
-        -- ResComm_ResStart(event, sender, endTime, targetName)
-        comm.RegisterCallback(rezCallbackOwner, "ResComm_ResStart", function(_, _, _, target)
-            FireIncomingRes(target)
-        end)
-        -- ResComm_ResEnd(event, sender, targetName)
-        comm.RegisterCallback(rezCallbackOwner, "ResComm_ResEnd", function(_, _, target)
-            FireIncomingRes(target)
-        end)
-    end)
-end
+--! WotLK fix: incoming resurrection tracking now consumes LibResComm
+--! privately inside Indicators/StatusIcon.lua. The global
+--! UnitHasIncomingResurrection polyfill, synthetic
+--! INCOMING_RESURRECT_CHANGED dispatch, shared Frame-metatable hooks, and
+--! CellIncomingResProxy were removed.
 
 -- UnitInPhase
-if not UnitInPhase then
-    -- Retail API: returns true if unit is in the same phase as player
-    -- WotLK doesn't have this API or handles phasing differently, assume always in phase
-    function UnitInPhase(unit)
+--! WotLK fix: preserve a real custom-core phase API, but keep the stock fallback
+--! private so foreign addons do not mistake an unconditional true for support.
+do
+    local nativeUnitInPhase = UnitInPhase
+    function Cell.UnitInPhase(unit)
+        if type(nativeUnitInPhase) == "function" then
+            return not not nativeUnitInPhase(unit)
+        end
         return true
     end
 end
@@ -903,10 +244,9 @@ do
     --! A retail-style single-string return ("HEALER", "DAMAGER", ...) is
     --! truthy in Lua, so isTank was ALWAYS "true" -> every grouped player got
     --! a TANK shield on the Blizzard player/party frames regardless of the
-    --! real role. The polyfill is now Cell-PRIVATE (Cell_UnitGroupRolesAssigned)
-    --! and the global keeps its native three-boolean behavior. All Cell call
-    --! sites (UnitButton_Cata_Wrath, SpotlightFrame, RaidRosterFrame, Debug,
-    --! LibGroupInfo) were switched to the private function.
+    --! real role. The resolver is now Cell-private as
+    --! Cell.UnitGroupRolesAssigned, while the global keeps its native
+    --! three-boolean behavior.
 
     local orig_UnitGroupRolesAssigned = UnitGroupRolesAssigned
 
@@ -916,8 +256,20 @@ do
     -- hot path: this polyfill runs for every unit button role/power update,
     -- so cache the LibGroupInfo reference instead of a LibStub lookup per call
     local _cachedLGI
-    function Cell_UnitGroupRolesAssigned(unit)
-        if not unit then return "NONE" end
+
+    --! WotLK fix: keep role selection in one resolver and expose a read-only
+    --! diagnostic snapshot through Cell.GetUnitRoleDebugInfo(). The public Cell
+    --! contract still returns exactly one role string; diagnostics do not duplicate
+    --! the fallback chain and therefore cannot silently disagree with live frames.
+    local function ResolveCellUnitRole(unit, wantDetails)
+        local details = wantDetails and {unit = unit} or nil
+        if not unit then
+            if details then
+                details.finalRole = "NONE"
+                details.source = "missing unit"
+            end
+            return "NONE", "missing unit", details
+        end
 
         local result = nil
         local roleSource = "none"
@@ -926,6 +278,9 @@ do
         -- on custom cores that already backported the new contract
         if orig_UnitGroupRolesAssigned then
             local r1, r2, r3 = orig_UnitGroupRolesAssigned(unit)
+            if details then
+                details.native1, details.native2, details.native3 = r1, r2, r3
+            end
             if type(r1) == "string" then
                 if r1 == "TANK" or r1 == "HEALER" or r1 == "DAMAGER" then
                     result = r1
@@ -952,11 +307,19 @@ do
         --! every roster update / relog. Pets and NPCs can't have roles:
         --! return "NONE" immediately (retail contract does the same).
         if not result then
-            if not UnitIsPlayer(unit) then
-                return "NONE"
+            local isPlayer = UnitIsPlayer(unit)
+            local inOurGroup = isPlayer and
+                (UnitIsUnit(unit, "player") or UnitInParty(unit) or UnitInRaid(unit))
+            if details then
+                details.isPlayer = not not isPlayer
+                details.inOurGroup = not not inOurGroup
             end
-            if not (UnitIsUnit(unit, "player") or UnitInParty(unit) or UnitInRaid(unit)) then
-                return "NONE"
+            if not isPlayer or not inOurGroup then
+                if details then
+                    details.finalRole = "NONE"
+                    details.source = not isPlayer and "non-player unit" or "unit outside group"
+                end
+                return "NONE", not isPlayer and "non-player unit" or "unit outside group", details
             end
         end
 
@@ -967,11 +330,13 @@ do
         --! runs for every unit button on every roster/role update. Blizzard's own
         --! FrameXML does exactly this: TargetFrame.lua:659-661
         --! (id = UnitInRaid("target"); GetRaidRosterInfo(id + 1)).
-        local raidIndex = not result and UnitInRaid(unit)
+        local raidIndex = (not result or details) and UnitInRaid(unit)
+        if details then details.raidIndex = raidIndex end
         if raidIndex then
             -- GetRaidRosterInfo returns: name, rank, subgroup, level, class, fileName, zone, online, isDead, role, isML
             local _, _, _, _, _, _, _, _, _, role = GetRaidRosterInfo(raidIndex + 1)
-            if role and role ~= "NONE" and role ~= "" then
+            if details then details.raidRosterRole = role end
+            if not result and role and role ~= "NONE" and role ~= "" then
                 roleSource = "GetRaidRosterInfo"
                 if role == "MAINTANK" or role == "TANK" then
                     result = "TANK"
@@ -989,37 +354,54 @@ do
         --! SOLO, painting a tank icon on any ungrouped character (tester:
         --! resto shaman solo in Dalaran showed a tank icon). Retail
         --! assignments only exist in groups; skip to spec-based detection.
-        if not result and (GetNumRaidMembers() > 0 or GetNumPartyMembers() > 0) then
-            if GetPartyAssignment("MAINTANK", unit) then
-                result = "TANK"
-                roleSource = "MainTank assignment"
-            elseif GetPartyAssignment("MAINASSIST", unit) then
-                result = "DAMAGER"
-                roleSource = "MainAssist assignment"
+        local grouped = GetNumRaidMembers() > 0 or GetNumPartyMembers() > 0
+        if grouped and (not result or details) then
+            local isMainTank = GetPartyAssignment("MAINTANK", unit)
+            local isMainAssist = GetPartyAssignment("MAINASSIST", unit)
+            if details then
+                details.mainTank = not not isMainTank
+                details.mainAssist = not not isMainAssist
+            end
+            if not result then
+                if isMainTank then
+                    result = "TANK"
+                    roleSource = "MainTank assignment"
+                elseif isMainAssist then
+                    result = "DAMAGER"
+                    roleSource = "MainAssist assignment"
+                end
             end
         end
 
         -- Fallback: talent-based detection via LibGroupInfo (specRole ONLY)
-        if not result then
-            if not _cachedLGI and LibStub then
-                _cachedLGI = LibStub:GetLibrary("LibGroupInfo", true)
-            end
-            local LibGroupInfo = _cachedLGI
-            if LibGroupInfo then
-                local guid = UnitGUID(unit)
-                if guid then
-                    local cachedInfo = LibGroupInfo:GetCachedInfo(guid)
+        if (not result or details) and not _cachedLGI and LibStub then
+            _cachedLGI = LibStub:GetLibrary("LibGroupInfo", true)
+        end
+        local LibGroupInfo = _cachedLGI
+        if LibGroupInfo and (not result or details) then
+            local guid = UnitGUID(unit)
+            if details then details.guid = guid end
+            if guid then
+                local cachedInfo = LibGroupInfo:GetCachedInfo(guid)
+                if details then
+                    details.lgiCached = not not cachedInfo
                     if cachedInfo then
-                        local specRole = cachedInfo.specRole
-                        if specRole and specRole ~= "NONE" then
-                            roleSource = "LibGroupInfo (spec-based)"
-                            if specRole == "TANK" then
-                                result = "TANK"
-                            elseif specRole == "HEALER" then
-                                result = "HEALER"
-                            elseif specRole == "DAMAGER" or specRole == "MELEE" or specRole == "RANGED" then
-                                result = "DAMAGER"
-                            end
+                        details.lgiSpecRole = cachedInfo.specRole
+                        details.lgiAssignedRole = cachedInfo.assignedRole
+                        details.lgiInspected = cachedInfo.inspected
+                        details.lgiSpecName = cachedInfo.specName
+                    end
+                end
+                if not result and cachedInfo then
+                    local specRole = cachedInfo.specRole
+                    if specRole and specRole ~= "NONE" then
+                        roleSource = "LibGroupInfo (spec-based)"
+                        if specRole == "TANK" then
+                            result = "TANK"
+                        elseif specRole == "HEALER" then
+                            result = "HEALER"
+                        elseif specRole == "DAMAGER" or specRole == "MELEE" or specRole == "RANGED" then
+                            result = "DAMAGER"
                         end
                     end
                 end
@@ -1033,13 +415,26 @@ do
             roleSource = "default fallback"
         end
 
-        -- Debug output
+        if details then
+            details.finalRole = result
+            details.source = roleSource
+        end
+        return result, roleSource, details
+    end
+
+    function Cell.UnitGroupRolesAssigned(unit)
+        local result, roleSource = ResolveCellUnitRole(unit, false)
         if roleDebugEnabled then
             print(string.format("[Role Debug] %s -> %s (source: %s)",
                 UnitName(unit) or unit, result, roleSource))
         end
-
         return result
+    end
+
+    --! WotLK fix: diagnostic-only role snapshot used by /cell debug roles.
+    function Cell.GetUnitRoleDebugInfo(unit)
+        local _, _, details = ResolveCellUnitRole(unit, true)
+        return details
     end
 
     -- Debug command toggle - create sFuncs table if needed
@@ -1052,22 +447,19 @@ do
     end
 end
 
--- UnitClassBase
--- Retail API: returns the class filename - ALWAYS UPPERCASE (e.g. "HUNTER").
--- WotLK: UnitClass returns (localizedName, fileName, classIndex).
---! Defined unconditionally with full normalization: on some 3.3.5 servers /
---! with some addons the second UnitClass return (or a pre-existing
---! UnitClassBase global) yields mixed case ("Hunter") or even the display
---! name with spaces ("Death Knight" -> upper -> "DEATH KNIGHT"). Cell stores
---! it in states.class and uses it as a table key (powerFilters["HUNTER"],
---! RAID_CLASS_COLORS, click-casting spell lists) - any non-canonical value
---! silently misses every lookup or hard-errors on nested indexing
---! (powerFilters["DEATH KNIGHT"][role] -> "attempt to index a nil value").
---! Normalization: uppercase + strip spaces, validate against the canonical
---! token set, and as a last resort reverse-map the localized class name
---! (LOCALIZED_CLASS_NAMES_MALE/FEMALE - handles ruRU and other locales).
+-- Cell.GetUnitClassToken
+--! WotLK fix: keep the native global UnitClassBase completely untouched.
+--! Blizzard_RaidUI consumes both of its return values (localized class name
+--! and class file token); replacing it with Cell's one-value normalizer makes
+--! RaidClassButton_OnEnter index RAID_SUBGROUP_LISTS[nil]. Cell consumers use
+--! this private helper instead.
+-- WotLK UnitClass returns (localizedName, fileName, classIndex).
+--! Normalize the class token because some 3.3.5 servers/addons yield mixed
+--! case ("Hunter") or a display name with spaces ("Death Knight"). Cell stores
+--! the result in states.class and uses it as a table key (powerFilters,
+--! RAID_CLASS_COLORS, click-casting spell lists).
 do
-    local orig_UnitClassBase = UnitClassBase
+    local nativeUnitClass = UnitClass
 
     local VALID_TOKENS = {
         WARRIOR = true, PALADIN = true, HUNTER = true, ROGUE = true,
@@ -1126,843 +518,101 @@ do
         return class
     end
 
-    function UnitClassBase(unit)
-        local localizedName, class
-        if orig_UnitClassBase then
-            class = orig_UnitClassBase(unit)
-            localizedName = UnitClass(unit)
-        else
-            localizedName, class = UnitClass(unit)
-        end
-        return NormalizeClassToken(class, localizedName)
+    function Cell.GetUnitClassToken(unit)
+        local localizedName, classFileName = nativeUnitClass(unit)
+        return NormalizeClassToken(classFileName, localizedName)
     end
 end
 
--- GetSpellBookItemName (doesn't exist in WotLK 3.3.5)
--- In WotLK, use GetSpellInfo(index, bookType) which returns name as first value
-if not GetSpellBookItemName then
-    function GetSpellBookItemName(index, bookType)
-        local spellName = GetSpellInfo(index, bookType)
-        return spellName
-    end
-end
-
--- Ambiguate (doesn't exist in WotLK 3.3.5)
--- In retail, Ambiguate formats player names by removing/keeping realm suffixes
--- In WotLK, we implement a simple version
-if not Ambiguate then
-    function Ambiguate(fullName, context)
-        if not fullName then return "" end
-
-        -- context values: "none", "short", "mail", "guild"
-        -- For WotLK, we'll implement basic realm removal
-        if context == "none" or context == "short" or context == "mail" then
-            -- Remove realm suffix (everything after the hyphen)
-            local name = string.match(fullName, "^([^%-]+)")
-            return name or fullName
-        end
-
-        -- Default: return full name with realm
-        return fullName
-    end
-end
+--! WotLK fix: GetSpellBookItemName and Ambiguate are not stock 3.3.5 APIs.
+--! Their only active consumers bind private native-compatible adapters; do not
+--! publish approximate global contracts that can redirect foreign addon paths.
 
 
 -------------------------------------------------
--- StatusBar smoothing helpers polyfill
+--! WotLK fix: smoothing methods are mixed into Cell-owned status bars from the
+--! active SmoothStatusBarMixin provider. Do not publish snap-only methods on the
+--! shared StatusBar metatable for Blizzard and foreign addons.
 -------------------------------------------------
-do
-    local sb = CreateFrame("StatusBar")
-    local mt = getmetatable(sb)
-
-    if mt and mt.__index then
-        if not mt.__index.SetSmoothedValue then
-            function mt.__index:SetSmoothedValue(value)
-                if self.SetValue then
-                    self:SetValue(value)
-                end
-            end
-        end
-
-        if not mt.__index.SetMinMaxSmoothedValue then
-            function mt.__index:SetMinMaxSmoothedValue(minVal, maxVal)
-                if self.SetMinMaxValues then
-                    self:SetMinMaxValues(minVal, maxVal)
-                end
-            end
-        end
-
-        if not mt.__index.ResetSmoothedValue then
-            function mt.__index:ResetSmoothedValue()
-                if self.GetValue and self.SetValue then
-                    self:SetValue(self:GetValue())
-                end
-            end
-        end
-    end
-end
 
 
+--! WotLK fix: retail SetFromAlpha/SetToAlpha emulation was removed from the
+--! shared Alpha metatable. Cell-owned absolute animations use the private
+--! adapter in Widgets/Animation.lua, while foreign addons retain native
+--! 3.3.5 SetChange(delta) behavior.
 
--- Alpha animation SetFromAlpha / SetToAlpha polyfill for 3.3.5a
--- WotLK Alpha animations only have SetChange(delta), and the delta is
--- applied RELATIVE to the region's current alpha - not absolute from->to.
--- E.g. a fade-in 0->1 on a region whose base alpha is 1 shows nothing
--- (1 + 1 clamps at 1). Instead of approximating with SetChange, drive the
--- region's alpha manually from the animation's OnUpdate using the stored
--- absolute from/to values:
---   * Animation:GetSmoothProgress() - respects SetSmoothing("IN"/"OUT"),
---     ignores start/end delays (exists on 3.3.5)
---   * Animation:GetRegionParent() - the region the AnimationGroup was
---     created on (exists on 3.3.5)
--- OnFinished snaps to the exact endpoint (the last OnUpdate can land
--- slightly short); for BOUNCE loops the reverse leg ends near progress 0,
--- so the closer endpoint is chosen.
-do
-    -- create a sample alpha animation to grab its metatable
-    local f  = CreateFrame("Frame")
-    local ag = f:CreateAnimationGroup()
-    local a  = ag:CreateAnimation("Alpha")
-    local mt = getmetatable(a)
+--! WotLK fix: Frame:HookScript is native on stock WoW 3.3.5a. Do not publish
+--! a manual GetScript/SetScript wrapper on the shared Frame metatable: it changes
+--! native hook ordering/error behavior and permanently retains the prior handler.
 
-    if mt and mt.__index and not mt.__index.SetFromAlpha then
-        -- weak tables to remember per-animation state
-        local alphaFrom = setmetatable({}, { __mode = "k" })
-        local alphaTo   = setmetatable({}, { __mode = "k" })
-        local installed = setmetatable({}, { __mode = "k" })
-
-        local function AlphaDriver_OnUpdate(self)
-            local from, to = alphaFrom[self], alphaTo[self]
-            if from == nil or to == nil then return end
-            local region = self.GetRegionParent and self:GetRegionParent()
-            if region and region.SetAlpha then
-                -- On reverse (BOUNCE) legs progress runs 1 -> 0, which
-                -- plays the fade backwards automatically.
-                region:SetAlpha(from + (to - from) * self:GetSmoothProgress())
-            end
-        end
-
-        local function AlphaDriver_OnFinished(self)
-            local from, to = alphaFrom[self], alphaTo[self]
-            if from == nil or to == nil then return end
-            local region = self.GetRegionParent and self:GetRegionParent()
-            if not (region and region.SetAlpha) then return end
-            local p = self:GetSmoothProgress() or 1
-            if p >= 0.5 then
-                region:SetAlpha(to)
-            else
-                region:SetAlpha(from)
-            end
-        end
-
-        local function InstallDriver(anim)
-            if installed[anim] then return end
-            installed[anim] = true
-            -- we drive alpha ourselves: neutralize any native delta
-            if anim.SetChange then
-                anim:SetChange(0)
-            end
-            -- chain existing handlers instead of clobbering them
-            local prevUpdate = anim:GetScript("OnUpdate")
-            if prevUpdate then
-                anim:SetScript("OnUpdate", function(self, ...)
-                    prevUpdate(self, ...)
-                    AlphaDriver_OnUpdate(self)
-                end)
-            else
-                anim:SetScript("OnUpdate", AlphaDriver_OnUpdate)
-            end
-            local prevFinished = anim:GetScript("OnFinished")
-            if prevFinished then
-                anim:SetScript("OnFinished", function(self, ...)
-                    AlphaDriver_OnFinished(self)
-                    prevFinished(self, ...)
-                end)
-            else
-                anim:SetScript("OnFinished", AlphaDriver_OnFinished)
-            end
-        end
-
-        function mt.__index:SetFromAlpha(value)
-            alphaFrom[self] = value
-            InstallDriver(self)
-        end
-
-        function mt.__index:SetToAlpha(value)
-            alphaTo[self] = value
-            InstallDriver(self)
-        end
-
-        -- retail parity getters
-        function mt.__index:GetFromAlpha()
-            return alphaFrom[self] or 0
-        end
-
-        function mt.__index:GetToAlpha()
-            return alphaTo[self] or 0
-        end
-    end
-end
-
--- HookScript polyfill for 3.3.5a
-
--- 1) Real hook for Frames (they have GetScript/SetScript)
-do
-    local f  = CreateFrame("Frame")
-    local mt = getmetatable(f)
-
-    if mt and mt.__index and not mt.__index.HookScript then
-        function mt.__index:HookScript(scriptType, handler)
-            if not self or type(scriptType) ~= "string" or type(handler) ~= "function" then
-                return
-            end
-
-            -- Only makes sense if this object actually supports scripts
-            local getScript = self.GetScript
-            local setScript = self.SetScript
-            if type(getScript) ~= "function" or type(setScript) ~= "function" then
-                return
-            end
-
-            local prev = getScript(self, scriptType)
-            if prev then
-                setScript(self, scriptType, function(...)
-                    prev(...)
-                    handler(...)
-                end)
-            else
-                setScript(self, scriptType, handler)
-            end
-        end
-    end
-end
-
--- 2) Delegate Texture:HookScript to its parent frame
-do
-    local tex = UIParent:CreateTexture()
-    local mt  = getmetatable(tex)
-
-    if mt and mt.__index and not mt.__index.HookScript then
-        function mt.__index:HookScript(scriptType, handler)
-            if type(scriptType) ~= "string" or type(handler) ~= "function" then
-                return
-            end
-
-            local parent = self:GetParent()
-            if parent then
-                -- If parent already has a proper HookScript (either native or from the frame polyfill), use it
-                if type(parent.HookScript) == "function" then
-                    parent:HookScript(scriptType, handler)
-                    return
-                end
-
-                -- If parent only has SetScript/GetScript, hook manually
-                local getScript = parent.GetScript
-                local setScript = parent.SetScript
-                if type(getScript) == "function" and type(setScript) == "function" then
-                    local prev = getScript(parent, scriptType)
-                    if prev then
-                        setScript(parent, scriptType, function(...)
-                            prev(...)
-                            handler(...)
-                        end)
-                    else
-                        setScript(parent, scriptType, handler)
-                    end
-                    return
-                end
-            end
-
-            -- Worst case: no scripts anywhere, just fire once so stuff like blink:Play() runs at least once
-            handler(self)
-        end
-    end
-end
+--! WotLK fix: Texture regions do not own frame scripts on 3.3.5. Do not add a
+--! shared Texture:HookScript method that redirects handlers to the parent frame
+--! (changing self/event ownership) or invokes them immediately when no parent
+--! script exists. Cell's texture show/hide animation is driven by its owning
+--! indicator frame instead.
 
 
+--! WotLK fix: do not replace any shared secure frame-ref API. Native 3.3.5
+--! exposes SecureHandlerSetFrameRef (without an underscore); Cell validates and
+--! owns every reference at its call sites, so changing a foreign/global contract
+--! merely to swallow invalid refs is both dead here and unsafe for coexistence.
+
+
+--! WotLK fix: 3.3.5 Cooldown owns only SetCooldown and SetReverse. Do not
+--! advertise retail swipe/edge/text methods as successful no-ops and do not wrap
+--! Frame:SetScript client-wide for the unsupported OnCooldownDone handler. Cell's
+--! cooldown instances own the small compatibility contract they actually use.
+
+
+--! WotLK fix: 3.3.5 has no StatusBar:SetReverseFill. Do not advertise a
+--! successful no-op on the shared StatusBar metatable. Cell's Wrath cooldown
+--! bars explicitly render their reverse-fill effect with private overlays.
 
 
 -------------------------------------------------
--- SecureHandler_SetFrameRef polyfill
--- Ignore invalid/nil reference frames instead of erroring.
--------------------------------------------------
-do
-    if type(SecureHandler_SetFrameRef) == "function" and not _G._CellOrigSecureHandlerSetFrameRef then
-        _G._CellOrigSecureHandlerSetFrameRef = SecureHandler_SetFrameRef
-
-        function SecureHandler_SetFrameRef(self, refKey, refFrame)
-            -- If refFrame is missing or not a frame-like table, just skip.
-            if not refFrame or type(refFrame) ~= "table" or type(refFrame.GetName) ~= "function" then
-                -- silently ignore bad refs
-                return
-            end
-
-            return _G._CellOrigSecureHandlerSetFrameRef(self, refKey, refFrame)
-        end
-    end
-end
-
-
--- Cooldown swipe API polyfill for 3.3.5a (no-op)
-do
-    local cd = CreateFrame("Cooldown")
-    local mt = getmetatable(cd)
-
-    if mt and mt.__index then
-        if not mt.__index.SetSwipeTexture then
-            function mt.__index:SetSwipeTexture(texture)
-                -- No swipe layer in WotLK, ignore
-            end
-        end
-
-        if not mt.__index.SetSwipeColor then
-            function mt.__index:SetSwipeColor(r, g, b, a)
-                -- Ignore
-            end
-        end
-
-        if not mt.__index.SetDrawEdge then
-            function mt.__index:SetDrawEdge(flag)
-                -- Ignore
-            end
-        end
-
-        if not mt.__index.SetDrawBling then
-            function mt.__index:SetDrawBling(flag)
-                -- Ignore
-            end
-        end
-
-        if not mt.__index.SetHideCountdownNumbers then
-            function mt.__index:SetHideCountdownNumbers(flag)
-                -- Just ignore; WotLK cooldown text is separate anyway
-            end
-        end
-    end
-end
-
-
--- Cooldown OnCooldownDone polyfill for 3.3.5a (ignore unsupported script type)
-do
-    local cd = CreateFrame("Cooldown")
-    local mt = getmetatable(cd)
-
-    if mt and mt.__index and not mt.__index._CellOnCooldownDoneShim then
-        local origSetScript = mt.__index.SetScript
-
-        function mt.__index:SetScript(scriptType, handler)
-            -- Retail-only script type; WotLK cooldowns don't support it
-            if scriptType == "OnCooldownDone" then
-                -- No native support in 3.3.5a; safely ignore
-                return
-            end
-
-            return origSetScript(self, scriptType, handler)
-        end
-
-        mt.__index._CellOnCooldownDoneShim = true
-    end
-end
-
-
--- StatusBar:SetReverseFill polyfill for 3.3.5a (no-op)
-do
-    local f = CreateFrame("StatusBar")
-    local mt = getmetatable(f)
-    if mt and mt.__index and not mt.__index.SetReverseFill then
-        function mt.__index:SetReverseFill(reverse)
-            -- 3.3.5 has no reverse fill; ignore request
-        end
-    end
-end
-
-
--------------------------------------------------
--- FlipBook / ParentKey / ChildKey polyfills
+--! WotLK fix: Cell's FlipBook consumer uses a private SetTexCoord driver. Do
+--! not publish ParentKey/ChildKey/FlipBook methods as successful shared no-ops.
 -------------------------------------------------
 
--- Textures: SetParentKey is Retail-only
-do
-    local tex = UIParent:CreateTexture()
-    local mt  = getmetatable(tex)
-
-    if mt and mt.__index and not mt.__index.SetParentKey then
-        function mt.__index:SetParentKey(key)
-            -- Retail uses this to bind the texture to a named child
-            -- of a flipbook animation. WotLK has no concept of this,
-            -- so just ignore it.
-        end
-    end
-end
-
--- Animations: ChildKey + FlipBook-specific methods
-do
-    local f  = CreateFrame("Frame")
-    local ag = f:CreateAnimationGroup()
-    local a  = ag:CreateAnimation("Alpha")
-    local mt = getmetatable(a)
-
-    if mt and mt.__index then
-        if not mt.__index.SetChildKey then
-            function mt.__index:SetChildKey(key)
-                -- No child-key routing in WotLK. Ignore.
-            end
-        end
-
-        if not mt.__index.SetFlipBookFrames then
-            function mt.__index:SetFlipBookFrames(frames)
-                -- No flipbook system; ignore.
-            end
-        end
-
-        if not mt.__index.SetFlipBookFrameWidth then
-            function mt.__index:SetFlipBookFrameWidth(width)
-                -- Ignore.
-            end
-        end
-
-        if not mt.__index.SetFlipBookFrameHeight then
-            function mt.__index:SetFlipBookFrameHeight(height)
-                -- Ignore.
-            end
-        end
-
-        if not mt.__index.SetFlipBookRows then
-            function mt.__index:SetFlipBookRows(rows)
-                -- Ignore; 3.3.5 doesn't know rows/columns.
-            end
-        end
-
-        if not mt.__index.SetFlipBookColumns then
-            function mt.__index:SetFlipBookColumns(columns)
-                -- Ignore.
-            end
-        end
-    end
-end
+--! WotLK fix: do not wrap the shared AnimationGroup:CreateAnimation method
+--! for FlipBook. Cell's only FlipBook consumer was replaced with a private
+--! SetTexCoord driver, so foreign addons keep the native 3.3.5 contract.
 
 
--- AnimationGroup: map "FlipBook" → "Alpha" so CreateAnimation doesn't explode
-do
-    local f  = CreateFrame("Frame")
-    local ag = f:CreateAnimationGroup()
-    local mt = getmetatable(ag)
+--! WotLK fix: 3.3.5 has no mask textures. Do not emulate CreateMaskTexture or
+--! AddMaskTexture on shared widget metatables: fake mask objects cannot crop a
+--! texture and changed the API seen by Blizzard and every addon. Cell's Wrath
+--! consumers use explicit overlays, edge textures, or unmasked animation paths.
 
-    if mt and mt.__index and type(mt.__index.CreateAnimation) == "function"
-       and not mt.__index._CellFlipBookShim
-    then
-        local origCreateAnimation = mt.__index.CreateAnimation
+--! WotLK fix: true parent-alpha isolation is unavailable on 3.3.5. Do not
+--! publish SetIgnoreParentAlpha/IsIgnoringParentAlpha state-only methods on
+--! shared widget metatables. Wrath call sites now omit the ineffective request;
+--! foreign addons can detect that the capability is genuinely unsupported.
 
-        function mt.__index:CreateAnimation(animType, ...)
-            if animType == "FlipBook" then
-                -- 3.3.5 only knows Alpha/Translation/Scale/Rotation.
-                animType = "Alpha"
-            end
-            return origCreateAnimation(self, animType, ...)
-        end
+--! WotLK fix: do not replace a foreign Cooldown:SetSwipeColor implementation.
+--! Cell normalizes alpha only at its non-Wrath call sites and uses the native
+--! 3.3.5 cooldown spiral on Wrath.
 
-        mt.__index._CellFlipBookShim = true
-    end
-end
+--! WotLK fix: the duplicate Polyfills timer engine was removed. Cell owns one
+--! private timer namespace from ClassicAPI/Util/C_Timer.lua and never replaces
+--! a standalone !!!ClassicAPI addon's global C_Timer implementation.
+--! WotLK fix: локал `local C_Timer = Cell.C_Timer` остался от удалённого движка
+--! и никем в файле не читался - единственный вызов таймера ниже полностью
+--! квалифицирован (Cell.C_Timer.NewTicker). В Lua 5.1 у главного чанка всего 200
+--! регистров, и файл занимал один впустую.
 
+--! WotLK fix: active Cell spell-link consumers bind native GetSpellLink
+--! directly. Do not create a partial global C_Spell namespace for foreign addons.
 
--- CreateMaskTexture polyfill for 3.3.5a (Frame / StatusBar / Cooldown / Texture)
--- IMPORTANT: some environments (e.g. !!!ClassicAPI) pre-define CreateMaskTexture
--- as a void stub that returns nil. Callers like StatusIcon.lua immediately index
--- the result ("attempt to index local 'mask' (a nil value)"), so a simple
--- "if not defined" guard is not enough - we must also verify the existing
--- implementation actually returns an object, and override it if it does not.
-do
-    local function makeMask(self)
-        -- 3.3.5a has no real mask textures; fake it with a hidden Frame (empty)
-        -- We use a Frame instead of Texture to avoid the "white box" issue if SetTexture is called.
-        -- Textures cannot parent frames, so fall back to their parent frame.
-        local parent = self
-        if not self.CreateTexture then -- not a Frame (e.g. Texture region)
-            parent = self:GetParent() or UIParent
-        end
-        local mask = CreateFrame("Frame", nil, parent)
-        mask:SetAllPoints(self)
-        mask:EnableMouse(false) -- Ensure it doesn't block clicks
-
-        -- Add dummy methods that Actions.lua expects on a Texture/Mask
-        mask.SetTexture = function() end
-        mask.SetRotated = function() end
-
-        return mask
-    end
-
-    local function addCreateMaskTexture(obj)
-        local mt = getmetatable(obj)
-        if not mt or type(mt.__index) ~= "table" then
-            return
-        end
-
-        local existing = mt.__index.CreateMaskTexture
-        if existing then
-            -- Probe it: if it returns a usable object, leave it alone.
-            local ok, result = pcall(existing, obj)
-            if ok and result ~= nil then
-                return
-            end
-        end
-
-        mt.__index.CreateMaskTexture = makeMask
-    end
-
-    -- Patch the types we care about
-    addCreateMaskTexture(CreateFrame("Frame"))
-    addCreateMaskTexture(CreateFrame("StatusBar"))
-    addCreateMaskTexture(CreateFrame("Cooldown"))
-    addCreateMaskTexture(UIParent:CreateTexture())
-end
-
-
-
--- Texture:AddMaskTexture polyfill for 3.3.5a (no-op)
-do
-    local t = UIParent:CreateTexture()
-    local mt = getmetatable(t)
-    if mt and mt.__index and not mt.__index.AddMaskTexture then
-        function mt.__index:AddMaskTexture(mask)
-            -- Ignore; real masking doesn't exist on 3.3.5
-        end
-    end
-end
-
--- SetIgnoreParentAlpha / IsIgnoringParentAlpha polyfill for 3.3.5a
--- (added in 7.x; called from Built-in.lua, StatusIcon.lua, PartyFrame.lua, etc.)
--- True parent-alpha isolation is impossible on this client, so we store the
--- flag and no-op — this prevents "attempt to call method ... (a nil value)".
--- SetResizeBounds (added in 9.x) maps to SetMinResize/SetMaxResize.
-do
-    local function addWidgetShims(obj)
-        local mt = getmetatable(obj)
-        if not mt or type(mt.__index) ~= "table" then return end
-        local index = mt.__index
-
-        if not index.SetIgnoreParentAlpha then
-            function index:SetIgnoreParentAlpha(ignore)
-                self._ignoreParentAlpha = ignore and true or false
-            end
-            function index:IsIgnoringParentAlpha()
-                return self._ignoreParentAlpha or false
-            end
-        end
-
-        if index.SetMinResize and not index.SetResizeBounds then
-            function index:SetResizeBounds(minW, minH, maxW, maxH)
-                self:SetMinResize(minW, minH)
-                if maxW and maxH then
-                    self:SetMaxResize(maxW, maxH)
-                end
-            end
-        end
-    end
-
-    local holder = CreateFrame("Frame")
-    addWidgetShims(holder)                       -- Frame (and inheriting: Button, StatusBar share via CreateFrame types below)
-    addWidgetShims(CreateFrame("Button"))
-    addWidgetShims(CreateFrame("StatusBar"))
-    addWidgetShims(CreateFrame("Cooldown"))
-    addWidgetShims(holder:CreateTexture())       -- Texture
-    addWidgetShims(holder:CreateFontString())    -- FontString
-end
-
--- Cooldown:SetSwipeColor strictness shim
--- Retail contract: SetSwipeColor(r, g, b[, a]) - alpha is OPTIONAL.
--- !!!ClassicAPI's backport (WidgetAPI.lua) requires all 4 args and throws
--- "Usage: ...:SetSwipeColor(r, g, b, a)" when alpha is nil, which breaks
--- Cell's 3-arg calls (Base.lua, TargetedSpells.lua). Wrap the existing
--- implementation to default alpha to 1, matching retail behavior.
-do
-    local cd = CreateFrame("Cooldown")
-    local mt = getmetatable(cd)
-    if mt and type(mt.__index) == "table" then
-        local index = mt.__index
-        local orig = index.SetSwipeColor
-        if orig and not index._CellSwipeColorShim then
-            index.SetSwipeColor = function(self, r, g, b, a)
-                return orig(self, r, g, b, a or 1)
-            end
-            index._CellSwipeColorShim = true
-        end
-    end
-end
-
--- C_Timer - completely replace with working implementation for WotLK 3.3.5
--- WotLK has a broken C_Timer that causes errors in C_TimerAugment.lua
--- Pooled implementation (modeled after !!!ClassicAPI): ONE driver frame for all
--- timers, timer objects are recycled, NewTicker honors the iterations argument.
-do
-    local tinsert, tremove = table.insert, table.remove
-    local geterrorhandler = geterrorhandler
-
-    local Ticker = {}
-    Ticker.__index = Ticker
-
-    function Ticker:Cancel()
-        self._cancelled = true
-    end
-
-    function Ticker:IsCancelled()
-        return self._cancelled
-    end
-
-    local active = {}   -- array of running timers
-    local pool = {}     -- recycled timer objects
-    local driver = CreateFrame("Frame", "CellTimerDriver")
-    driver:Hide()
-
-    local function onError(err)
-        local handler = geterrorhandler and geterrorhandler()
-        if handler then handler(err) end
-    end
-
-    driver:SetScript("OnUpdate", function(self, elapsed)
-        local n = #active
-        for i = n, 1, -1 do
-            local timer = active[i]
-            if timer._cancelled then
-                tremove(active, i)
-                -- Only recycle timers whose handle never escaped to callers
-                -- (C_Timer.After). NewTimer/NewTicker handles are kept by
-                -- calling code; reusing them would let a stale :Cancel()
-                -- kill an unrelated timer.
-                if timer._poolable then
-                    tinsert(pool, timer)
-                end
-            else
-                timer._elapsed = timer._elapsed + elapsed
-                if timer._elapsed >= timer._duration then
-                    if timer._iterations then
-                        -- ticker: fire, then either continue or finish.
-                        -- Carry the overshoot into the next interval so the
-                        -- average period stays exact at any framerate (same
-                        -- trick as ElvUI's AceTimer backport); clamp after
-                        -- lag spikes to avoid rapid-fire catch-up.
-                        timer._elapsed = timer._elapsed - timer._duration
-                        if timer._elapsed >= timer._duration then
-                            timer._elapsed = 0
-                        end
-                        local ok, err = pcall(timer._callback, timer)
-                        if not ok then onError(err) end
-                        if timer._iterations > 0 then
-                            timer._iterations = timer._iterations - 1
-                            if timer._iterations == 0 then
-                                timer._cancelled = true
-                            end
-                        end
-                    else
-                        -- one-shot timer
-                        timer._cancelled = true
-                        local ok, err = pcall(timer._callback, timer)
-                        if not ok then onError(err) end
-                    end
-                end
-            end
-        end
-        if #active == 0 then
-            self:Hide()
-        end
-    end)
-
-    -- iterations: nil = one-shot, -1 = infinite ticker, N>0 = N-shot ticker
-    -- poolable: true only when the handle does not escape (C_Timer.After)
-    local function CreateTimer(duration, callback, iterations, poolable)
-        if type(duration) ~= "number" then
-            duration = 0.01
-        end
-        if type(callback) ~= "function" then
-            callback = function() end
-        end
-
-        local timer
-        if poolable then
-            timer = tremove(pool)
-        end
-        if not timer then
-            timer = setmetatable({}, Ticker)
-        end
-        timer._duration = duration
-        timer._callback = callback
-        timer._iterations = iterations
-        timer._elapsed = 0
-        timer._cancelled = false
-        timer._poolable = poolable or false
-
-        tinsert(active, timer)
-        driver:Show()
-        return timer
-    end
-
-    --! WotLK fix (coexistence): was a full overwrite of the global C_Timer, which
-    --! wiped the timer table another addon (or our own embedded ClassicAPI) already
-    --! owned together with every ticker registered in it. This pooled version stays
-    --! ours: it is kept as Cell.C_Timer, becomes the private CellClassicAPI copy
-    --! (it is the fixed one - honours the iterations argument and recycles handles),
-    --! and the global only receives the keys nobody defined.
-    local C_Timer = {
-        After = function(durationOrSelf, callbackOrDuration, maybeCallback)
-            -- Handle both C_Timer.After(duration, callback) and C_Timer:After(duration, callback)
-            local duration, callback
-            if type(durationOrSelf) == "table" and durationOrSelf == C_Timer then
-                duration = callbackOrDuration
-                callback = maybeCallback
-            else
-                duration = durationOrSelf
-                callback = callbackOrDuration
-            end
-            CreateTimer(duration, callback, nil, true)
-        end,
-
-        NewTimer = function(durationOrSelf, callbackOrDuration, maybeCallback)
-            local duration, callback
-            if type(durationOrSelf) == "table" and durationOrSelf == C_Timer then
-                duration = callbackOrDuration
-                callback = maybeCallback
-            else
-                duration = durationOrSelf
-                callback = callbackOrDuration
-            end
-            return CreateTimer(duration, callback, nil)
-        end,
-
-        NewTicker = function(durationOrSelf, callbackOrDuration, iterationsOrCallback, maybeIterations)
-            local duration, callback, iterations
-            if type(durationOrSelf) == "table" and durationOrSelf == C_Timer then
-                duration = callbackOrDuration
-                callback = iterationsOrCallback
-                iterations = maybeIterations
-            else
-                duration = durationOrSelf
-                callback = callbackOrDuration
-                iterations = iterationsOrCallback
-            end
-            if type(iterations) ~= "number" or iterations <= 0 then
-                iterations = -1 -- infinite
-            end
-            return CreateTimer(duration, callback, iterations)
-        end
-    }
-
-    --! Single owner: two pooled implementations meant two OnUpdate driver frames, and
-    --! which one served Cell depended on load order. Reuse the library table (nothing in
-    --! Cell calls C_Timer with colon syntax, so its plain-dot signatures are enough) and
-    --! add only the keys it lacks.
-    if ( CAPI and type(CAPI.C_Timer) == "table" ) then
-        C_Timer = FillMissing(CAPI.C_Timer, C_Timer)
-    end
-
-    Cell.C_Timer = C_Timer
-    CoexistMerge("C_Timer", C_Timer)
-end
-
--- C_Spell
-if not C_Spell then
-    C_Spell = {}
-end
-
--- Retail: C_Spell.GetSpellInfo(spellID) → table { name, iconID, ... }
-if not C_Spell.GetSpellInfo then
-    function C_Spell.GetSpellInfo(spellId)
-        local name, _, icon = GetSpellInfo(spellId)
-        if not name then
-            return nil
-        end
-        return {
-            name   = name,
-            iconID = icon,
-        }
-    end
-end
-
-if not C_Spell.GetSpellTexture then
-    function C_Spell.GetSpellTexture(spellId)
-        local _, _, icon = GetSpellInfo(spellId)
-        return icon
-    end
-end
-
-if not C_Spell.IsSpellInRange then
-    function C_Spell.IsSpellInRange(spellId, unit)
-        -- Retail uses spellID directly; 3.3.5 IsSpellInRange wants name
-        local name = GetSpellInfo(spellId)
-        if not name then return nil end
-        --! WotLK fix: retail contract returns a BOOLEAN, native 3.3.5
-        --! returns 1/0/nil. 0 (out of range) is truthy in Lua - callers
-        --! using the result as a boolean (Utils.lua UnitInSpellRange, the
-        --! range-check fade) treated out-of-range units as in-range.
-        local result = IsSpellInRange(name, unit)
-        if result == nil then return nil end
-        return result == 1
-    end
-end
-
-if not C_Spell.GetSpellCooldown then
-    function C_Spell.GetSpellCooldown(spellId)
-        --! WotLK fix: retail C_Spell.GetSpellCooldown returns a TABLE
-        --! (SpellCooldownInfo: startTime, duration, isEnabled, modRate),
-        --! not a tuple. Utils.lua F.GetSpellCooldown takes the C_Spell
-        --! branch and does `info.startTime` - with the old tuple return
-        --! that indexed a number and hard-errored (broke F.IsSpellReady).
-        local start, duration, enabled = GetSpellCooldown(spellId)
-        if start == nil then return nil end
-        return {
-            startTime = start,
-            duration  = duration,
-            isEnabled = enabled,
-            modRate   = 1,
-        }
-    end
-end
-
-if not C_Spell.GetSpellLink then
-    function C_Spell.GetSpellLink(spellId)
-        return GetSpellLink(spellId)
-    end
-end
-
-if not C_Spell.GetSpellCharges then
-    function C_Spell.GetSpellCharges(spellId)
-        -- 3.3.5 has no real charges → emulate “no charges” behavior
-        return nil
-    end
-end
-
--- C_Item
-if not C_Item then
-    C_Item = {}
-    function C_Item.IsItemInRange(itemId, unit)
-        --! WotLK fix: retail contract returns a BOOLEAN, native 3.3.5
-        --! returns 1/0/nil - and 0 (out of range) is truthy in Lua, so
-        --! boolean callers (Utils.lua hostile range check) treated
-        --! out-of-range units as in-range.
-        local result = IsItemInRange(itemId, unit)
-        if result == nil then return nil end
-        return result == 1
-    end
-    function C_Item.IsUsableItem(itemId)
-        return IsUsableItem(itemId)
-    end
-elseif not C_Item.IsUsableItem then
-    function C_Item.IsUsableItem(itemId)
-        return IsUsableItem(itemId)
-    end
-end
+--! WotLK fix: Cell's range hot path binds native IsItemInRange directly and has
+--! no active C_Item consumer. Do not publish a partial retail C_Item namespace
+--! solely for unknown foreign addons; standalone !!!ClassicAPI keeps its owner.
 
 -------------------------------------------------
 -- NOTE: the global UnitAura override was removed on purpose.
 -- Overriding globals affects every addon and adds overhead to a hot path.
--- Cell code goes through Cell.UnitBuff/Cell.UnitDebuff/C_UnitAuras below,
--- which guard their parameters locally.
+-- Cell code goes through private Cell.UnitBuff/Cell.UnitDebuff adapters below.
 -------------------------------------------------
-local function safeUnitAura(unit, indexOrName, filter)
-    if not unit or unit == "" or indexOrName == nil then
-        return
-    end
-    return UnitAura(unit, indexOrName, filter)
-end
 
 -------------------------------------------------
 -- UnitBuff/UnitDebuff wrappers for Cell (NOT global overrides)
@@ -1970,314 +620,62 @@ end
 -- Retail returns: name, icon, count, debuffType, duration, expirationTime, source, isStealable, nameplateShowPersonal, spellId, ...
 -- We create Cell-specific wrappers instead of modifying the global API
 -------------------------------------------------
--- Store original functions for Cell to use
-_G._CellOriginalUnitBuff = _G._CellOriginalUnitBuff or UnitBuff
-_G._CellOriginalUnitDebuff = _G._CellOriginalUnitDebuff or UnitDebuff
+--! WotLK fix: keep native aura references private. Publishing backup
+--! UnitBuff/UnitDebuff references needlessly exposes and permanently roots
+--! compatibility state in the shared addon namespace.
+local nativeUnitBuff = UnitBuff
+local nativeUnitDebuff = UnitDebuff
 
 -- Create Cell namespace wrappers (don't override global)
 if Cell then
     Cell.UnitBuff = function(unit, index, filter)
-        local name, rank, icon, count, debuffType, duration, expirationTime, caster, isStealable, shouldConsolidate, spellId = _G._CellOriginalUnitBuff(unit, index, filter)
+        local name, rank, icon, count, debuffType, duration, expirationTime, caster, isStealable, shouldConsolidate, spellId = nativeUnitBuff(unit, index, filter)
         if not name then return nil end
         -- Return in retail format: name, icon, count, debuffType, duration, expirationTime, source, isStealable, nameplateShowPersonal, spellId
         return name, icon, count, debuffType, duration, expirationTime, caster, isStealable, nil, spellId, nil, nil, nil, nil, nil, nil
     end
 
     Cell.UnitDebuff = function(unit, index, filter)
-        local name, rank, icon, count, debuffType, duration, expirationTime, caster, isStealable, shouldConsolidate, spellId = _G._CellOriginalUnitDebuff(unit, index, filter)
+        local name, rank, icon, count, debuffType, duration, expirationTime, caster, isStealable, shouldConsolidate, spellId = nativeUnitDebuff(unit, index, filter)
         if not name then return nil end
         return name, icon, count, debuffType, duration, expirationTime, caster, isStealable, nil, spellId, nil, nil, nil, nil, nil, nil
     end
 end
 
--- C_UnitAuras
-if not C_UnitAuras then
-    C_UnitAuras = {}
-    function C_UnitAuras.GetAuraDataBySlot(unit, slot)
-        -- This is a simplified mapping. Real C_UnitAuras returns a table.
-        local name, rank, icon, count, debuffType, duration, expirationTime, unitCaster, isStealable, shouldConsolidate, spellId = safeUnitAura(unit, slot)
-        if name then
-            return {
-                name = name,
-                icon = icon,
-                count = count,
-                debuffType = debuffType,
-                duration = duration,
-                expirationTime = expirationTime,
-                sourceUnit = unitCaster,
-                isStealable = isStealable,
-                spellId = spellId,
-                points = {} -- Placeholder
-            }
-        end
-        return nil
-    end
+--! WotLK fix: no active Cell path consumes C_UnitAuras. Do not publish a partial
+--! retail namespace, allocate aura tables/slot lists, or advertise unsupported
+--! private-aura anchors as successful no-ops.
 
-    function C_UnitAuras.GetAuraDataBySpellName(unit, spellName, filter)
-        --! WotLK fix: 3.3.5 can look an aura up by NAME natively -
-        --! UnitBuff/UnitDebuff("unit", "name") - so the 40-slot scan (up to 40
-        --! UnitAura calls per lookup, 18 lookups per UNIT_AURA in BuffTracker)
-        --! is pure waste. Note UnitAura(unit, "name", ...) takes RANK as the
-        --! 3rd argument, not a filter - hence picking the function by filter.
-        if not unit or unit == "" or not spellName then return nil end
-        local get = (filter and strfind(filter, "HARMFUL")) and UnitDebuff or UnitBuff
-        local name, rank, icon, count, debuffType, duration, expirationTime,
-              unitCaster, isStealable, shouldConsolidate, spellId = get(unit, spellName)
-        if not name then return nil end
-        return {
-            name = name,
-            icon = icon,
-            count = count,
-            debuffType = debuffType,
-            duration = duration,
-            expirationTime = expirationTime,
-            sourceUnit = unitCaster,
-            isStealable = isStealable,
-            spellId = spellId,
-            points = {} -- Placeholder
-        }
-    end
+--! WotLK fix: F.GetInstanceName reads native legacy zone APIs directly. The
+--! embedded broad C_Map provider is inactive, so do not publish a duplicate
+--! fallback that exposes the current global map selection as the player's zone.
 
-    function C_UnitAuras.GetAuraSlots(unit, filter, maxSlots)
-        -- WotLK polyfill: Iterate through auras and return slot table
-        local slots = {}
-        local index = 1
-        local max = maxSlots or 40 -- Default max auras
+--! WotLK fix: addon-message prefix registration is implicit on the pre-4.1
+--! protocol. AceComm owns a private compatibility result and Cell macros call
+--! native SendAddonMessage, so do not publish C_ChatInfo or a registration global.
 
-        while index <= max do
-            local name = safeUnitAura(unit, index, filter)
-            if name then
-                table.insert(slots, index)
-                index = index + 1
-            else
-                break
-            end
-        end
+--! WotLK fix: Cell has no Battle.net game-data consumer on 3.3.5. Do not
+--! advertise a successful global BNSendGameData no-op to foreign libraries.
 
-        return slots
-    end
+--! WotLK fix: Cell uses native addon-management APIs directly. Do not publish
+--! a C_AddOns namespace or infer enable state from loaded state for foreign addons.
 
-    -- Stub functions for private aura anchors (retail feature not in WotLK)
-    function C_UnitAuras.AddPrivateAuraAnchor(...)
-        -- No-op in WotLK
-        return nil
-    end
+--! WotLK fix: LoadAddOn is native on stock 3.3.5a. Never replace a missing or
+--! corrupted global with a fake success surface: foreign addons must retain the
+--! client's real load-on-demand contract and failure reasons.
 
-    function C_UnitAuras.RemovePrivateAuraAnchor(...)
-        -- No-op in WotLK
-        return nil
-    end
-end
+--! WotLK fix: do not publish an empty C_TooltipInfo data contract. Cell uses
+--! native GameTooltip methods and no active code consumes retail tooltip data.
 
--- C_Map
-if not C_Map then
-    C_Map = {}
-end
-
-if not C_Map.GetBestMapForUnit then
-    function C_Map.GetBestMapForUnit(unit)
-        -- Very basic fallback - try GetCurrentMapAreaID if it exists
-        if GetCurrentMapAreaID then
-            return GetCurrentMapAreaID()
-        end
-        -- Otherwise return a safe default
-        return 0
-    end
-end
-
--- C_ChatInfo
-if not C_ChatInfo then
-    C_ChatInfo = {}
-    function C_ChatInfo.SendAddonMessage(prefix, text, channel, target)
-        -- Avoid hard Lua errors if callers pass bad params (seen on some addons)
-        if type(channel) ~= "string" or channel == "" then return end
-        if channel == "WHISPER" and (not target or target == "") then return end
-        if prefix == nil then prefix = "" end
-        if text == nil then text = "" end
-        SendAddonMessage(prefix, text, channel, target)
-    end
-    function C_ChatInfo.RegisterAddonMessagePrefix(prefix)
-        -- In WotLK 3.3.5, addon message prefixes are automatically registered
-        -- when first used with SendAddonMessage, so this is a no-op
-        return true
-    end
-    function C_ChatInfo.SendAddonMessageLogged(prefix, text, channel, target)
-        -- In WotLK 3.3.5, SendAddonMessageLogged doesn't exist
-        -- Just use the regular SendAddonMessage
-        return C_ChatInfo.SendAddonMessage(prefix, text, channel, target)
-    end
-end
-
--- RegisterAddonMessagePrefix polyfill (global function for WotLK)
-if not RegisterAddonMessagePrefix then
-    function RegisterAddonMessagePrefix(prefix)
-        -- In WotLK 3.3.5, addon message prefixes are automatically registered
-        -- when first used with SendAddonMessage, so this is a no-op
-        return true
-    end
-end
-
--- BNSendGameData polyfill (Battle.net doesn't exist in WotLK 3.3.5)
-if not BNSendGameData then
-    function BNSendGameData(gameAccountID, addonPrefix, addonMessage)
-        -- Battle.net game data messaging doesn't exist in WotLK
-        -- This is a no-op to prevent errors from libraries that try to hook it
-        return
-    end
-end
-
-C_AddOns = C_AddOns or {}
-
--- Mirror the modern C_AddOns API to the classic global functions so other addons
--- can safely hook them (e.g. Details! calls hooksecurefunc on LoadAddOn).
-if not C_AddOns.GetAddOnMetadata then
-    function C_AddOns.GetAddOnMetadata(addon, field)
-        if GetAddOnMetadata then
-            return GetAddOnMetadata(addon, field)
-        end
-    end
-end
-
-if not C_AddOns.IsAddOnLoaded then
-    function C_AddOns.IsAddOnLoaded(addon)
-        if IsAddOnLoaded then
-            return IsAddOnLoaded(addon)
-        end
-        return false
-    end
-end
-
-if not C_AddOns.LoadAddOn then
-    function C_AddOns.LoadAddOn(addon)
-        if LoadAddOn then
-            return LoadAddOn(addon)
-        end
-        return false, "MISSING"
-    end
-end
-
-if not C_AddOns.GetNumAddOns then
-    function C_AddOns.GetNumAddOns()
-        if GetNumAddOns then
-            return GetNumAddOns()
-        end
-        return 0
-    end
-end
-
-if not C_AddOns.GetAddOnInfo then
-    function C_AddOns.GetAddOnInfo(addonIndexOrName)
-        if GetAddOnInfo then
-            return GetAddOnInfo(addonIndexOrName)
-        end
-    end
-end
-
-if not C_AddOns.GetAddOnDependencies then
-    function C_AddOns.GetAddOnDependencies(addonName)
-        if GetAddOnDependencies then
-            local deps = {GetAddOnDependencies(addonName)}
-            if #deps > 0 then
-                return deps
-            end
-        end
-        return {}
-    end
-end
-
-if not C_AddOns.GetAddOnEnableState then
-    function C_AddOns.GetAddOnEnableState(character, addonName)
-        if GetAddOnEnableState then
-            return GetAddOnEnableState(character, addonName)
-        end
-        local enabled = C_AddOns.IsAddOnLoaded and C_AddOns.IsAddOnLoaded(addonName)
-        return enabled and 1 or 0
-    end
-end
-
-if not C_AddOns.EnableAddOn then
-    function C_AddOns.EnableAddOn(addonName, characterName)
-        if EnableAddOn then
-            return EnableAddOn(addonName, characterName)
-        end
-        return false
-    end
-end
-
-if not C_AddOns.DisableAddOn then
-    function C_AddOns.DisableAddOn(addonName, characterName)
-        if DisableAddOn then
-            return DisableAddOn(addonName, characterName)
-        end
-        return false
-    end
-end
-
--- LoadAddOn polyfill (ensure it exists as a global function for other addons to hook)
-if not LoadAddOn then
-    -- WotLK has LoadAddOn, but it might not be available on all custom servers
-    -- Create a basic implementation using the native API if it exists
-    function LoadAddOn(addonName)
-        -- Try to use native LoadAddOn if it exists (shouldn't happen, but safe)
-        if _G._CellOriginalLoadAddOn then
-            return _G._CellOriginalLoadAddOn(addonName)
-        end
-        -- Fallback: return false (addon not loaded)
-        return false
-    end
-elseif type(LoadAddOn) ~= "function" then
-    -- LoadAddOn exists but isn't a function (corrupted?), fix it
-    local old = LoadAddOn
-    function LoadAddOn(addonName)
-        return false
-    end
-end
-
--- C_PvP
-if not C_PvP then
-    C_PvP = {}
-    function C_PvP.IsBattleground()
-        local inInstance, instanceType = IsInInstance()
-        return instanceType == "pvp"
-    end
-end
-
--- C_TooltipInfo
-if not C_TooltipInfo then
-    C_TooltipInfo = {}
-    function C_TooltipInfo.GetSpellByID(spellId)
-        -- Placeholder, returns empty table or minimal info
-        return { lines = {} }
-    end
-end
-
--- GameTooltip:SetSpellByID polyfill for WotLK 3.3.5a
-do
-    local tooltip = CreateFrame("GameTooltip")
-    local mt = getmetatable(tooltip)
-    -- Only define when missing: force-overwriting a shared widget metatable
-    -- breaks other addons/servers that provide their own implementation.
-    if mt and mt.__index and not mt.__index.SetSpellByID then
-        mt.__index.SetSpellByID = function(self, spellID)
-            if not spellID then return end
-            -- Try to get link
-            local link = GetSpellLink(spellID)
-            if link then
-                self:SetHyperlink(link)
-            else
-                -- Fallback to SetSpell if link usually fails (though link is better)
-                -- Or just clear if no link
-                self:ClearLines()
-            end
-        end
-    end
-end
+--! WotLK fix: GameTooltip:SetSpellByID is native on stock 3.3.5a. Do not create
+--! a probe tooltip or add a second shared widget owner for this native method.
 
 -- SOUNDKIT
 --! WotLK fix: MERGE the defaults instead of the old all-or-nothing `if not SOUNDKIT`.
 --! The standalone !!!ClassicAPI addon (Util/SoundKit.lua) creates SOUNDKIT before Cell
---! loads, but ships only 12 keys and has NO U_CHAT_SCROLL_BUTTON - it spells that
---! sound as GS_LOGIN_CHANGE_REALM_OK. With the old guard Cell skipped its own table
+--! loads, but ships its own smaller set (10 keys in the copy checked here) with NO
+--! U_CHAT_SCROLL_BUTTON - it spells that sound as GS_LOGIN_CHANGE_REALM_OK, and the
+--! exact set differs per client. With the old guard Cell skipped its own table
 --! entirely, so every button/checkbox PostClick called PlaySound(nil) and threw
 --! "Usage: PlaySound(\"sound\")", which aborted the whole click chain: option
 --! dropdowns appeared to accept a choice but never applied it.
@@ -2300,261 +698,64 @@ do
     end
 end
 
--- C_ClassTalents (Retail talent system, not in WotLK)
-if not C_ClassTalents then
-    C_ClassTalents = {}
-    function C_ClassTalents.GetActiveConfigID()
-        -- WotLK uses GetActiveTalentGroup() which returns 1 or 2
-        return GetActiveTalentGroup()
-    end
-end
+--! WotLK fix: Cell has no active C_ClassTalents, C_Traits, or
+--! C_SpecializationInfo consumer. Do not publish partial modern talent/spec
+--! namespaces that can make foreign addons choose unsupported retail paths.
 
--- C_Traits (Retail talent tree system, not in WotLK)
-if not C_Traits then
-    C_Traits = {}
-    function C_Traits.GetNodeInfo(configID, nodeID)
-        -- WotLK doesn't have trait nodes
-        -- Return nil to indicate node info not available
-        return nil
-    end
-end
+--! WotLK fix: the unsupported TargetCounter engine is already disabled on
+--! Wrath and has no active C_NamePlate consumer. Do not publish an empty modern
+--! namespace or allocate a fresh table on every foreign GetNamePlates call.
 
--- C_SpecializationInfo (MoP+ spec system, not in WotLK)
-if not C_SpecializationInfo then
-    C_SpecializationInfo = {}
-    function C_SpecializationInfo.GetSpecialization()
-        -- WotLK doesn't have specializations (added in MoP)
-        -- Return nil to indicate no spec system
-        return nil
-    end
-    function C_SpecializationInfo.GetSpecializationInfo(specIndex)
-        -- Return nil to indicate no spec info available
-        return nil
-    end
-end
+--! WotLK fix: SecureHandlerStateTemplate already owns native SetFrameRef.
+--! Do not replace the shared secure-handler method table; Cell call sites pass
+--! valid Cell-owned frames and foreign addons must retain Blizzard's contract.
 
--- C_NamePlate (Modern nameplate API, not in WotLK)
-if not C_NamePlate then
-    C_NamePlate = {}
-    -- marker: this is a stub (3.3.5 has no nameplate unit API); consumers
-    -- like the TargetCounter indicator use it to skip pointless polling
-    C_NamePlate._cellPolyfill = true
-    function C_NamePlate.GetNamePlates(issecure)
-        -- WotLK has no nameplate API
-        -- Return empty table
-        return {}
-    end
-end
 
--------------------------------------------------
--- SecureHandlerStateTemplate:SetFrameRef polyfill
--- Ignore bad / nil reference frames instead of erroring.
--------------------------------------------------
+
+
+--! WotLK fix: RegisterAttributeDriver is a later shared API with a different
+--! attribute-name contract. Cell uses private adapters that strip "state-"
+--! before delegating to native 3.3.5 RegisterStateDriver/UnregisterStateDriver;
+--! never publish or replace the foreign-facing globals.
 do
-    local ok, test = pcall(CreateFrame, "Frame", nil, UIParent, "SecureHandlerStateTemplate")
-    if ok and test then
-        local mt = getmetatable(test)
-        if mt and mt.__index
-           and type(mt.__index.SetFrameRef) == "function"
-           and not mt.__index._CellSetFrameRefShim
-        then
-            local origSetFrameRef = mt.__index.SetFrameRef
-
-            function mt.__index:SetFrameRef(refKey, refFrame)
-                -- If the reference is missing or obviously not a frame, just ignore.
-                if not refFrame or type(refFrame) ~= "table" or type(refFrame.GetName) ~= "function" then
-                    return
-                end
-                return origSetFrameRef(self, refKey, refFrame)
-            end
-
-            mt.__index._CellSetFrameRefShim = true
-        end
-    end
-end
-
-
-
-
--- Wrath: alias RegisterAttributeDriver/UnregisterAttributeDriver to StateDriver versions
---! WotLK fix: contracts differ by a prefix. In 4.0+,
---! RegisterAttributeDriver(frame, attribute, cond) takes the FULL attribute
---! name ("state-visibility"), while 3.3.5 RegisterStateDriver(frame, state,
---! cond) PREPENDS "state-" itself. The old passthrough turned
---! "state-visibility" into attribute "state-state-visibility", which the
---! 3.3.5 SecureStateDriverManager has no special handling for - the pet
---! frame visibility driver silently did nothing. Strip the "state-" prefix
---! before delegating.
-if not RegisterAttributeDriver and RegisterStateDriver then
     local function ToStateName(attribute)
         if type(attribute) == "string" then
-            local stripped = string.match(attribute, "^state%-(.+)$")
-            if stripped then
-                return stripped
-            end
+            return string.match(attribute, "^state%-(.+)$") or attribute
         end
         return attribute
     end
 
-    function RegisterAttributeDriver(frame, attribute, state)
+    function Cell.RegisterAttributeDriver(frame, attribute, state)
         return RegisterStateDriver(frame, ToStateName(attribute), state)
     end
 
-    if not UnregisterAttributeDriver and UnregisterStateDriver then
-        function UnregisterAttributeDriver(frame, attribute)
-            return UnregisterStateDriver(frame, ToStateName(attribute))
-        end
-    end
-elseif not UnregisterAttributeDriver and UnregisterStateDriver then
-    function UnregisterAttributeDriver(frame, attribute)
-        return UnregisterStateDriver(frame, attribute)
+    function Cell.UnregisterAttributeDriver(frame, attribute)
+        return UnregisterStateDriver(frame, ToStateName(attribute))
     end
 end
 
--- GetNumClasses (doesn't exist in WotLK 3.3.5a)
-if not GetNumClasses then
-    function GetNumClasses()
-        -- WotLK has 10 classes: Warrior, Paladin, Hunter, Rogue, Priest, Death Knight, Shaman, Mage, Warlock, Druid
-        return 10
-    end
-end
+--! WotLK fix: F.IterateClasses uses the private sortedClasses list built through
+--! Cell.GetClassInfoTuple. Do not publish a hard-coded GetNumClasses global
+--! whose value can disagree with custom cores or foreign compatibility owners.
 
--- Font constants (don't exist in WotLK 3.3.5a)
-if not UNIT_NAME_FONT_CHINESE then
-    -- Use standard WotLK font as fallback
-    UNIT_NAME_FONT_CHINESE = "Fonts\\FRIZQT__.TTF"
-end
+--! WotLK fix: the options UI binds its Chinese-font fallback privately. Do not
+--! publish modern UNIT_NAME_FONT_* globals solely for Cell-owned font objects.
 
--- User requested fonts
-if not UNIT_NAME_FONT_KOREAN then
-    UNIT_NAME_FONT_KOREAN = "Fonts\\FRIZQT__.TTF"
-end
-if not UNIT_NAME_FONT_ROMAN then
-    UNIT_NAME_FONT_ROMAN = "Fonts\\FRIZQT__.TTF"
-end
+--! WotLK fix: Cell uses F.GetClassColor and private color-string helpers. Do not
+--! publish a global GetClassColor contract solely for foreign addons.
 
--- GetClassColor (doesn't exist in WotLK 3.3.5a)
-if not GetClassColor then
-    function GetClassColor(classFile)
-        local color = RAID_CLASS_COLORS and RAID_CLASS_COLORS[classFile]
-        if color then
-            return color.r, color.g, color.b, string.format("%02x%02x%02x%02x", 255, color.r * 255, color.g * 255, color.b * 255)
-        end
-        -- Fallback to white if class not found
-        return 1, 1, 1, "ffffffff"
-    end
-end
+--! WotLK fix: keep RAID_CLASS_COLORS entries as native plain tables. Cell and
+--! its active backdrop adapter read r/g/b directly instead of publishing
+--! GetRGB/GetRGBA methods through shared Blizzard objects.
 
--- Add GetRGB and GetRGBA methods to RAID_CLASS_COLORS entries in WotLK
--- In WotLK, these are simple tables without methods
-if RAID_CLASS_COLORS then
-    for class, color in pairs(RAID_CLASS_COLORS) do
-        if type(color) == "table" and not color.GetRGB then
-            function color:GetRGB()
-                return self.r, self.g, self.b
-            end
-            function color:GetRGBA()
-                return self.r, self.g, self.b, self.a or 1
-            end
-        end
-    end
-end
+--! WotLK fix: no active Cell code consumes the retail PLAYER_DIFFICULTY6
+--! string. Do not publish a Mythic-era global on a 3.3.5 client.
 
--- Difficulty constants (don't exist in WotLK 3.3.5a)
--- Mythic difficulty was added in later expansions
-if not PLAYER_DIFFICULTY6 then
-    PLAYER_DIFFICULTY6 = "Mythic"
-end
+--! WotLK fix: F.GetInstanceName reads native legacy zone APIs directly. Do not
+--! publish partial MapUtil or Enum.UIMapType retail contracts to foreign addons.
 
--- MapUtil (doesn't exist in WotLK 3.3.5a)
-if not MapUtil then
-    MapUtil = {}
-    function MapUtil.GetMapParentInfo(mapID, mapType, topMost)
-        -- WotLK doesn't have the modern map system
-        -- Return basic zone info using legacy API
-        local zoneName = GetZoneText()
-        if zoneName and zoneName ~= "" then
-            return {
-                name = zoneName,
-                mapID = mapID or 0
-            }
-        end
-        return nil
-    end
-end
-
--- Enum (doesn't exist in WotLK 3.3.5a)
---! WotLK fix (coexistence): Enum may already belong to the standalone
---! !!!ClassicAPI; every sub-table below is filled only when missing, so keep a
---! reference to whichever table won instead of replacing it.
-if type(Enum) ~= "table" then
-    Enum = {}
-end
-Cell.Enum = Enum
-
--- UIMapType enum (retail feature, doesn't exist in WotLK)
-if not Enum.UIMapType then
-    Enum.UIMapType = {
-        Cosmic = 0,
-        World = 1,
-        Continent = 2,
-        Zone = 3,
-        Dungeon = 4,
-        Micro = 5,
-        Orphan = 6
-    }
-end
-
--- UnitIsGroupLeader (doesn't exist in WotLK 3.3.5a)
---! WotLK fix: the old implementation returned false for every raid member
---! except the player ("can't directly check in WotLK") - leader/assistant
---! icons never showed on other units' frames. In fact 3.3.5 exposes this
---! via GetRaidRosterInfo: rank 2 = leader, rank 1 = assistant. UnitInRaid
---! returns the 0-based raid index in 3.3.5, so GetRaidRosterInfo takes
---! index+1.
-local function GetUnitRaidRank(unit)
-    local raidIndex = UnitInRaid(unit)
-    if raidIndex then
-        local _, rank = GetRaidRosterInfo(raidIndex + 1)
-        return rank
-    end
-    return nil
-end
-
-if not UnitIsGroupLeader then
-    function UnitIsGroupLeader(unit)
-        if UnitInRaid(unit) then
-            local rank = GetUnitRaidRank(unit)
-            return rank == 2
-        end
-        --! WotLK fix: do NOT call UnitIsPartyLeader(unit) here - on some
-        --! cores it is server-validated and spams the ERR_NOT_IN_YOUR_PARTY
-        --! system message ("raidpetN is not in your party.") for every
-        --! non-party unit (pets!) on each roster update. Use purely
-        --! client-side checks instead: IsPartyLeader() for the player,
-        --! GetPartyLeaderIndex() + UnitIsUnit for party members.
-        if UnitIsUnit(unit, "player") then
-            return IsPartyLeader() and true or false
-        end
-        local leaderIndex = GetPartyLeaderIndex and GetPartyLeaderIndex()
-        if leaderIndex and leaderIndex > 0 then
-            return UnitIsUnit(unit, "party" .. leaderIndex) and true or false
-        end
-        return false
-    end
-end
-
--- UnitIsGroupAssistant (doesn't exist in WotLK 3.3.5a)
-if not UnitIsGroupAssistant then
-    function UnitIsGroupAssistant(unit)
-        -- Only applies to raids in WotLK
-        if UnitInRaid(unit) then
-            local rank = GetUnitRaidRank(unit)
-            return rank == 1
-        end
-        return false
-    end
-end
+--! WotLK fix: Cell leader/assistant ownership is private above. The shared
+--! ClassicAPI group globals remain available to their own foreign consumers.
 
 --! WotLK fix: removed the global PlaySound wrapper that used to live here.
 --! It replaced the native C function with a Lua closure + pcall for the WHOLE
@@ -2562,484 +763,153 @@ end
 --! channel argument and swallowed errors. Cell only ever passes valid 3.3.5
 --! string names from its own SOUNDKIT table above, so no wrapper is needed.
 
--- GetNormalizedRealmName
---! WotLK fix: this was defined unconditionally and shadowed the correct
---! ClassicAPI version (Libs/ClassicAPI/Util/API.lua:122, loaded earlier), which
---! also strips dashes. Worse, `return string.gsub(...)` leaks gsub's second
---! return (the replacement count) into every caller. Guard + parenthesise.
-if not GetNormalizedRealmName then
-    function GetNormalizedRealmName()
-        local realm = GetRealmName()
-        if not realm then return "" end
-        return (string.gsub(realm, "[-%s]", ""))
+--! WotLK fix: GetNormalizedRealmName is not native on 3.3.5a. Keep Cell's
+--! dash/space normalization private instead of publishing a shared global;
+--! standalone !!!ClassicAPI and custom cores retain their own owners untouched.
+function Cell.GetNormalizedRealmName()
+    local realm = GetRealmName()
+    if not realm then return "" end
+    return (string.gsub(realm, "[-%s]", ""))
+end
+
+-- IsEncounterInProgress (doesn't exist in stock WotLK 3.3.5a)
+--! WotLK fix: preserve a real custom-core/foreign implementation when present,
+--! but keep stock fallback semantics private to Cell. Publishing a global that
+--! always returns false makes other addons believe encounter state is supported.
+do
+    local nativeIsEncounterInProgress = IsEncounterInProgress
+    function Cell.IsEncounterInProgress()
+        if type(nativeIsEncounterInProgress) == "function" then
+            return not not nativeIsEncounterInProgress()
+        end
+        return false
     end
 end
 
--- IsEncounterInProgress (doesn't exist in WotLK 3.3.5a)
--- Always override to ensure it exists
-function IsEncounterInProgress()
-    -- WotLK doesn't have encounter tracking API
-    -- Return false to allow UI updates (no encounter in progress)
-    return false
-end
-
--- Group API polyfills
-if not IsInRaid then
-    function IsInRaid()
+--! WotLK fix: modern group helpers do not exist in stock 3.3.5a. Keep Cell's
+--! contract private and derive it only from verified native roster APIs. Do not
+--! depend on or replace standalone !!!ClassicAPI/custom-core global owners.
+do
+    function Cell.IsInRaid()
         return GetNumRaidMembers() > 0
     end
-end
 
-if not IsInGroup then
-    function IsInGroup()
+    function Cell.IsInGroup()
         return GetNumRaidMembers() > 0 or GetNumPartyMembers() > 0
     end
-end
 
--- GetNumGroupMembers polyfill (doesn't exist in WotLK 3.3.5a)
-if not GetNumGroupMembers then
-    function GetNumGroupMembers()
-        if GetNumRaidMembers() > 0 then
-            return GetNumRaidMembers()
-        elseif GetNumPartyMembers() > 0 then
-            return GetNumPartyMembers() + 1 -- +1 for player
-        else
-            --! Retail contract: 0 when not in a group (was 1, which would
-            --! break any `GetNumGroupMembers() == 0` solo check)
-            return 0
+    function Cell.GetNumGroupMembers()
+        local raidMembers = GetNumRaidMembers()
+        if raidMembers > 0 then
+            return raidMembers
         end
+        local partyMembers = GetNumPartyMembers()
+        return partyMembers > 0 and partyMembers + 1 or 0
     end
-end
 
--------------------------------------------------
--- GROUP_ROSTER_UPDATE Event Compatibility Layer
--- In WotLK 3.3.5a, GROUP_ROSTER_UPDATE doesn't exist.
--- Instead, we have PARTY_MEMBERS_CHANGED and RAID_ROSTER_UPDATE.
---
--- This global proxy provides a fallback for frames that may not
--- have been updated yet.
--------------------------------------------------
-do
-    -- Track frames that have registered GROUP_ROSTER_UPDATE handlers
-    local groupRosterFrames = setmetatable({}, {__mode = "k"}) -- weak keys
-    local function ProxyDebug(...)
-        if _G.Cell and _G.Cell.funcs and _G.Cell.funcs.Debug then
-            _G.Cell.funcs.Debug(...)
-        else
-            -- Fallback to plain print for early-load cases
-            -- print("|cFF33CC33[Cell RosterProxy]|r", ...)
+    local function GetUnitRaidRank(unit)
+        local raidIndex = UnitInRaid(unit)
+        if raidIndex then
+            local _, rank = GetRaidRosterInfo(raidIndex + 1)
+            return rank
         end
     end
 
-    -- The proxy frame that listens to actual WotLK events
-    local proxyFrame = CreateFrame("Frame", "CellGroupRosterProxy")
-    proxyFrame:RegisterEvent("PARTY_MEMBERS_CHANGED")
-    proxyFrame:RegisterEvent("RAID_ROSTER_UPDATE")
-    proxyFrame:RegisterEvent("PARTY_MEMBER_ENABLE")
-    proxyFrame:RegisterEvent("PARTY_MEMBER_DISABLE")
+    function Cell.UnitIsGroupLeader(unit)
+        if Cell.IsInRaid() then
+            return GetUnitRaidRank(unit) == 2
+        end
+        if GetNumPartyMembers() <= 0 then return false end
+        if UnitIsUnit(unit, "player") then
+            return IsPartyLeader("player") and true or false
+        end
+        local leaderIndex = GetPartyLeaderIndex()
+        return leaderIndex > 0 and UnitIsUnit(unit, "party"..leaderIndex) or false
+    end
 
-    -- Coalescing dispatch: bursts of roster events (e.g. party->raid convert,
-    -- mass joins) fire many events in one frame. Instead of dropping events
-    -- inside a debounce window (which can leave frames with a stale roster),
-    -- we coalesce them into a single dispatch on the NEXT frame via OnUpdate.
-    -- No events are ever lost; at most one dispatch happens per frame.
-    local dispatchPending = false
+    function Cell.UnitIsGroupAssistant(unit)
+        return GetUnitRaidRank(unit) == 1
+    end
 
-    local function DispatchRosterUpdate()
-        local count = 0
-        for _ in pairs(groupRosterFrames) do count = count + 1 end
-        ProxyDebug("RosterProxy dispatching to", tostring(count), "frames")
+    local everyoneAssistant, assistantTicker
+    function Cell.SetEveryoneIsAssistant(enable)
+        local numMembers = GetNumRaidMembers()
+        if numMembers <= 0 then return end
 
-        -- Fire GROUP_ROSTER_UPDATE on all registered frames
-        for frame in pairs(groupRosterFrames) do
-            if frame then
-                local handler = frame:GetScript("OnEvent")
-                if handler then
-                    -- Use pcall to prevent errors from breaking the loop
-                    pcall(handler, frame, "GROUP_ROSTER_UPDATE")
+        if assistantTicker then
+            assistantTicker:Cancel()
+            assistantTicker = nil
+        end
+
+        everyoneAssistant = not not enable
+        assistantTicker = Cell.C_Timer.NewTicker(0.2, function(ticker)
+            local unit = "raid"..ticker.Index
+            if not UnitIsUnit(unit, "player") then
+                local _, rank = GetRaidRosterInfo(ticker.Index)
+                if everyoneAssistant and rank == 0 then
+                    PromoteToAssistant(unit)
+                elseif not everyoneAssistant and rank == 1 then
+                    DemoteAssistant(unit)
                 end
             end
-        end
+            ticker.Index = ticker.Index + 1
+        end, numMembers)
+        assistantTicker.Index = 1
     end
 
-    proxyFrame:Hide()
-    proxyFrame:SetScript("OnUpdate", function(self)
-        self:Hide()
-        if dispatchPending then
-            dispatchPending = false
-            DispatchRosterUpdate()
-        end
-    end)
-
-    proxyFrame:SetScript("OnEvent", function(self, event)
-        if not dispatchPending then
-            dispatchPending = true
-            self:Show() -- run OnUpdate next frame
-        end
-    end)
-    
-    -- Provide a way to register frames for the proxy
-    function Cell_RegisterForGroupRosterProxy(frame)
-        if frame then
-            groupRosterFrames[frame] = true
-            ProxyDebug("Registered frame for roster proxy:", frame:GetName() or tostring(frame))
-        end
-    end
-    
-    -- Provide a way to unregister frames from the proxy
-    function Cell_UnregisterFromGroupRosterProxy(frame)
-        if frame then
-            groupRosterFrames[frame] = nil
-            ProxyDebug("Unregistered frame from roster proxy:", frame:GetName() or tostring(frame))
-        end
-    end
-    
-    -- Provide a way to manually trigger GROUP_ROSTER_UPDATE (for init)
-    function Cell_FireGroupRosterUpdate()
-        for frame in pairs(groupRosterFrames) do
-            if frame then
-                local handler = frame:GetScript("OnEvent")
-                if handler then
-                    pcall(handler, frame, "GROUP_ROSTER_UPDATE")
-                end
-            end
-        end
-    end
-
-    -- Automatically register frames that call RegisterEvent("GROUP_ROSTER_UPDATE")
-    do
-        local sample = CreateFrame("Frame")
-        local mt = sample and getmetatable(sample)
-        mt = mt and mt.__index
-        if mt and mt.RegisterEvent and not mt._CellGroupRosterHook then
-            hooksecurefunc(mt, "RegisterEvent", function(self, event)
-                if event == "GROUP_ROSTER_UPDATE" then
-                    Cell_RegisterForGroupRosterProxy(self)
-                end
-            end)
-
-            hooksecurefunc(mt, "UnregisterEvent", function(self, event)
-                if event == "GROUP_ROSTER_UPDATE" then
-                    Cell_UnregisterFromGroupRosterProxy(self)
-                end
-            end)
-
-            hooksecurefunc(mt, "UnregisterAllEvents", function(self)
-                Cell_UnregisterFromGroupRosterProxy(self)
-            end)
-
-            mt._CellGroupRosterHook = true
-        end
+    function Cell.IsEveryoneAssistant()
+        return everyoneAssistant
     end
 end
 
 -------------------------------------------------
--- Heal prediction: FIX ClassicAPI's broken LibHealComm-4.0 bridge
---
--- !!! ClassicAPI loads BEFORE this file (Cell.toc line 15 vs 17) and already
--- defines UnitGetIncomingHeals + the UNIT_HEAL_PREDICTION EventHandler event,
--- so any "if not UnitGetIncomingHeals" polyfill here is dead code. Its
--- implementation (Libs/ClassicAPI/Util/HealPrediction.lua) is broken:
---   1) UnitGetIncomingHeals only counts the PLAYER's CASTED_HEALS
---      (other healers and all HoTs are invisible -> wrong/varying amounts)
---   2) the event only fires when the player is the caster
---      (heals from others repaint only on a coincidental UNIT_HEALTH
---       -> the "random" delay)
---   3) HealComm_ModifierChanged is defined but never registered
---
--- Fix (reference: ElvUI 3.3.5 oUF_HealComm4 - direct lib consumption, no
--- extra layers): override the API function and register full HealComm
--- callbacks that dispatch through ClassicAPI's own Private.EventHandler -
--- the exact pipeline Cell buttons already receive events from (WidgetAPI
--- posthooks frame:RegisterEvent into EventHandler.RegisterEvent).
+--! WotLK fix: the global GROUP_ROSTER_UPDATE compatibility proxy was removed.
+--! Core_Wrath.lua owns PARTY_MEMBERS_CHANGED / RAID_ROSTER_UPDATE and emits one
+--! private Cell "GroupRosterUpdate" callback. Cell no longer hooks shared Frame
+--! metatables or synthesizes a non-native event for itself or other addons.
 -------------------------------------------------
-do
-    local _, Private = ...
-    local EventHandler = Private and Private.EventHandler
-
-    -- Libs load before this file, but keep the lookup lazy and safe
-    local HealComm
-    local function GetHealComm()
-        if HealComm == nil then
-            HealComm = (LibStub and LibStub:GetLibrary("LibHealComm-4.0", true)) or false
-        end
-        return HealComm or nil
-    end
-
-    -- Native-like semantics (and oUF_HealComm4 parity): ALL heal types from
-    -- ALL casters, modifier applied. 3s lookahead caps far-future HoT ticks
-    -- (VuhDo's INC_*_SECS default) so amounts match what VuhDo displays.
-    function UnitGetIncomingHeals(unit, healer)
-        local comm = GetHealComm()
-        if not comm then return 0 end
-
-        local guid = UnitGUID(unit)
-        if not guid then return 0 end
-
-        local healerGUID
-        if healer then
-            healerGUID = UnitGUID(healer)
-            if not healerGUID then return 0 end
-        end
-
-        local amount = comm:GetHealAmount(guid, comm.ALL_HEALS, GetTime() + 3, healerGUID)
-        if not amount or amount == 0 then return 0 end
-        return math.floor(amount * (comm:GetHealModifier(guid) or 1))
-    end
-
-    -- Same unit-token walk ClassicAPI uses, but fire for EVERY matching token
-    -- (no break): a unit can be visible as raid5 AND target/focus (Spotlight)
-    local UNIT_INDEX = {"player", "pet", "target", "focus"}
-    for i = 1, 4 do
-        UNIT_INDEX[#UNIT_INDEX + 1] = "party" .. i
-        UNIT_INDEX[#UNIT_INDEX + 1] = "partypet" .. i
-    end
-    for i = 1, 40 do
-        UNIT_INDEX[#UNIT_INDEX + 1] = "raid" .. i
-        UNIT_INDEX[#UNIT_INDEX + 1] = "raidpet" .. i
-    end
-
-    local function FireForGUIDs(...)
-        if not EventHandler then return end
-        local total = select("#", ...)
-        if total == 0 then return end
-
-        local raid = GetNumRaidMembers()
-        local limit = 4 + (raid > 0 and 8 + raid * 2 or GetNumPartyMembers() * 2)
-
-        for t = 1, limit do
-            local unit = UNIT_INDEX[t]
-            local unitGUID = unit and UnitGUID(unit)
-            if unitGUID then
-                for i = 1, total do
-                    if unitGUID == select(i, ...) then
-                        EventHandler.Fire(nil, "UNIT_HEAL_PREDICTION", unit)
-                        break
-                    end
-                end
-            end
-        end
-    end
-
-    -- Active-heal set: while a GUID has pending heals we repaint on a short
-    -- clock, because HoT ticks slide through the 3s window WITHOUT any
-    -- HealComm callback; entries drop themselves when the lib reports nothing
-    local activeHeals = {}
-
-    local function OnHealEvent(event, casterGUID, spellID, healType, endTime, ...)
-        for i = 1, select("#", ...) do
-            activeHeals[select(i, ...)] = true
-        end
-        FireForGUIDs(...)
-    end
-
-    local function OnHealModified(event, guid)
-        FireForGUIDs(guid)
-    end
-
-    --! CRITICAL: LibHealComm loads AFTER Polyfills.lua (Cell.toc: Polyfills
-    --! at line 17, Libs\LoadLibs_Classic.xml at line 21), so registering
-    --! callbacks at file load silently does nothing - that's why the predict
-    --! vanished entirely. ClassicAPI solves this with a lazy OnRegister hook
-    --! on the event definition: it runs when the FIRST Cell button registers
-    --! UNIT_HEAL_PREDICTION, long after all libs are loaded. We redefine that
-    --! same hook (single path - replaces ClassicAPI's player-only handler,
-    --! never runs alongside it) with full callbacks.
-    local owner = "Cell_HealPrediction"
-    local registered = false
-
-    local function UNIT_HEAL_PREDICTION_EH(trigger)
-        local comm = GetHealComm()
-        if trigger == "OnRegister" then
-            if comm and not registered then
-                registered = true
-                comm.RegisterCallback(owner, "HealComm_HealStarted", OnHealEvent)
-                comm.RegisterCallback(owner, "HealComm_HealUpdated", OnHealEvent)
-                comm.RegisterCallback(owner, "HealComm_HealDelayed", OnHealEvent)
-                comm.RegisterCallback(owner, "HealComm_HealStopped", OnHealEvent)
-                comm.RegisterCallback(owner, "HealComm_ModifierChanged", OnHealModified)
-                comm.RegisterCallback(owner, "HealComm_GUIDDisappeared", OnHealModified)
-            end
-        else
-            if comm and registered then
-                registered = false
-                comm.UnregisterCallback(owner, "HealComm_HealStarted")
-                comm.UnregisterCallback(owner, "HealComm_HealUpdated")
-                comm.UnregisterCallback(owner, "HealComm_HealDelayed")
-                comm.UnregisterCallback(owner, "HealComm_HealStopped")
-                comm.UnregisterCallback(owner, "HealComm_ModifierChanged")
-                comm.UnregisterCallback(owner, "HealComm_GUIDDisappeared")
-            end
-        end
-    end
-
-    if EventHandler and EventHandler.Define then
-        -- Overwrites ClassicAPI's broken player-only hook for this event;
-        -- "Event" is already defined by ClassicAPI, no need to redefine it
-        EventHandler.Define("OnRegister", "UNIT_HEAL_PREDICTION", UNIT_HEAL_PREDICTION_EH)
-        EventHandler.Define("OnUnregister", "UNIT_HEAL_PREDICTION", UNIT_HEAL_PREDICTION_EH)
-    end
-
-    -- Repaint clock: only runs while something is in activeHeals
-    local clock = CreateFrame("Frame", "CellHealPredictionClock")
-    local elapsed = 0
-    clock:SetScript("OnUpdate", function(self, delta)
-        elapsed = elapsed + delta
-        if elapsed < 0.25 then return end
-        elapsed = 0
-        if not next(activeHeals) then return end
-        local lib = GetHealComm()
-        for guid in pairs(activeHeals) do
-            if not lib or not lib:GetHealAmount(guid, lib.ALL_HEALS) then
-                activeHeals[guid] = nil
-            end
-            FireForGUIDs(guid)
-        end
-    end)
-
-    -- Absorbs: ClassicAPI stubs UnitGetTotalAbsorbs to always return 0;
-    -- back it with AbsorbsMonitor-1.0 when present (Cell ships the lib)
-    do
-        local absorbComm
-        local function GetAbsorbComm()
-            if absorbComm == nil then
-                absorbComm = (LibStub and LibStub:GetLibrary("AbsorbsMonitor-1.0", true)) or false
-            end
-            return absorbComm or nil
-        end
-
-        function UnitGetTotalAbsorbs(unit)
-            local lib = GetAbsorbComm()
-            if not lib then return 0 end
-            local guid = unit and UnitGUID(unit)
-            if not guid then return 0 end
-            return lib.Unit_Total(guid) or 0
-        end
-    end
-end
-
--- LocalizedClassList
-if not LocalizedClassList then
-    function LocalizedClassList(gender)
-        local t = {}
-        for i = 1, GetNumClasses() do
-            local name, tag, id = Cell.GetClassInfoTuple(i)
-            if tag then
-                t[tag] = name
-            end
-        end
-        return t
-    end
-end
-
--- Mixin
-if not Mixin then
-    function Mixin(object, ...)
-        for i = 1, select("#", ...) do
-            local mixin = select(i, ...)
-            for k, v in pairs(mixin) do
-                object[k] = v
-            end
-        end
-        return object
-    end
-end
 
 -------------------------------------------------
--- Frame/Widget SetEnabled polyfill for WotLK
--- In retail, frames/widgets have SetEnabled(bool) to enable/disable
--- In WotLK, use Enable() and Disable() methods instead
+--! WotLK fix: Cell heal prediction now consumes LibHealComm privately inside
+--! UnitButton_Cata_Wrath.lua. The former global UnitGetIncomingHeals override,
+--! synthetic UNIT_HEAL_PREDICTION bridge, and repaint clock were removed.
+--! Shield absorbs are likewise tracked privately in that unit-button module;
+--! Cell no longer publishes UnitGetTotalAbsorbs or runs a second monitor.
 -------------------------------------------------
-do
-    local function addSetEnabled(obj)
-        if not obj then return end
-        local mt = getmetatable(obj)
-        if mt and mt.__index and not mt.__index.SetEnabled then
-            function mt.__index:SetEnabled(enabled)
-                if enabled then
-                    if self.Enable then
-                        self:Enable()
-                    end
-                else
-                    if self.Disable then
-                        self:Disable()
-                    end
-                end
-            end
-        end
-    end
 
-    -- Add to various frame types (wrapped in pcall for safety)
-    local function safeAdd(frameType)
-        local ok, frame = pcall(CreateFrame, frameType)
-        if ok and frame then
-            addSetEnabled(frame)
-        end
-    end
+--! WotLK fix: Cell uses native FillLocalizedClassList and its private
+--! Cell.GetClassInfoTuple adapter. Do not publish an unused LocalizedClassList
+--! global solely for foreign retail-style callers.
 
-    safeAdd("Frame")
-    safeAdd("Slider")
-    safeAdd("Button")
-    safeAdd("CheckButton")
-end
+--! WotLK fix: Cell no longer needs global Mixin/CreateFromMixins helpers. Its
+--! smoothing consumers copy Cell.SmoothStatusBarMixin privately; any standalone
+--! !!!ClassicAPI/custom-core owner remains completely untouched.
 
 -------------------------------------------------
--- SimpleHTML GetContentHeight polyfill for WotLK
--- In retail, SimpleHTML frames have GetContentHeight() to get rendered height
--- In WotLK, we approximate this with GetHeight()
+--! WotLK fix: Button/EditBox/Slider SetEnabled adapters are owned by WidgetAPI.
+--! Do not probe the generic Frame metatable here: plain Frames have no enable
+--! contract on 3.3.5.
+--! 2026-08-08: the previous note claimed "inherited Button behavior already
+--! covers CheckButton". That was false. Each 3.3.5 widget type owns a separate
+--! __index table, and WidgetAPI's manifest loop only instantiates the classes
+--! listed in its UIObject table (Frame/Texture/FontString/Button/EditBox/Slider),
+--! so the CheckButton metatable was never processed. Without an external
+--! !!!ClassicAPI every options pane aborted on its first checkbox (P0-B2 run,
+--! session 51). Cell.CreateCheckButton in Widgets.lua now owns the adapter on
+--! its own instances; the shared CheckButton metatable stays untouched.
 -------------------------------------------------
-do
-    -- Create a test SimpleHTML frame to get its metatable
-    local testHTML = CreateFrame("SimpleHTML")
-    local mt = getmetatable(testHTML)
-
-    if mt and mt.__index and not mt.__index.GetContentHeight then
-        function mt.__index:GetContentHeight()
-            -- WotLK: SimpleHTML doesn't have GetContentHeight
-            -- Fall back to GetHeight() which should give us the frame height
-            return self:GetHeight() or 0
-        end
-    end
-end
 
 -------------------------------------------------
--- Slider OnValueChanged userChanged parameter polyfill for WotLK
--- In WotLK 3.3.5a, the userChanged parameter in OnValueChanged is always nil
--- We wrap SetValue to flag programmatic changes so callbacks can distinguish
+--! WotLK fix: Cell has no SimpleHTML:GetContentHeight consumer. Do not publish
+--! a frame-height approximation as rendered content height on the shared widget.
 -------------------------------------------------
-do
-    local slider = CreateFrame("Slider")
-    local mt = getmetatable(slider)
 
-    if mt and mt.__index and not mt.__index._CellSliderPolyfillApplied then
-        local origSetValue = mt.__index.SetValue
-        local origSetScript = mt.__index.SetScript
-
-        -- Wrap SetValue to flag programmatic changes
-        function mt.__index:SetValue(value)
-            self._isProgrammaticChange = true
-            origSetValue(self, value)
-            self._isProgrammaticChange = false
-        end
-
-        -- Wrap SetScript to intercept OnValueChanged and fix userChanged parameter
-        function mt.__index:SetScript(scriptType, handler)
-            if scriptType == "OnValueChanged" and handler then
-                local wrappedHandler = function(self, value, userChanged)
-                    -- WRATH FIX: userChanged is nil in 3.3.5
-                    if userChanged == nil then
-                        userChanged = not self._isProgrammaticChange
-                    end
-                    return handler(self, value, userChanged)
-                end
-                return origSetScript(self, scriptType, wrappedHandler)
-            end
-            return origSetScript(self, scriptType, handler)
-        end
-
-        mt.__index._CellSliderPolyfillApplied = true
-    end
-end
+-------------------------------------------------
+--! WotLK fix: do not replace the shared native Slider:SetValue/SetScript methods
+--! to synthesize retail's OnValueChanged userChanged argument. Cell's own sliders
+--! track programmatic SetValue calls on their instances in Widgets.lua and
+--! ColorPicker.lua; Blizzard and foreign addon sliders keep the native contract.
+-------------------------------------------------
 
 -------------------------------------------------
 -- REMOVED: All global font polyfills and hooks
@@ -3059,263 +929,38 @@ end
 -- No need to pre-create them here since no code uses them before those files load
 -- Removed redundant font creation that was causing conflicts with STANDARD_TEXT_FONT vs GameFontNormal
 
--------------------------------------------------
--- Frame :Run() polyfill for WotLK
--- In retail, frames in restricted execution have :Run() to execute Lua snippets
--- In WotLK, this doesn't exist, so we polyfill it
--------------------------------------------------
-do
-    local frame = CreateFrame("Frame")
-    local mt = getmetatable(frame)
+--! WotLK fix: plain Frame:Run is not a secure execution primitive on 3.3.5.
+--! Cell uses native secure control-handle methods (RunFor/RunAttribute) instead;
+--! publishing a loadstring-based method through the shared Frame metatable would
+--! provide the wrong contract to Cell and every foreign addon.
 
-    if mt and mt.__index and not mt.__index.Run then
-        function mt.__index:Run(snippet)
-            if not snippet then return end
-
-            -- In restricted execution, we need to execute the snippet
-            -- Using loadstring with the restricted environment
-            local func, err = loadstring(snippet)
-            if func then
-                -- Set the environment to use 'self' as the frame
-                setfenv(func, setmetatable({self = self}, {__index = _G}))
-                local success, execErr = pcall(func)
-                if not success then
-                    -- Silently fail in restricted context, just like retail
-                    return
-                end
-            end
-        end
-    end
-end
+--! WotLK fix: CellMainFrame visibility is owned by MainFrame.lua and the minimap
+--! toggle. Do not keep an ADDON_LOADED listener or delayed callbacks that force a
+--! protected frame shown and undo an explicit user hide.
 
 -------------------------------------------------
--- Ensure CellMainFrame is always shown
--- In WotLK, child frames won't show if parent is hidden
+--! WotLK fix: do not add delayed wrappers around Cell-owned PixelPerfect or
+--! RotateTexture functions. Their active callers pass concrete Cell widgets;
+--! masking a nil input would hide the real caller defect while retaining nine
+--! wrapper closures, an ADDON_LOADED frame, and three startup timers.
 -------------------------------------------------
-local function EnsureCellMainFrameShown()
-    if CellMainFrame and not CellMainFrame:IsShown() then
-        CellMainFrame:Show()
-    end
-end
-
--- Check immediately when addon loads and on events
-local checkFrame = CreateFrame("Frame")
-checkFrame:RegisterEvent("ADDON_LOADED")
-checkFrame:RegisterEvent("PLAYER_LOGIN")
-checkFrame:SetScript("OnEvent", function(self, event, addonName)
-    if event == "ADDON_LOADED" and addonName == "Cell" then
-        -- Check after Cell loads
-        C_Timer.After(0.1, EnsureCellMainFrameShown)
-    elseif event == "PLAYER_LOGIN" then
-        -- Check after login
-        C_Timer.After(0.1, EnsureCellMainFrameShown)
-    end
-end)
-
--- Also check immediately
-C_Timer.After(0.5, EnsureCellMainFrameShown)
 
 -------------------------------------------------
--- Wrap PixelPerfect functions to handle nil frames gracefully
--- Some widgets may not exist in WotLK that exist in retail
+--! WotLK fix: removed delayed wrappers around Cell.bFuncs.SetOrientation and
+--! SetPowerSize. They were installed four times after ADDON_LOADED, built nested
+--! call chains, and silently skipped valid Cell unit buttons. These functions are
+--! Cell-owned and receive complete CellUnitButtonTemplate widgets at their callers.
 -------------------------------------------------
--- Hook immediately when Cell.pixelPerfectFuncs is created
-local function WrapPixelPerfectFunctions()
-    if Cell and Cell.pixelPerfectFuncs and not Cell.pixelPerfectFuncs._CellWrapped then
-        local P = Cell.pixelPerfectFuncs
-        Cell.pixelPerfectFuncs._CellWrapped = true
 
-        -- List of functions that take a frame as first parameter
-        local frameFunctions = {
-            "Repoint", "Resize", "ClearPoints", "Size", "Point",
-            "Reborder", "Width", "Height", "PixelPerfectPoint"
-        }
-
-        for _, funcName in ipairs(frameFunctions) do
-            if P[funcName] then
-                local originalFunc = P[funcName]
-                P[funcName] = function(frame, ...)
-                    if not frame then
-                        -- Silently ignore nil frames instead of erroring
-                        return
-                    end
-                    return originalFunc(frame, ...)
-                end
-            end
-        end
-    end
-end
-
--- Create event frame to wrap after addon loads
-local pixelPerfectWrapperFrame = CreateFrame("Frame")
-pixelPerfectWrapperFrame:RegisterEvent("ADDON_LOADED")
-pixelPerfectWrapperFrame:SetScript("OnEvent", function(self, event, addonName)
-    if addonName == "Cell" then
-        -- Wrap immediately after addon loads
-        WrapPixelPerfectFunctions()
-        -- Also try with small delays
-        C_Timer.After(0.1, WrapPixelPerfectFunctions)
-        C_Timer.After(0.5, WrapPixelPerfectFunctions)
-        self:UnregisterEvent("ADDON_LOADED")
-    end
-end)
+--! WotLK fix: do not wrap shared AnimationGroup:CreateAnimation merely to
+--! repair another addon's nil argument. Cell now always passes its own native
+--! animation type explicitly and leaves foreign widget contracts untouched.
 
 -------------------------------------------------
--- Wrap Cell.funcs.RotateTexture to handle nil textures
--- Some widgets may not exist in WotLK that exist in retail
+--! WotLK fix: removed the late AutoCastGlow_Start replacement. The Cell fork of
+--! LibCustomGlow initializes and validates its own animation state before use;
+--! replacing the library field after consumers captured it created two contracts.
 -------------------------------------------------
-C_Timer.After(0.1, function()
-    if Cell and Cell.funcs and Cell.funcs.RotateTexture then
-        local originalRotateTexture = Cell.funcs.RotateTexture
-        Cell.funcs.RotateTexture = function(texture, angle)
-            if not texture then return end
-            return originalRotateTexture(texture, angle)
-        end
-    end
-end)
-
--------------------------------------------------
--- Wrap Cell.bFuncs.SetOrientation to handle nil widgets
--- SpotlightFrame and other special frames may not have all widgets
--------------------------------------------------
-local function WrapSetOrientation()
-    if Cell and Cell.bFuncs and Cell.bFuncs.SetOrientation then
-        local originalSetOrientation = Cell.bFuncs.SetOrientation
-        Cell.bFuncs.SetOrientation = function(button, orientation, rotateTexture)
-            -- Check if button is nil first
-            if not button then
-                -- Silently return if button is nil
-                return
-            end
-
-            -- Get all the widgets (some may be nil)
-            local widgets = button.widgets
-            if not widgets then return end
-
-            local healthBar = widgets.healthBar
-            local powerBar = widgets.powerBar
-            local gapTexture = widgets.gapTexture
-
-            -- Check if this button has the minimum required widgets
-            -- SpotlightFrame buttons don't have powerBar or gapTexture
-            if not healthBar or not powerBar or not gapTexture then
-                -- Skip SetOrientation for buttons without basic widgets
-                return
-            end
-
-            -- Call original function
-            return originalSetOrientation(button, orientation, rotateTexture)
-        end
-    else
-        C_Timer.After(0.5, WrapSetOrientation)
-    end
-end
-
--- Wrap Cell.bFuncs.SetPowerSize to handle nil buttons
-local function WrapSetPowerSize()
-    if Cell and Cell.bFuncs and Cell.bFuncs.SetPowerSize then
-        local originalSetPowerSize = Cell.bFuncs.SetPowerSize
-        Cell.bFuncs.SetPowerSize = function(button, size)
-            -- Check if button is nil first
-            if not button then
-                -- Silently return if button is nil (pet buttons might not exist)
-                return
-            end
-            -- Call original function
-            return originalSetPowerSize(button, size)
-        end
-    else
-        C_Timer.After(0.5, WrapSetPowerSize)
-    end
-end
-
--- Create event frame to wrap after addon loads
-local buttonFunctionsWrapperFrame = CreateFrame("Frame")
-buttonFunctionsWrapperFrame:RegisterEvent("ADDON_LOADED")
-buttonFunctionsWrapperFrame:SetScript("OnEvent", function(self, event, addonName)
-    if addonName == "Cell" then
-        -- Wrap SetOrientation
-        WrapSetOrientation()
-        C_Timer.After(0.1, WrapSetOrientation)
-        C_Timer.After(0.5, WrapSetOrientation)
-        C_Timer.After(1, WrapSetOrientation)
-
-        -- Wrap SetPowerSize
-        WrapSetPowerSize()
-        C_Timer.After(0.1, WrapSetPowerSize)
-        C_Timer.After(0.5, WrapSetPowerSize)
-        C_Timer.After(1, WrapSetPowerSize)
-
-        self:UnregisterEvent("ADDON_LOADED")
-    end
-end)
-
--------------------------------------------------
--- AnimationGroup CreateAnimation compatibility wrapper
--- Ensures compatibility with DetailsWotlkPort and other addons
--- This prevents conflicts when other addons expect animation type to be a string
--------------------------------------------------
-do
-    local ag = UIParent:CreateAnimationGroup()
-    local mt = getmetatable(ag)
-
-    if mt and mt.__index and not mt.__index._CellAnimationPolyfillApplied then
-        local origCreateAnimation = mt.__index.CreateAnimation
-
-        if origCreateAnimation then
-            function mt.__index:CreateAnimation(animationType, ...)
-                -- Ensure animationType is always a string to prevent conflicts with other addon polyfills
-                -- Some addons (like DetailsWotlkPort) expect this to never be nil
-                animationType = animationType or "Animation"
-
-                return origCreateAnimation(self, animationType, ...)
-            end
-
-            mt.__index._CellAnimationPolyfillApplied = true
-        end
-    end
-end
-
--------------------------------------------------
--- Fix LibCustomGlow AutoCastGlow info initialization
--- Ensure info table is properly initialized before use
--------------------------------------------------
-C_Timer.After(0.5, function()
-    if LibStub then
-        local LCG = LibStub("LibCustomGlow-1.0-Cell", true)
-        if LCG and LCG.AutoCastGlow_Start then
-            local origStart = LCG.AutoCastGlow_Start
-            LCG.AutoCastGlow_Start = function(r, color, N, frequency, scale, xOffset, yOffset, key, frameLevel)
-                -- Call original function
-                origStart(r, color, N, frequency, scale, xOffset, yOffset, key, frameLevel)
-
-                -- Ensure info fields are initialized
-                key = key or ""
-                local f = r["_AutoCastGlow"..key]
-                if f and f.info then
-                    -- Force initial size calculation
-                    local width, height = f:GetSize()
-                    if width and height and width > 0 and height > 0 then
-                        f.info.width = width
-                        f.info.height = height
-                        f.info.perimeter = 2 * (width + height)
-                        f.info.bottomlim = height * 2 + width
-                        f.info.rightlim = height + width
-                        f.info.space = f.info.perimeter / f.info.N
-                    else
-                        -- Frame not sized yet, set safe defaults to prevent nil errors
-                        f.info.width = 0
-                        f.info.height = 0
-                        f.info.perimeter = 0
-                        f.info.bottomlim = 0
-                        f.info.rightlim = 0
-                        f.info.space = 0
-                    end
-                end
-            end
-        end
-    end
-end)
 
 -------------------------------------------------
 -- Click-Castings Fixes
@@ -3420,200 +1065,13 @@ do
         end
     end
 
-    -- Fix 4: Animation system missing SetScaleFrom/To, SetFromAlpha/ToAlpha
-    local function PatchAnimationSystem()
-        if Cell._AnimationSystemPatched then return end
-        Cell._AnimationSystemPatched = true
+    --! WotLK fix: the old PatchAnimationSystem replaced the shared native
+    --! AnimationGroup:Play/CreateAnimation methods for the entire client.
+    --! Cell now owns absolute Alpha/Scale animation behavior privately.
 
-        local f = CreateFrame("Frame")
-        local ag = f:CreateAnimationGroup()
-        local mt = getmetatable(ag)
-        local orig_CreateAnimation = mt.__index.CreateAnimation
-
-        -- Hook AnimationGroup:Play to ensure "From" values are applied
-        if not mt.__index._CellPlayHook then
-            local orig_Play = mt.__index.Play
-            mt.__index.Play = function(self)
-                -- Apply "From" state for all custom-tracked animations
-                if self._cellAnimations then
-                    for _, anim in ipairs(self._cellAnimations) do
-                        if anim._ApplyFromState then
-                            anim:_ApplyFromState()
-                        end
-                    end
-                end
-                
-                if orig_Play then 
-                    orig_Play(self) 
-                end
-            end
-            mt.__index._CellPlayHook = true
-        end
-
-        mt.__index.CreateAnimation = function(self, type, name, inherits)
-            -- DetailsWotlkPort crashes if name is nil, so we must provide a default
-            if not name then name = type end
-            
-            local anim = orig_CreateAnimation(self, type, name, inherits)
-            
-            -- Track animation in the group
-            if not self._cellAnimations then self._cellAnimations = {} end
-            table.insert(self._cellAnimations, anim)
-
-            if type == "Alpha" then
-                anim.SetFromAlpha = function(self, from)
-                    self._fromAlpha = from
-                    self:_UpdateAlpha()
-                end
-                anim.SetToAlpha = function(self, to)
-                    self._toAlpha = to
-                    self:_UpdateAlpha()
-                end
-                anim._UpdateAlpha = function(self)
-                    --! Only translate from/to into SetChange if the retail-style
-                    --! setters were actually used. Animations configured natively
-                    --! via SetChange (e.g. SnowfallKeyPress) must NOT be touched:
-                    --! defaulting from/to to 1 here used to overwrite their change
-                    --! with SetChange(0) on every OnPlay, silently killing them.
-                    if self._fromAlpha == nil and self._toAlpha == nil then
-                        return
-                    end
-                    local from = self._fromAlpha or 1
-                    local to = self._toAlpha or 1
-                    -- Calculate change for WotLK
-                    if self.SetChange then
-                        self:SetChange(to - from)
-                    end
-                end
-                anim._ApplyFromState = function(self)
-                    if self._fromAlpha then
-                        local region = self:GetParent():GetParent()
-                        if region and region.SetAlpha then
-                            region:SetAlpha(self._fromAlpha)
-                        end
-                    end
-                    -- Re-apply change in case it was lost
-                    self:_UpdateAlpha()
-                end
-                
-                anim:HookScript("OnPlay", function()
-                    anim:_ApplyFromState()
-                end)
-
-            elseif type == "Scale" then
-                anim.SetScaleFrom = function(self, x, y)
-                    self._fromX = x
-                    self._fromY = y
-                    self:_UpdateScale()
-                end
-                anim.SetScaleTo = function(self, x, y)
-                    self._toX = x
-                    self._toY = y
-                    self:_UpdateScale()
-                end
-                anim._UpdateScale = function(self)
-                    --! Same guard as _UpdateAlpha: never touch animations that
-                    --! were configured natively via SetScale and never used the
-                    --! retail-style SetScaleFrom/SetScaleTo setters, otherwise
-                    --! their scale gets overwritten with 1,1 on every OnPlay.
-                    if self._fromX == nil and self._fromY == nil
-                        and self._toX == nil and self._toY == nil then
-                        return
-                    end
-                    local fromX = self._fromX or 1
-                    local fromY = self._fromY or 1
-                    local toX = self._toX or 1
-                    local toY = self._toY or 1
-                    
-                    if fromX == 0 then fromX = 0.001 end
-                    if fromY == 0 then fromY = 0.001 end
-                    
-                    if self.SetScale then
-                        self:SetScale(toX / fromX, toY / fromY)
-                    end
-                end
-                anim._ApplyFromState = function(self)
-                     -- Apply initial scale to the target region
-                    if self._fromX or self._fromY then
-                        local region = self:GetParent():GetParent()
-                        if region and region.SetScale then
-                            local startScale = math.max(self._fromX or 0, self._fromY or 0)
-                            if startScale <= 0.001 then startScale = 0.001 end -- Prevent 0 scale issues
-                            region:SetScale(startScale)
-                        end
-                    end
-                    -- Re-apply change
-                    self:_UpdateScale()
-                end
-                
-                anim:HookScript("OnPlay", function()
-                    anim:_ApplyFromState()
-                end)
-            end
-            
-            return anim
-        end
-    end
-
-    -- Fix 5: LibCustomGlow acUpdate crash (attempt to perform arithmetic on field 'space' (a nil value))
-    local function PatchLibCustomGlow()
-        local lib = LibStub and LibStub("LibCustomGlow-1.0-Cell", true)
-        if not lib then return end
-        if Cell._LibCustomGlowPatched then return end
-        Cell._LibCustomGlowPatched = true
-
-        local function SafeAcUpdate(self, elapsed)
-            local width, height = self:GetSize()
-            if width ~= self.info.width or height ~= self.info.height or not self.info.space then
-                if width * height == 0 then return end -- Avoid division by zero
-                self.info.width = width
-                self.info.height = height
-                self.info.perimeter = 2 * (width + height)
-                self.info.bottomlim = height * 2 + width
-                self.info.rightlim = height + width
-                self.info.space = self.info.perimeter / self.info.N
-            end
-        
-            local texIndex = 0
-            for k = 1, 4 do
-                self.timer[k] = self.timer[k] + elapsed / (self.info.period * k)
-                if self.timer[k] > 1 or self.timer[k] < -1 then
-                    self.timer[k] = self.timer[k] % 1
-                end
-                for i = 1, self.info.N do
-                    texIndex = texIndex + 1
-                    if self.textures[texIndex] then
-                        local position = (self.info.space * i + self.info.perimeter * self.timer[k]) % self.info.perimeter
-                        if position > self.info.bottomlim then
-                            self.textures[texIndex]:SetPoint("CENTER", self, "BOTTOMRIGHT", -position + self.info.bottomlim, 0)
-                        elseif position > self.info.rightlim then
-                            self.textures[texIndex]:SetPoint("CENTER", self, "TOPRIGHT", 0, -position + self.info.rightlim)
-                        elseif position > self.info.height then
-                            self.textures[texIndex]:SetPoint("CENTER", self, "TOPLEFT", position - self.info.height, 0)
-                        else
-                            self.textures[texIndex]:SetPoint("CENTER", self, "BOTTOMLEFT", 0, position)
-                        end
-                    end
-                end
-            end
-        end
-
-        local orig_AutoCastGlow_Start = lib.AutoCastGlow_Start
-        lib.AutoCastGlow_Start = function(r, color, N, frequency, scale, xOffset, yOffset, key, frameLevel)
-            orig_AutoCastGlow_Start(r, color, N, frequency, scale, xOffset, yOffset, key, frameLevel)
-            
-            key = key or ""
-            local f = r["_AutoCastGlow" .. key]
-            if f then
-                f:SetScript("OnUpdate", SafeAcUpdate)
-            end
-        end
-        
-        -- Also update the startList entry
-        if lib.startList then
-            lib.startList["Autocast Shine"] = lib.AutoCastGlow_Start
-        end
-    end
+    --! WotLK fix: LibCustomGlow is corrected in its own source. Do not replace
+    --! AutoCastGlow_Start later from Polyfills.lua; local consumers may already
+    --! hold the original function and would otherwise observe another contract.
 
     -- Add to the event handler
     local f = CreateFrame("Frame")
@@ -3623,440 +1081,25 @@ do
             PatchCreateScrollFrame()
             PatchBindingListButton()
             PatchGetClickCastingSpellList()
-            PatchAnimationSystem()
-            PatchLibCustomGlow()
             self:UnregisterEvent("ADDON_LOADED")
         end
     end)
 
 end
 
--------------------------------------------------
--- WotLK 3.3.5a: IsEveryoneAssistant doesn't exist
--------------------------------------------------
-if not IsEveryoneAssistant then
-    _G.IsEveryoneAssistant = function()
-        return GetNumGroupMembers() > 0 and GetRaidRosterInfo(1) == nil
-    end
-end
+--! WotLK fix: assistant batching and state are owned privately by Cell above.
+--! Cell has no BackdropTemplate consumer; live backdrop calls stay on native
+--! 3.3.5 Frame methods and no retail template fallback is published here.
 
 -------------------------------------------------
 -- WotLK 3.3.5a: Button creation and positioning now handled inline in PartyFrame.lua and RaidFrame.lua
 -------------------------------------------------
 
 -------------------------------------------------
--- BackdropTemplate polyfill for WotLK 3.3.5a
--- In Wrath, backdrop functions (SetBackdrop, SetBackdropColor, etc.) are natively
--- available on all frames. However, the BackdropTemplate itself doesn't exist.
--- In retail 9.0.1+, Blizzard moved these functions into BackdropTemplate.
--- We create an empty template here so CreateFrame(..., "BackdropTemplate") doesn't error.
+--! WotLK fix: do not replace Blizzard's global SecureGroupHeader_Update.
+--! Native 3.3.5 FrameXML calls that global from protected header event and
+--! attribute paths, including during combat; replacing it taints the entire
+--! secure update route even when forwarding to the original function. Cell's
+--! assigned-role ordering is supplied through the native nameList attribute in
+--! RaidFrame.lua instead.
 -------------------------------------------------
-if not BackdropTemplateMixin then
-    -- Create an empty mixin (backdrop functions already exist natively in Wrath)
-    BackdropTemplateMixin = {}
-end
-
--------------------------------------------------
--- WotLK 3.3.5a: Sort By Role support for secure group headers
--- The stock 3.3.5a SecureGroupHeader_Update only understands groupBy values
--- nil / "GROUP" / "CLASS" / "ROLE". Cell requests groupBy = "ASSIGNEDROLE"
--- (LFD-style TANK/HEALER/DAMAGER), which the stock client silently ignores, so
--- role sorting never happens. Below we install a faithful copy of the 3.3.5a
--- FrameXML SecureGroupHeader_Update with one extra grouping branch for
--- ASSIGNEDROLE. Any header that is NOT using ASSIGNEDROLE is handed straight
--- back to the original client function, so nothing else about grouping,
--- filtering or layout changes (zero regression on the existing behavior).
--------------------------------------------------
-do
-    local _orig_SecureGroupHeader_Update = SecureGroupHeader_Update
-    if type(_orig_SecureGroupHeader_Update) == "function" then
-        local select = select
-        local tonumber = tonumber
-        local type = type
-        local ceil = math.ceil
-        local min = math.min
-        local max = math.max
-        local abs = math.abs
-        local strsplit = strsplit
-        local tinsert = table.insert
-        local wipe = wipe or table.wipe
-        local strtrim = strtrim or string.trim
-        local CallRestrictedClosure = CallRestrictedClosure
-        local GetManagedEnvironment = GetManagedEnvironment
-        local GetFrameHandle = GetFrameHandle
-
-        local function getRelativePointAnchor(point)
-            point = point:upper()
-            if (point == "TOP") then
-                return "BOTTOM", 0, -1
-            elseif (point == "BOTTOM") then
-                return "TOP", 0, 1
-            elseif (point == "LEFT") then
-                return "RIGHT", 1, 0
-            elseif (point == "RIGHT") then
-                return "LEFT", -1, 0
-            elseif (point == "TOPLEFT") then
-                return "BOTTOMRIGHT", 1, -1
-            elseif (point == "TOPRIGHT") then
-                return "BOTTOMLEFT", -1, -1
-            elseif (point == "BOTTOMLEFT") then
-                return "TOPRIGHT", 1, 1
-            elseif (point == "BOTTOMRIGHT") then
-                return "TOPLEFT", -1, 1
-            else
-                return "CENTER", 0, 0
-            end
-        end
-
-        local function setAttributesWithoutResponse(self, ...)
-            local oldIgnore = self:GetAttribute("_ignore")
-            self:SetAttribute("_ignore", "attributeChanges")
-            for i = 1, select('#', ...), 2 do
-                self:SetAttribute(select(i, ...))
-            end
-            self:SetAttribute("_ignore", oldIgnore)
-        end
-
-        local function SetupUnitButtonConfiguration(header, newChild, defaultConfigFunction)
-            local configCode = header:GetAttribute("initialConfigFunction") or defaultConfigFunction
-            if (type(configCode) == "string") then
-                local selfHandle = GetFrameHandle(newChild)
-                if (selfHandle) then
-                    CallRestrictedClosure("self", GetManagedEnvironment(header, true),
-                        selfHandle, configCode, selfHandle)
-                end
-            end
-        end
-
-        local function configureChildren(self, unitTable)
-            local point = self:GetAttribute("point") or "TOP"
-            local relativePoint, xOffsetMult, yOffsetMult = getRelativePointAnchor(point)
-            local xMultiplier, yMultiplier = abs(xOffsetMult), abs(yOffsetMult)
-            local xOffset = self:GetAttribute("xOffset") or 0
-            local yOffset = self:GetAttribute("yOffset") or 0
-            local sortDir = self:GetAttribute("sortDir") or "ASC"
-            local columnSpacing = self:GetAttribute("columnSpacing") or 0
-            local startingIndex = self:GetAttribute("startingIndex") or 1
-
-            local unitCount = #unitTable
-            local numDisplayed = unitCount - (startingIndex - 1)
-            local unitsPerColumn = self:GetAttribute("unitsPerColumn")
-            local numColumns
-            if ( unitsPerColumn and numDisplayed > unitsPerColumn ) then
-                numColumns = min( ceil(numDisplayed / unitsPerColumn), (self:GetAttribute("maxColumns") or 1) )
-            else
-                unitsPerColumn = numDisplayed
-                numColumns = 1
-            end
-            local loopStart = startingIndex
-            local loopFinish = min((startingIndex - 1) + unitsPerColumn * numColumns, unitCount)
-            local step = 1
-
-            numDisplayed = loopFinish - (loopStart - 1)
-
-            if ( sortDir == "DESC" ) then
-                loopStart = unitCount - (startingIndex - 1)
-                loopFinish = loopStart - (numDisplayed - 1)
-                step = -1
-            end
-
-            local needButtons = max(1, numDisplayed)
-            if not ( self:GetAttribute("child"..needButtons) ) then
-                local buttonTemplate = self:GetAttribute("template")
-                local templateType = self:GetAttribute("templateType") or "Button"
-                local name = self:GetName()
-                for i = 1, needButtons, 1 do
-                    local childAttr = "child" .. i
-                    if not ( self:GetAttribute(childAttr) ) then
-                        local newButton = CreateFrame(templateType, name and (name.."UnitButton"..i), self, buttonTemplate)
-                        self[i] = newButton
-                        SetupUnitButtonConfiguration(self, newButton)
-                        setAttributesWithoutResponse(self, childAttr, newButton, "frameref-"..childAttr, GetFrameHandle(newButton))
-                    end
-                end
-            end
-
-            local columnAnchorPoint, columnRelPoint, colxMulti, colyMulti
-            if ( numColumns > 1 ) then
-                columnAnchorPoint = self:GetAttribute("columnAnchorPoint")
-                columnRelPoint, colxMulti, colyMulti = getRelativePointAnchor(columnAnchorPoint)
-            end
-
-            local buttonNum = 0
-            local columnNum = 1
-            local columnUnitCount = 0
-            local currentAnchor = self
-            for i = loopStart, loopFinish, step do
-                buttonNum = buttonNum + 1
-                columnUnitCount = columnUnitCount + 1
-                if ( columnUnitCount > unitsPerColumn ) then
-                    columnUnitCount = 1
-                    columnNum = columnNum + 1
-                end
-
-                local unitButton = self:GetAttribute("child"..buttonNum)
-                if ( buttonNum == 1 ) then
-                    unitButton:SetPoint(point, currentAnchor, point, 0, 0)
-                    if ( columnAnchorPoint ) then
-                        unitButton:SetPoint(columnAnchorPoint, currentAnchor, columnAnchorPoint, 0, 0)
-                    end
-                elseif ( columnUnitCount == 1 ) then
-                    local columnAnchor = self:GetAttribute("child"..(buttonNum - unitsPerColumn))
-                    unitButton:SetPoint(columnAnchorPoint, columnAnchor, columnRelPoint, colxMulti * columnSpacing, colyMulti * columnSpacing)
-                else
-                    unitButton:SetPoint(point, currentAnchor, relativePoint, xMultiplier * xOffset, yMultiplier * yOffset)
-                end
-                unitButton:SetAttribute("unit", unitTable[i])
-
-                local configCode = unitButton:GetAttribute("refreshUnitChange")
-                if ( type(configCode) == "string" ) then
-                    local selfHandle = GetFrameHandle(unitButton)
-                    if ( selfHandle ) then
-                        CallRestrictedClosure("self",
-                            GetManagedEnvironment(unitButton, true),
-                            selfHandle, configCode, selfHandle)
-                    end
-                end
-
-                if not unitButton:GetAttribute("statehidden") then
-                    unitButton:Show()
-                end
-
-                currentAnchor = unitButton
-            end
-            repeat
-                buttonNum = buttonNum + 1
-                local unitButton = self:GetAttribute("child"..buttonNum)
-                if ( unitButton ) then
-                    unitButton:Hide()
-                    unitButton:ClearAllPoints()
-                    unitButton:SetAttribute("unit", nil)
-                end
-            until not ( unitButton )
-
-            local unitButton = self:GetAttribute("child1")
-            local unitButtonWidth = unitButton:GetWidth()
-            local unitButtonHeight = unitButton:GetHeight()
-            if ( numDisplayed > 0 ) then
-                local width = xMultiplier * (unitsPerColumn - 1) * unitButtonWidth + ( (unitsPerColumn - 1) * (xOffset * xOffsetMult) ) + unitButtonWidth
-                local height = yMultiplier * (unitsPerColumn - 1) * unitButtonHeight + ( (unitsPerColumn - 1) * (yOffset * yOffsetMult) ) + unitButtonHeight
-
-                if ( numColumns > 1 ) then
-                    width = width + ( (numColumns - 1) * abs(colxMulti) * (width + columnSpacing) )
-                    height = height + ( (numColumns - 1) * abs(colyMulti) * (height + columnSpacing) )
-                end
-
-                self:SetWidth(width)
-                self:SetHeight(height)
-            else
-                local minWidth = self:GetAttribute("minWidth") or (yMultiplier * unitButtonWidth)
-                local minHeight = self:GetAttribute("minHeight") or (xMultiplier * unitButtonHeight)
-                self:SetWidth( max(minWidth, 0.1) )
-                self:SetHeight( max(minHeight, 0.1) )
-            end
-        end
-
-        local function GetGroupHeaderType(self)
-            local kind, start, stop
-            local nRaid = GetNumRaidMembers()
-            local nParty = GetNumPartyMembers()
-            if ( nRaid > 0 and self:GetAttribute("showRaid") ) then
-                kind = "RAID"
-            elseif ( (nRaid > 0 or nParty > 0) and self:GetAttribute("showParty") ) then
-                kind = "PARTY"
-            elseif ( self:GetAttribute("showSolo") ) then
-                kind = "SOLO"
-            end
-            if ( kind ) then
-                if ( kind == "RAID" ) then
-                    start = 1
-                    stop = nRaid
-                else
-                    if ( kind == "SOLO" or self:GetAttribute("showPlayer") ) then
-                        start = 0
-                    else
-                        start = 1
-                    end
-                    stop = nParty
-                end
-            end
-            return kind, start, stop
-        end
-
-        local function GetGroupRosterInfo(kind, index)
-            local _, unit, name, subgroup, className, role, server
-            if ( kind == "RAID" ) then
-                unit = "raid"..index
-                name, _, subgroup, _, _, className, _, _, _, role = GetRaidRosterInfo(index)
-            else
-                if ( index > 0 ) then
-                    unit = "party"..index
-                else
-                    unit = "player"
-                end
-                if ( UnitExists(unit) ) then
-                    name, server = UnitName(unit)
-                    if (server and server ~= "") then
-                        name = name.."-"..server
-                    end
-                    _, className = UnitClass(unit)
-                    if ( GetPartyAssignment("MAINTANK", unit) ) then
-                        role = "MAINTANK"
-                    elseif ( GetPartyAssignment("MAINASSIST", unit) ) then
-                        role = "MAINASSIST"
-                    end
-                end
-                subgroup = 1
-            end
-            return unit, name, subgroup, className, role
-        end
-
-        local function fillTable(tbl, ...)
-            for i = 1, select("#", ...), 1 do
-                local key = select(i, ...)
-                key = tonumber(key) or strtrim(key)
-                tbl[key] = i
-            end
-        end
-
-        local function doubleFillTable(tbl, ...)
-            fillTable(tbl, ...)
-            for i = 1, select("#", ...), 1 do
-                tbl[i] = strtrim(select(i, ...))
-            end
-        end
-
-        local tokenTable = {}
-        local sortingTable = {}
-        local groupingTable = {}
-
-        local function sortOnGroupWithNames(a, b)
-            local order1 = tokenTable[ groupingTable[a] ]
-            local order2 = tokenTable[ groupingTable[b] ]
-            if ( order1 ) then
-                if ( not order2 ) then
-                    return true
-                else
-                    if ( order1 == order2 ) then
-                        return sortingTable[a] < sortingTable[b]
-                    else
-                        return order1 < order2
-                    end
-                end
-            else
-                if ( order2 ) then
-                    return false
-                else
-                    return sortingTable[a] < sortingTable[b]
-                end
-            end
-        end
-
-        local function sortOnGroupWithIDs(a, b)
-            local order1 = tokenTable[ groupingTable[a] ]
-            local order2 = tokenTable[ groupingTable[b] ]
-            if ( order1 ) then
-                if ( not order2 ) then
-                    return true
-                else
-                    if ( order1 == order2 ) then
-                        return tonumber(a:match("%d+") or -1) < tonumber(b:match("%d+") or -1)
-                    else
-                        return order1 < order2
-                    end
-                end
-            else
-                if ( order2 ) then
-                    return false
-                else
-                    return tonumber(a:match("%d+") or -1) < tonumber(b:match("%d+") or -1)
-                end
-            end
-        end
-
-        local function sortOnNames(a, b)
-            return sortingTable[a] < sortingTable[b]
-        end
-
-        local function sortOnNameList(a, b)
-            return tokenTable[ sortingTable[a] ] < tokenTable[ sortingTable[b] ]
-        end
-
-        function SecureGroupHeader_Update(self)
-            if ( self:GetAttribute("groupBy") ~= "ASSIGNEDROLE" ) then
-                return _orig_SecureGroupHeader_Update(self)
-            end
-
-            local nameList = self:GetAttribute("nameList")
-            local groupFilter = self:GetAttribute("groupFilter")
-            local sortMethod = self:GetAttribute("sortMethod")
-            local groupBy = self:GetAttribute("groupBy")
-
-            wipe(sortingTable)
-
-            local kind, start, stop = GetGroupHeaderType(self)
-            if ( not kind ) then
-                configureChildren(self, sortingTable)
-                return
-            end
-
-            if ( not groupFilter and not nameList ) then
-                groupFilter = "1,2,3,4,5,6,7,8"
-            end
-
-            if ( groupFilter ) then
-                fillTable(wipe(tokenTable), strsplit(",", groupFilter))
-                local strictFiltering = self:GetAttribute("strictFiltering")
-                for i = start, stop, 1 do
-                    local unit, name, subgroup, className, role = GetGroupRosterInfo(kind, i)
-                    if ( name and
-                        ((not strictFiltering) and
-                        (tokenTable[subgroup] or tokenTable[className] or (role and tokenTable[role]))
-                        ) or
-                        (tokenTable[subgroup] and tokenTable[className])
-                    ) then
-                        tinsert(sortingTable, unit)
-                        sortingTable[unit] = name
-                        if ( groupBy == "GROUP" ) then
-                            groupingTable[unit] = subgroup
-                        elseif ( groupBy == "CLASS" ) then
-                            groupingTable[unit] = className
-                        elseif ( groupBy == "ROLE" ) then
-                            groupingTable[unit] = role
-                        elseif ( groupBy == "ASSIGNEDROLE" ) then
-                            groupingTable[unit] = Cell_UnitGroupRolesAssigned(unit) or "NONE"
-                        end
-                    end
-                end
-
-                if ( groupBy ) then
-                    local groupingOrder = self:GetAttribute("groupingOrder") or ""
-                    doubleFillTable(wipe(tokenTable), strsplit(",", (groupingOrder:gsub("%s+", ""))))
-                    if ( sortMethod == "NAME" ) then
-                        table.sort(sortingTable, sortOnGroupWithNames)
-                    else
-                        table.sort(sortingTable, sortOnGroupWithIDs)
-                    end
-                elseif ( sortMethod == "NAME" ) then
-                    table.sort(sortingTable, sortOnNames)
-                end
-            else
-                doubleFillTable(wipe(tokenTable), strsplit(",", nameList))
-                for i = start, stop, 1 do
-                    local unit, name = GetGroupRosterInfo(kind, i)
-                    if ( tokenTable[name] ) then
-                        tinsert(sortingTable, unit)
-                        sortingTable[unit] = name
-                    end
-                end
-                if ( sortMethod == "NAME" ) then
-                    table.sort(sortingTable, sortOnNames)
-                elseif ( sortMethod == "NAMELIST" ) then
-                    table.sort(sortingTable, sortOnNameList)
-                end
-            end
-
-            configureChildren(self, sortingTable)
-        end
-    end
-end

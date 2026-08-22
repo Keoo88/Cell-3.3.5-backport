@@ -4,6 +4,7 @@ local L = Cell.L
 local F = Cell.funcs
 ---@class CellIndicatorFuncs
 local I = Cell.iFuncs
+local A = Cell.animations
 
 local orientation, speed
 
@@ -23,43 +24,56 @@ local function Display(b, ...)
     b.indicators.actions:Display(...)
 end
 
+--! WotLK perf: 3.3.5 gives UNIT_SPELLCAST_SUCCEEDED a spell NAME, not an id, so the
+--! configured actions have to be searched by name. Doing that as a linear scan meant
+--! one GetSpellInfo() call per configured action on every successful cast of every
+--! group member - GetSpellInfo returns seven values including two strings, so a 25-man
+--! raid turned it into constant string churn on Lua 5.1 without JIT. Resolve through a
+--! name -> id map built once instead. I.ConvertActions() returns a brand-new table on
+--! every call and the three assignment sites (Core_Wrath, Indicators, Import) never
+--! mutate it in place, so table identity is an exact invalidation key. First id wins,
+--! matching the previous "break on first pairs() hit" for spells whose ranks share a
+--! name.
+local actionNameToID, actionNameSource
+local function ResolveActionSpellID(spellName)
+    local actions = Cell.vars.actions
+    if not actions or not spellName then return nil end
+    if actionNameSource ~= actions then
+        actionNameToID = {}
+        for id in pairs(actions) do
+            local name = GetSpellInfo(id)
+            if name and actionNameToID[name] == nil then
+                actionNameToID[name] = id
+            end
+        end
+        actionNameSource = actions
+    end
+    return actionNameToID[spellName]
+end
+
 local eventFrame = CreateFrame("Frame")
 eventFrame:SetScript("OnEvent", function(self, event, unit, arg2, arg3)
     -- filter out players not in your group
     if not (UnitInRaid(unit) or UnitInParty(unit) or unit == "player" or unit == "pet") then return end
 
-    local spellID
-    
-        -- WotLK/Cata/Vanilla: unit, spellName, rank
-        local spellName = arg2
-        -- Try to resolve spellID by matching name against configured actions
-        if Cell.vars.actions then
-            for id, _ in pairs(Cell.vars.actions) do
-                local name = GetSpellInfo(id)
-                if name and name == spellName then
-                    spellID = id
-                    break
-                end
-            end
-        end
-        
-        if Cell.vars.actionsDebugModeEnabled then
-            print("|cFFFF3030[Cell]|r |cFFB2B2B2" .. event .. ":|r", unit, "|cFF00FF00" .. (spellName or "nil") .. "|r", "-> ID:", spellID or "Not Found")
-        end
+    -- WotLK/Cata/Vanilla: unit, spellName, rank
+    local spellName = arg2
+    local spellID = ResolveActionSpellID(spellName)
+
+    if Cell.vars.actionsDebugModeEnabled then
+        print("|cFFFF3030[Cell]|r |cFFB2B2B2" .. event .. ":|r", unit, "|cFF00FF00" .. (spellName or "nil") .. "|r", "-> ID:", spellID or "Not Found")
+    end
 
     if spellID and Cell.vars.actions[spellID] then
         F.HandleUnitButton("unit", unit, Display, unpack(Cell.vars.actions[spellID]))
     end
 end)
 
---! WotLK note: if this debug block is ever revived, the ClassicAPI shim of
---! CombatLogGetCurrentEventInfo is a TRANSLATOR and MUST receive the native varargs:
---! use `function(_, _, ...)` + `CombatLogGetCurrentEventInfo(...)` - called without
---! arguments it returns nothing (see AoEHealing.lua GetCLEUInfo for the pattern).
--- local CombatLogGetCurrentEventInfo = CombatLogGetCurrentEventInfo
+--! WotLK note: if this debug block is ever revived, parse native 3.3.5 CLEU
+--! varargs directly; do not bind it to a global ClassicAPI translator.
 -- eventFrame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
--- eventFrame:SetScript("OnEvent", function()
---     local timestamp, subevent, _, sourceGUID, sourceName, sourceFlags, sourceRaidFlags, destGUID, destName, destFlags, destRaidFlags, spellId, spellName = CombatLogGetCurrentEventInfo()
+-- eventFrame:SetScript("OnEvent", function(_, _, ...)
+--     local timestamp, subevent, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, spellId, spellName = ...
 --     print(subevent, sourceName, destName, spellId, spellName)
 -- end)
 
@@ -67,6 +81,50 @@ end)
 -- pool
 -------------------------------------------------
 local animationPool = {}
+
+--! WotLK fix: Actions owns the only object-pool contract it needs. Do not bind
+--! Cell's animation hot path to the global CreateObjectPool supplied either by
+--! embedded ClassicAPI or by a standalone !!!ClassicAPI loaded for Gladdy.
+local function CreateCellObjectPool(creationFunc, resetterFunc)
+    local pool = {
+        activeObjects = {},
+        inactiveObjects = {},
+    }
+
+    function pool:Acquire()
+        local index = #self.inactiveObjects
+        local object
+        local isNew
+
+        if index > 0 then
+            object = self.inactiveObjects[index]
+            self.inactiveObjects[index] = nil
+            isNew = false
+        else
+            object = creationFunc(self)
+            isNew = true
+            if resetterFunc then
+                resetterFunc(self, object)
+            end
+        end
+
+        self.activeObjects[object] = true
+        return object, isNew
+    end
+
+    function pool:Release(object)
+        if not self.activeObjects[object] then return false end
+
+        self.activeObjects[object] = nil
+        if resetterFunc then
+            resetterFunc(self, object)
+        end
+        self.inactiveObjects[#self.inactiveObjects + 1] = object
+        return true
+    end
+
+    return pool
+end
 
 local function ResetterFunc(_, canvas)
     canvas:Hide()
@@ -86,14 +144,10 @@ local function CreateAnimationGroup_TypeA()
     tex:SetAllPoints(f)
     tex:SetTexture(Cell.vars.whiteTexture)
 
-    -- mask
-    local mask = canvas:CreateMaskTexture()
-    mask:SetTexture(Cell.vars.whiteTexture, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
-    mask:SetAllPoints(canvas)
+    --! WotLK fix: native 3.3.5 has no mask regions. Keep the animated texture
+    --! on its Cell-owned canvas instead of relying on a fake shared mask API.
     canvas:EnableMouse(false)
     f:EnableMouse(false)
-    -- mask:SetSnapToPixelGrid(true)
-    tex:AddMaskTexture(mask)
 
     -- animation
     local ag = f:CreateAnimationGroup()
@@ -101,8 +155,8 @@ local function CreateAnimationGroup_TypeA()
 
     local a1 = ag:CreateAnimation("Alpha")
     a1.duration = 0.6
-    a1:SetFromAlpha(0)
-    a1:SetToAlpha(1)
+    --! WotLK fix: use Cell's private absolute-alpha driver; do not modify shared Alpha methods.
+    A.SetAbsoluteAlpha(a1, 0, 1)
     a1:SetOrder(1)
     a1:SetDuration(a1.duration)
     a1:SetSmoothing("OUT")
@@ -115,8 +169,7 @@ local function CreateAnimationGroup_TypeA()
 
     local a2 = ag:CreateAnimation("Alpha")
     a2.duration = 0.5
-    a2:SetFromAlpha(1)
-    a2:SetToAlpha(0)
+    A.SetAbsoluteAlpha(a2, 1, 0)
     a2:SetDuration(a2.duration)
     a2:SetOrder(2)
     -- a2:SetSmoothing("IN")
@@ -158,16 +211,17 @@ local function CreateAnimationGroup_TypeA()
         a2:SetDuration(a2.duration / parent.speed)
 
         if ag:IsPlaying() then
-            ag:Restart()
-        else
-            ag:Play()
+            --! WotLK fix: AnimationGroup:Restart is not native on 3.3.5; keep
+            --! the restart behavior private to this Cell-owned animation.
+            ag:Stop()
         end
+        ag:Play()
     end
 
     return canvas
 end
 
-animationPool.A = CreateObjectPool(CreateAnimationGroup_TypeA, ResetterFunc)
+animationPool.A = CreateCellObjectPool(CreateAnimationGroup_TypeA, ResetterFunc)
 
 -------------------------------------------------
 -- animation: B
@@ -192,14 +246,10 @@ local function CreateAnimationGroup_TypeB()
         tex:SetRotation(45 * math.pi / 180) -- WotLK SetRotation takes radians, no pivot vector
     end
 
-    -- mask
-    local mask = canvas:CreateMaskTexture()
-    mask:SetTexture(Cell.vars.whiteTexture, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
-    mask:SetAllPoints(canvas)
+    --! WotLK fix: native 3.3.5 has no mask regions. Keep the animated texture
+    --! on its Cell-owned canvas instead of relying on a fake shared mask API.
     canvas:EnableMouse(false)
     f:EnableMouse(false)
-    -- mask:SetSnapToPixelGrid(true)
-    tex:AddMaskTexture(mask)
 
     -- animation
     local ag = f:CreateAnimationGroup()
@@ -207,8 +257,8 @@ local function CreateAnimationGroup_TypeB()
 
     local a1 = ag:CreateAnimation("Alpha")
     a1.duration = 0.35
-    a1:SetFromAlpha(0)
-    a1:SetToAlpha(0.7)
+    --! WotLK fix: use Cell's private absolute-alpha driver; do not modify shared Alpha methods.
+    A.SetAbsoluteAlpha(a1, 0, 0.7)
     a1:SetDuration(a1.duration)
     -- a1:SetSmoothing("IN")
 
@@ -241,21 +291,22 @@ local function CreateAnimationGroup_TypeB()
 
         t1:SetOffset(canvas:GetWidth() + math.tan(math.pi / 4) * canvas:GetHeight() + WIDTH / math.cos(math.pi / 4), 0)
         tex:SetHeight(canvas:GetHeight() / math.sin(math.pi / 4) + WIDTH)
-        -- tex:SetColorTexture(r, g, b)
+        -- tex:SetTexture(r, g, b)
         tex:SetTexture(Cell.vars.whiteTexture)
         tex:SetVertexColor(r, g, b, 1)
 
         if ag:IsPlaying() then
-            ag:Restart()
-        else
-            ag:Play()
+            --! WotLK fix: AnimationGroup:Restart is not native on 3.3.5; keep
+            --! the restart behavior private to this Cell-owned animation.
+            ag:Stop()
         end
+        ag:Play()
     end
 
     return canvas
 end
 
-animationPool.B = CreateObjectPool(CreateAnimationGroup_TypeB, ResetterFunc)
+animationPool.B = CreateCellObjectPool(CreateAnimationGroup_TypeB, ResetterFunc)
 
 -------------------------------------------------
 -- animation: C
@@ -280,8 +331,8 @@ local function CreateAnimationGroup_TypeC()
 
     local a1 = ag:CreateAnimation("Alpha")
     a1.duration = 0.5
-    a1:SetFromAlpha(0)
-    a1:SetToAlpha(1)
+    --! WotLK fix: use Cell's private absolute-alpha driver; do not modify shared Alpha methods.
+    A.SetAbsoluteAlpha(a1, 0, 1)
     a1:SetOrder(1)
     a1:SetDuration(a1.duration)
     a1:SetSmoothing("OUT")
@@ -294,8 +345,7 @@ local function CreateAnimationGroup_TypeC()
 
     local a2 = ag:CreateAnimation("Alpha")
     a2.duration = 0.5
-    a2:SetFromAlpha(1)
-    a2:SetToAlpha(0)
+    A.SetAbsoluteAlpha(a2, 1, 0)
     a2:SetDuration(a2.duration)
     a2:SetOrder(2)
     a2:SetSmoothing("IN")
@@ -335,16 +385,17 @@ local function CreateAnimationGroup_TypeC()
         tex:SetVertexColor(r, g, b, 1)
 
         if ag:IsPlaying() then
-            ag:Restart()
-        else
-            ag:Play()
+            --! WotLK fix: AnimationGroup:Restart is not native on 3.3.5; keep
+            --! the restart behavior private to this Cell-owned animation.
+            ag:Stop()
         end
+        ag:Play()
     end
 
     return canvas
 end
 
-animationPool.C = CreateObjectPool(CreateAnimationGroup_TypeC, ResetterFunc)
+animationPool.C = CreateCellObjectPool(CreateAnimationGroup_TypeC, ResetterFunc)
 
 -------------------------------------------------
 -- animation: D
@@ -360,17 +411,9 @@ local function CreateAnimationGroup_TypeD()
     local tex = f:CreateTexture(nil, "ARTWORK")
     tex:SetPoint("CENTER")
 
-    -- mask1
-    local mask1 = f:CreateMaskTexture()
-    mask1:SetAllPoints(tex)
-    mask1:SetTexture("Interface/AddOns/Cell/Media/Shapes/circle_filled_256", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
-    tex:AddMaskTexture(mask1)
-
-    -- mask2
-    local mask2 = canvas:CreateMaskTexture()
-    mask2:SetTexture(Cell.vars.whiteTexture, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
-    mask2:SetAllPoints(canvas)
-    tex:AddMaskTexture(mask2)
+    --! WotLK fix: Texture masks are unavailable on 3.3.5. The circular source
+    --! art already supplies the required shape; the canvas owns its clipping.
+    tex:SetTexture("Interface/AddOns/Cell/Media/Shapes/circle_filled_256")
 
     canvas:EnableMouse(false)
     f:EnableMouse(false)
@@ -381,23 +424,22 @@ local function CreateAnimationGroup_TypeD()
 
     local a1 = ag:CreateAnimation("Alpha")
     a1.duration = 0.3
-    a1:SetFromAlpha(0)
-    a1:SetToAlpha(1)
+    --! WotLK fix: use Cell's private absolute-alpha driver; do not modify shared Alpha methods.
+    A.SetAbsoluteAlpha(a1, 0, 1)
     a1:SetOrder(1)
     a1:SetDuration(a1.duration)
     a1:SetSmoothing("OUT")
 
     local s1 = ag:CreateAnimation("Scale")
     s1.duration = 0.5
-    s1:SetScaleFrom(0, 0)
-    s1:SetScaleTo(1, 1)
+    --! WotLK fix: WotLK Scale is relative; drive Cell's absolute 0 -> 1 scale privately.
+    A.SetAbsoluteScale(s1, 0, 1)
     s1:SetOrder(1)
     s1:SetDuration(s1.duration)
 
     local a2 = ag:CreateAnimation("Alpha")
     a2.duration = 0.5
-    a2:SetFromAlpha(1)
-    a2:SetToAlpha(0)
+    A.SetAbsoluteAlpha(a2, 1, 0)
     a2:SetDuration(a2.duration)
     a2:SetOrder(2)
     a2:SetSmoothing("IN")
@@ -420,21 +462,21 @@ local function CreateAnimationGroup_TypeD()
 
         local l = math.sqrt((parent:GetParent():GetHeight() / 2) ^ 2 + (parent:GetParent():GetWidth() / 2) ^ 2) * 2
         tex:SetSize(l, l)
-        -- tex:SetColorTexture(r, g, b, 0.6)
-        tex:SetTexture(Cell.vars.whiteTexture)
+        tex:SetTexture("Interface/AddOns/Cell/Media/Shapes/circle_filled_256")
         tex:SetVertexColor(r, g, b, 0.6)
 
         if ag:IsPlaying() then
-            ag:Restart()
-        else
-            ag:Play()
+            --! WotLK fix: AnimationGroup:Restart is not native on 3.3.5; keep
+            --! the restart behavior private to this Cell-owned animation.
+            ag:Stop()
         end
+        ag:Play()
     end
 
     return canvas
 end
 
-animationPool.D = CreateObjectPool(CreateAnimationGroup_TypeD, ResetterFunc)
+animationPool.D = CreateCellObjectPool(CreateAnimationGroup_TypeD, ResetterFunc)
 
 -------------------------------------------------
 -- animation: E
@@ -452,14 +494,8 @@ local function CreateAnimationGroup_TypeE()
     tex:SetAllPoints(f)
     tex:SetTexture("Interface/AddOns/Cell/Media/Icons/arrow.tga")
 
-    -- mask
-    local mask = canvas:CreateMaskTexture()
-    mask:SetTexture(Cell.vars.whiteTexture, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
-    mask:SetAllPoints(canvas)
-    -- frame:SetSnapToPixelGrid(false)
-    -- frame:SetTexelSnappingBias(0)
-    tex:AddMaskTexture(mask)
-
+    --! WotLK fix: the translated arrow uses its own alpha channel and does not
+    --! require a fake mask region on 3.3.5.
     canvas:EnableMouse(false)
     f:EnableMouse(false)
 
@@ -506,16 +542,17 @@ local function CreateAnimationGroup_TypeE()
         tex:SetVertexColor(r, g, b, 0.6)
 
         if ag:IsPlaying() then
-            ag:Restart()
-        else
-            ag:Play()
+            --! WotLK fix: AnimationGroup:Restart is not native on 3.3.5; keep
+            --! the restart behavior private to this Cell-owned animation.
+            ag:Stop()
         end
+        ag:Play()
     end
 
     return canvas
 end
 
-animationPool.E = CreateObjectPool(CreateAnimationGroup_TypeE, ResetterFunc)
+animationPool.E = CreateCellObjectPool(CreateAnimationGroup_TypeE, ResetterFunc)
 
 -------------------------------------------------
 -- animation: F
@@ -531,17 +568,9 @@ local function CreateAnimationGroup_TypeF()
     local tex = f:CreateTexture(nil, "ARTWORK")
     tex:SetPoint("CENTER")
 
-    -- mask1
-    local mask1 = f:CreateMaskTexture()
-    mask1:SetAllPoints(tex)
-    mask1:SetTexture("Interface/AddOns/Cell/Media/Shapes/heart_filled_256", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
-    tex:AddMaskTexture(mask1)
-
-    -- mask2
-    local mask2 = canvas:CreateMaskTexture()
-    mask2:SetTexture(Cell.vars.whiteTexture, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
-    mask2:SetAllPoints(canvas)
-    tex:AddMaskTexture(mask2)
+    --! WotLK fix: use the heart art directly; its alpha channel replaces the
+    --! retail mask while the Cell-owned canvas provides the animation bounds.
+    tex:SetTexture("Interface/AddOns/Cell/Media/Shapes/heart_filled_256")
 
     canvas:EnableMouse(false)
     f:EnableMouse(false)
@@ -552,23 +581,22 @@ local function CreateAnimationGroup_TypeF()
 
     local a1 = ag:CreateAnimation("Alpha")
     a1.duration = 0.3
-    a1:SetFromAlpha(0)
-    a1:SetToAlpha(1)
+    --! WotLK fix: use Cell's private absolute-alpha driver; do not modify shared Alpha methods.
+    A.SetAbsoluteAlpha(a1, 0, 1)
     a1:SetOrder(1)
     a1:SetDuration(a1.duration)
     a1:SetSmoothing("OUT")
 
     local s1 = ag:CreateAnimation("Scale")
     s1.duration = 0.5
-    s1:SetScaleFrom(0, 0)
-    s1:SetScaleTo(1, 1)
+    --! WotLK fix: WotLK Scale is relative; drive Cell's absolute 0 -> 1 scale privately.
+    A.SetAbsoluteScale(s1, 0, 1)
     s1:SetOrder(1)
     s1:SetDuration(s1.duration)
 
     local a2 = ag:CreateAnimation("Alpha")
     a2.duration = 0.5
-    a2:SetFromAlpha(1)
-    a2:SetToAlpha(0)
+    A.SetAbsoluteAlpha(a2, 1, 0)
     a2:SetDuration(a2.duration)
     a2:SetOrder(2)
     a2:SetSmoothing("IN")
@@ -591,21 +619,21 @@ local function CreateAnimationGroup_TypeF()
 
         local l = max(parent:GetParent():GetWidth(), parent:GetParent():GetHeight()) * 2
         tex:SetSize(l, l)
-        -- tex:SetColorTexture(r, g, b, 0.6)
-        tex:SetTexture(Cell.vars.whiteTexture)
+        tex:SetTexture("Interface/AddOns/Cell/Media/Shapes/heart_filled_256")
         tex:SetVertexColor(r, g, b, 0.6)
 
         if ag:IsPlaying() then
-            ag:Restart()
-        else
-            ag:Play()
+            --! WotLK fix: AnimationGroup:Restart is not native on 3.3.5; keep
+            --! the restart behavior private to this Cell-owned animation.
+            ag:Stop()
         end
+        ag:Play()
     end
 
     return canvas
 end
 
-animationPool.F = CreateObjectPool(CreateAnimationGroup_TypeF, ResetterFunc)
+animationPool.F = CreateCellObjectPool(CreateAnimationGroup_TypeF, ResetterFunc)
 
 -------------------------------------------------
 -- animation: G
@@ -632,16 +660,15 @@ local function CreateAnimationGroup_TypeG()
 
     local a1 = ag:CreateAnimation("Alpha")
     a1.duration = 0.5
-    a1:SetFromAlpha(0)
-    a1:SetToAlpha(1)
+    --! WotLK fix: use Cell's private absolute-alpha driver; do not modify shared Alpha methods.
+    A.SetAbsoluteAlpha(a1, 0, 1)
     a1:SetOrder(1)
     a1:SetDuration(a1.duration)
     a1:SetSmoothing("OUT")
 
     local a2 = ag:CreateAnimation("Alpha")
     a2.duration = 0.5
-    a2:SetFromAlpha(1)
-    a2:SetToAlpha(0)
+    A.SetAbsoluteAlpha(a2, 1, 0)
     a2:SetDuration(a2.duration)
     a2:SetOrder(2)
     a2:SetSmoothing("IN")
@@ -668,16 +695,17 @@ local function CreateAnimationGroup_TypeG()
         a2:SetDuration(a2.duration / parent.speed)
 
         if ag:IsPlaying() then
-            ag:Restart()
-        else
-            ag:Play()
+            --! WotLK fix: AnimationGroup:Restart is not native on 3.3.5; keep
+            --! the restart behavior private to this Cell-owned animation.
+            ag:Stop()
         end
+        ag:Play()
     end
 
     return canvas
 end
 
-animationPool.G = CreateObjectPool(CreateAnimationGroup_TypeG, ResetterFunc)
+animationPool.G = CreateCellObjectPool(CreateAnimationGroup_TypeG, ResetterFunc)
 
 -------------------------------------------------
 -- indicator

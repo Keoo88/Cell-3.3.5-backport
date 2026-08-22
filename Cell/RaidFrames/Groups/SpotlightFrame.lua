@@ -1,11 +1,7 @@
 local _, Cell = ...
-
---! WotLK fix (coexistence): our PixelUtil (Cell.PixelUtil, built in Polyfills.lua)
---! is the one whose GetNearestPixelSize/SetPoint use the real gxResolution based
---! screen size. The global may belong to the standalone !!!ClassicAPI, so read ours
---! first and fall back to the global only if Polyfills has not run yet.
-local PixelUtil = (Cell and Cell.PixelUtil) or _G.PixelUtil
-
+--! WotLK fix: bind Cell timers privately so standalone !!!ClassicAPI cannot change semantics.
+local C_Timer = Cell.C_Timer
+local PixelUtil = Cell.PixelUtil
 local L = Cell.L
 local F = Cell.funcs
 local B = Cell.bFuncs
@@ -15,10 +11,17 @@ local P = Cell.pixelPerfectFuncs
 local LCG = LibStub("LibCustomGlow-1.0-Cell")
 
 local placeholders, assignmentButtons = {}, {}
-local menu, target, targettarget, focus, focustarget, unit, unitname, unitpet, unittarget, tank, boss1target, clear
+--! WotLK fix: `healer` не было в этом списке - кнопка целителя (строка 548) писалась
+--! в глобал _G.healer. Cell не владеет глобалами, а имя настолько общее, что его
+--! почти наверняка занимает кто-то ещё. Остальные кнопки меню (tank, boss1target и
+--! далее) объявлены здесь же, так что это просто пропуск. В апстриме то же самое.
+local menu, target, targettarget, focus, focustarget, unit, unitname, unitpet, unittarget, tank, healer, boss1target, clear
 local tanks, healers, names = {}, {}, {}
 local UpdateTanks, UpdateHealers, UpdateNames
-local tankUpdateRequired, nameUpdateRequired
+--! WotLK fix: healerUpdateRequired was missing from this list upstream, so every
+--! assignment to it leaked a global into _G - forbidden by the project invariant
+--! that Cell never owns globals (the name is generic enough to collide).
+local tankUpdateRequired, healerUpdateRequired, nameUpdateRequired
 local tooltipPoint, tooltipRelativePoint, tooltipX, tooltipY
 local NONE = strlower(_G.NONE)
 -------------------------------------------------
@@ -144,6 +147,9 @@ local function CreateAssignmentButton(index)
         if button == "RightButton" then --! clear
             local spotlight = menu:GetFrameRef("spotlight"..index)
             spotlight:SetAttribute("unit", nil)
+            --! WotLK fix: the delayed RegisterUnitWatch hide path also checks
+            --! specialUnit; leaving it set resurrects the cleared placeholder.
+            spotlight:SetAttribute("specialUnit", nil)
             spotlight:SetAttribute("refreshOnUpdate", nil)
             spotlight:SetAttribute("updateOnTargetChanged", nil)
             menu:GetFrameRef("assignment"..index):SetAttribute("text", nil)
@@ -196,7 +202,7 @@ local function CreateAssignmentButton(index)
 
         if InCombatLockdown() then return end
 
-        local f = F.GetMouseFocus()
+        local f = GetMouseFocus()
 
         if f == WorldFrame then
             f = F.GetUnitButtonByGUID(UnitGUID("mouseover") or "")
@@ -321,7 +327,7 @@ SecureHandlerSetFrameRef(config, "menu", menu)
 -- ]])
 
 -- menu items
-target = Cell.CreateButton(menu, L["Target"], "transparent-accent", {20, 20}, true, false, nil, nil, "SecureHandlerAttributeTemplate,SecureHandlerClickTemplate")
+target = Cell.CreateButton(menu, "Target", "transparent-accent", {20, 20}, true, false, nil, nil, "SecureHandlerAttributeTemplate,SecureHandlerClickTemplate")
 P.Point(target, "TOPLEFT", menu, "TOPLEFT", 1, -1)
 P.Point(target, "RIGHT", menu, "RIGHT", -1, 0)
 target:SetAttribute("_onclick", [[
@@ -343,7 +349,7 @@ target:SetAttribute("_onclick", [[
 function target:Save(index, unit) menu:Save(index, unit) end
 
 -- NOTE: no EVENT for this kind of targets， use OnUpdate
-targettarget = Cell.CreateButton(menu, L["Target of Target"], "transparent-accent", {20, 20}, true, false, nil, nil, "SecureHandlerAttributeTemplate,SecureHandlerClickTemplate")
+targettarget = Cell.CreateButton(menu, "Target of Target", "transparent-accent", {20, 20}, true, false, nil, nil, "SecureHandlerAttributeTemplate,SecureHandlerClickTemplate")
 P.Point(targettarget, "TOPLEFT", target, "BOTTOMLEFT")
 P.Point(targettarget, "TOPRIGHT", target, "BOTTOMRIGHT")
 targettarget:SetAttribute("_onclick", [[
@@ -364,7 +370,7 @@ targettarget:SetAttribute("_onclick", [[
 --! frame - so proxy it through to the menu.
 function targettarget:Save(index, unit) menu:Save(index, unit) end
 
-focus = Cell.CreateButton(menu, L["Focus"], "transparent-accent", {20, 20}, true, false, nil, nil, "SecureHandlerAttributeTemplate,SecureHandlerClickTemplate")
+focus = Cell.CreateButton(menu, "Focus", "transparent-accent", {20, 20}, true, false, nil, nil, "SecureHandlerAttributeTemplate,SecureHandlerClickTemplate")
 P.Point(focus, "TOPLEFT", targettarget, "BOTTOMLEFT")
 P.Point(focus, "TOPRIGHT", targettarget, "BOTTOMRIGHT")
 focus:SetAttribute("_onclick", [[
@@ -385,7 +391,7 @@ focus:SetAttribute("_onclick", [[
 --! frame - so proxy it through to the menu.
 function focus:Save(index, unit) menu:Save(index, unit) end
 
-focustarget = Cell.CreateButton(menu, L["Focus Target"], "transparent-accent", {20, 20}, true, false, nil, nil, "SecureHandlerAttributeTemplate,SecureHandlerClickTemplate")
+focustarget = Cell.CreateButton(menu, "Focus Target", "transparent-accent", {20, 20}, true, false, nil, nil, "SecureHandlerAttributeTemplate,SecureHandlerClickTemplate")
 P.Point(focustarget, "TOPLEFT", focus, "BOTTOMLEFT")
 P.Point(focustarget, "TOPRIGHT", focus, "BOTTOMRIGHT")
 focustarget:SetAttribute("_onclick", [[
@@ -406,7 +412,7 @@ focustarget:SetAttribute("_onclick", [[
 --! frame - so proxy it through to the menu.
 function focustarget:Save(index, unit) menu:Save(index, unit) end
 
-unit = Cell.CreateButton(menu, L["Unit"], "transparent-accent", {20, 20}, true, false, nil, nil, "SecureHandlerAttributeTemplate,SecureHandlerClickTemplate")
+unit = Cell.CreateButton(menu, "Unit", "transparent-accent", {20, 20}, true, false, nil, nil, "SecureHandlerAttributeTemplate,SecureHandlerClickTemplate")
 P.Point(unit, "TOPLEFT", focustarget, "BOTTOMLEFT")
 P.Point(unit, "TOPRIGHT", focustarget, "BOTTOMRIGHT")
 unit:SetAttribute("_onclick", [[
@@ -430,7 +436,7 @@ function unit:SetUnit(index, target)
     end
 end
 
-unitname = Cell.CreateButton(menu, L["Unit's Name"], "transparent-accent", {20, 20}, true, false, nil, nil, "SecureHandlerAttributeTemplate,SecureHandlerClickTemplate")
+unitname = Cell.CreateButton(menu, "Unit's Name", "transparent-accent", {20, 20}, true, false, nil, nil, "SecureHandlerAttributeTemplate,SecureHandlerClickTemplate")
 P.Point(unitname, "TOPLEFT", unit, "BOTTOMLEFT")
 P.Point(unitname, "TOPRIGHT", unit, "BOTTOMRIGHT")
 unitname:SetAttribute("_onclick", [[
@@ -467,7 +473,7 @@ function unitname:SetUnit(index, target)
     end
 end
 
-unitpet = Cell.CreateButton(menu, L["Unit's Pet"], "transparent-accent", {20, 20}, true, false, nil, nil, "SecureHandlerAttributeTemplate,SecureHandlerClickTemplate")
+unitpet = Cell.CreateButton(menu, "Unit's Pet", "transparent-accent", {20, 20}, true, false, nil, nil, "SecureHandlerAttributeTemplate,SecureHandlerClickTemplate")
 P.Point(unitpet, "TOPLEFT", unitname, "BOTTOMLEFT")
 P.Point(unitpet, "TOPRIGHT", unitname, "BOTTOMRIGHT")
 unitpet:SetAttribute("_onclick", [[
@@ -491,7 +497,7 @@ function unitpet:SetUnit(index, target)
     end
 end
 
-unittarget = Cell.CreateButton(menu, L["Unit's Target"], "transparent-accent", {20, 20}, true, false, nil, nil, "SecureHandlerAttributeTemplate,SecureHandlerClickTemplate")
+unittarget = Cell.CreateButton(menu, "Unit's Target", "transparent-accent", {20, 20}, true, false, nil, nil, "SecureHandlerAttributeTemplate,SecureHandlerClickTemplate")
 P.Point(unittarget, "TOPLEFT", unitpet, "BOTTOMLEFT")
 P.Point(unittarget, "TOPRIGHT", unitpet, "BOTTOMRIGHT")
 unittarget:SetAttribute("_onclick", [[
@@ -564,10 +570,11 @@ function healer:SetUnit(index)
     menu:Save(index, "healer")
 end
 
-boss1target = Cell.CreateButton(menu, L["Boss1 Target"], "transparent-accent", {20, 20}, true, false, nil, nil, "SecureHandlerAttributeTemplate,SecureHandlerClickTemplate")
+boss1target = Cell.CreateButton(menu, "Boss1 Target", "transparent-accent", {20, 20}, true, false, nil, nil, "SecureHandlerAttributeTemplate,SecureHandlerClickTemplate")
 P.Point(boss1target, "TOPLEFT", healer, "BOTTOMLEFT")
 P.Point(boss1target, "TOPRIGHT", healer, "BOTTOMRIGHT")
-boss1target:SetEnabled(not Cell.isVanilla)
+--! WotLK fix: ретейл-флаг свёрнут в константу 3.3.5 - Cell.is* заданы литералами в Utils.lua.
+boss1target:SetEnabled(true)
 boss1target:SetAttribute("_onclick", [[
     local menu = self:GetParent()
     local index = menu:GetAttribute("index")
@@ -586,7 +593,7 @@ boss1target:SetAttribute("_onclick", [[
 --! frame - so proxy it through to the menu.
 function boss1target:Save(index, unit) menu:Save(index, unit) end
 
-clear = Cell.CreateButton(menu, L["Clear"], "transparent-accent", {20, 20}, true, false, nil, nil, "SecureHandlerAttributeTemplate,SecureHandlerClickTemplate")
+clear = Cell.CreateButton(menu, "Clear", "transparent-accent", {20, 20}, true, false, nil, nil, "SecureHandlerAttributeTemplate,SecureHandlerClickTemplate")
 P.Point(clear, "TOPLEFT", boss1target, "BOTTOMLEFT")
 P.Point(clear, "TOPRIGHT", boss1target, "BOTTOMRIGHT")
 clear:SetAttribute("_onclick", [[
@@ -616,7 +623,7 @@ UpdateTanks = function()
     -- search for tanks
     local units = {}
     for unit in F.IterateGroupMembers() do
-        if Cell_UnitGroupRolesAssigned(unit) == "TANK" then --! WotLK fix: Cell-private role polyfill (global stays native)
+        if Cell.UnitGroupRolesAssigned(unit) == "TANK" then --! WotLK fix: Cell-private role polyfill (global stays native)
             tinsert(units, unit)
         end
     end
@@ -648,7 +655,7 @@ UpdateHealers = function()
     -- search for healers
     local units = {}
     for unit in F.IterateGroupMembers() do
-        if Cell_UnitGroupRolesAssigned(unit) == "HEALER" then --! WotLK fix: Cell-private role polyfill (global stays native)
+        if Cell.UnitGroupRolesAssigned(unit) == "HEALER" then --! WotLK fix: Cell-private role polyfill (global stays native)
             tinsert(units, unit)
         end
     end
@@ -705,6 +712,34 @@ UpdateNames = function()
     nameUpdateRequired = nil
 end
 
+--! WotLK fix: "hidePlaceholder" is only CONSULTED by the secure OnShow/OnHide/
+--! OnAttributeChanged snippets (see the WrapScript block above) - nothing in the
+--! addon ever APPLIES it. Toggling the option fires none of those scripts by
+--! itself: for tank/healer/name slots UpdateLayout never writes "unit" at all,
+--! and where it does write it the value is unchanged. So the whole feature rests
+--! on "SetAttribute with an identical value re-fires OnAttributeChanged" - the
+--! one assumption FrameXML itself refuses to make (SecureStateDriver.lua guards
+--! redundant writes twice: state-unitexists and the state-driver OnUpdate).
+--! Apply it here instead, from insecure Lua and out of combat: deterministic on
+--! any client and cheaper than a restricted-environment round trip. In combat the
+--! placeholder is implicitly protected (child of the SecureFrameTemplate
+--! spotlightFrame), so there the snippets stay the only writer, as before.
+local function ApplyPlaceholderVisibility()
+    if InCombatLockdown() then return end
+
+    local hide = Cell.vars.currentLayoutTable["spotlight"]["hidePlaceholder"]
+
+    for i = 1, 15 do
+        local b = Cell.unitButtons.spotlight[i]
+        -- mirrors the OnAttributeChanged snippet's condition exactly
+        if not hide and not b:IsShown() and (b:GetAttribute("unit") or b:GetAttribute("specialUnit")) then
+            placeholders[i]:Show()
+        else
+            placeholders[i]:Hide()
+        end
+    end
+end
+
 local timer
 local function UpdateAll()
     timer = nil
@@ -714,18 +749,27 @@ local function UpdateAll()
     UpdateHealers()
     nameUpdateRequired = true
     UpdateNames()
+    ApplyPlaceholderVisibility()
 end
 
-menu:RegisterEvent("GROUP_ROSTER_UPDATE")
+--! WotLK fix: spotlight roster refreshes consume Cell's one private roster
+--! callback instead of registering the non-native GROUP_ROSTER_UPDATE event.
+local function GroupRosterUpdate()
+    if timer then
+        timer:Cancel()
+    end
+    timer = C_Timer.NewTimer(1, UpdateAll)
+end
+Cell.RegisterCallback(
+    "GroupRosterUpdate",
+    "SpotlightFrame_GroupRosterUpdate",
+    GroupRosterUpdate
+)
+
 menu:RegisterEvent("PLAYER_REGEN_ENABLED")
 menu:RegisterEvent("PLAYER_REGEN_DISABLED")
 menu:SetScript("OnEvent", function(self, event)
-    if event == "GROUP_ROSTER_UPDATE" then
-        if timer then
-            timer:Cancel()
-        end
-        timer = C_Timer.NewTimer(1, UpdateAll)
-    elseif event == "PLAYER_REGEN_DISABLED" then
+    if event == "PLAYER_REGEN_DISABLED" then
         unit:SetEnabled(false)
         unitname:SetEnabled(false)
         unittarget:SetEnabled(false)
@@ -764,9 +808,39 @@ end
 
 -- update width to show full text
 local dumbFS1 = menu:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
-dumbFS1:SetText(L["Target of Target"])
 local dumbFS2 = menu:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
-dumbFS2:SetText(L["Unit's Target"])
+
+--! WotLK fix: every label above is created with its ENGLISH KEY as a placeholder and
+--! translated here instead. Cell's L is an identity fallback (Locales/enUS.lua): the
+--! translations only exist after ns.LoadUserLocale(), which needs CellDB and therefore
+--! runs on ADDON_LOADED - after this file's main chunk. Reading L at creation time froze
+--! the whole assignment menu in English for the session on any non-enUS client.
+--! Three things make this the safe shape here:
+--!   * the placeholder must be a non-empty string - Cell.CreateButton captures
+--!     b:GetFontString() right after b:SetText(text) and guards the dropdown-item label
+--!     anchoring with `if s then`, so nil/"" would cost the button its FontString;
+--!   * the AddonLoaded callback runs strictly after LoadUserLocale (Core_Wrath.lua fires
+--!     it at the end of the same handler) and strictly before UpdatePixelPerfect, which
+--!     is fired from PLAYER_LOGIN - so the width below is measured on the FINAL strings;
+--!   * dumbFS1/dumbFS2 are only measuring sticks for the two longest items, so they have
+--!     to be relocalized together with the buttons or the menu comes out too narrow for
+--!     a translation.
+local function LocalizeMenu()
+    target:SetText(L["Target"])
+    targettarget:SetText(L["Target of Target"])
+    focus:SetText(L["Focus"])
+    focustarget:SetText(L["Focus Target"])
+    unit:SetText(L["Unit"])
+    unitname:SetText(L["Unit's Name"])
+    unitpet:SetText(L["Unit's Pet"])
+    unittarget:SetText(L["Unit's Target"])
+    boss1target:SetText(L["Boss1 Target"])
+    clear:SetText(L["Clear"])
+
+    dumbFS1:SetText(L["Target of Target"])
+    dumbFS2:SetText(L["Unit's Target"])
+end
+Cell.RegisterCallback("AddonLoaded", "SpotlightFrame_LocalizeMenu", LocalizeMenu)
 
 function menu:UpdatePixelPerfect()
     menu:SetSize(ceil(max(dumbFS1:GetStringWidth(), dumbFS2:GetStringWidth())) + P.Scale(13), P.Scale(20) * 11 + P.Scale(2))
@@ -1050,6 +1124,7 @@ local function UpdateLayout(layout, which)
             UpdateHealers()
             nameUpdateRequired = true
             UpdateNames()
+            ApplyPlaceholderVisibility()
             spotlightFrame:Show()
         else
             for i = 1, 15 do

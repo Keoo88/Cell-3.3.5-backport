@@ -1,17 +1,22 @@
 local _, Cell = ...
-
---! WotLK fix (coexistence): our PixelUtil (Cell.PixelUtil, built in Polyfills.lua)
---! is the one whose GetNearestPixelSize/SetPoint use the real gxResolution based
---! screen size. The global may belong to the standalone !!!ClassicAPI, so read ours
---! first and fall back to the global only if Polyfills has not run yet.
-local PixelUtil = (Cell and Cell.PixelUtil) or _G.PixelUtil
-
+--! WotLK fix: bind Cell timers privately so standalone !!!ClassicAPI cannot change semantics.
+local C_Timer = Cell.C_Timer
+local PixelUtil = Cell.PixelUtil
 local L = Cell.L
 local F = Cell.funcs
 local P = Cell.pixelPerfectFuncs
 local A = Cell.animations
 
-local marks, worldMarks
+--! WotLK fix: ветка world-меток («маячки» на землю, /wm) вырезана целиком - фича
+--! появилась в 4.0, а на 3.3.5 её нет ни в API (кодекс: НЕТ на PlaceRaidMarker,
+--! ClearRaidMarker, IsRaidMarkerActive), ни в secure-шаблонах (SECURE_ACTIONS в
+--! FrameXML 3.3.5a SecureTemplates.lua держит ровно 16 типов, "worldmarker" среди
+--! них нет, а неизвестный тип молча ничего не делает). Убраны: фрейм worldMarks,
+--! девять кнопок SecureActionButtonTemplate, worldMarkIndices, worldMarksTimer,
+--! оба скрипта фрейма и все ветки ^world / else -- both в ShowMover,
+--! CheckPermission и Rearrange. Метки по цели (SetRaidTarget) - другая система,
+--! она работает и осталась нетронутой. Подробности - audit/STUDY_GAPS.md §2.23.
+local marks
 
 local marksFrame = CreateFrame("Frame", "CellRaidMarksFrame", Cell.frames.mainFrame, "SecureFrameTemplate")
 Cell.frames.raidMarksFrame = marksFrame
@@ -34,22 +39,30 @@ end)
 -------------------------------------------------
 marksFrame.moverText = marksFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
 marksFrame.moverText:SetPoint("TOP", 0, -3)
-marksFrame.moverText:SetText(L["Mover"])
+--! WotLK fix: label set in ShowMover - at load time L still returns the English key
+--! (ns.LoadUserLocale runs on ADDON_LOADED, after every file), and a FontString keeps
+--! whatever string it was handed.
 marksFrame.moverText:Hide()
 
---! WotLK fix: world markers do not exist on 3.3.5 (added in 4.0), and the
---! secure attribute type "worldmarker" is not recognized by 3.3.5
---! SecureTemplates. The options dropdown already disables world/both modes on
---! wrath, but a SavedVariables file migrated from a newer client can still
---! carry "world_*"/"both_*" - which would show a dead UI and start the
---! IsRaidMarkerActive ticker (API missing on 3.3.5 -> Lua error every 0.5s).
---! Coerce such values back to target-only, preserving orientation.
+--! WotLK fix: хват за всю площадь бара в режиме мувера, см. F.CreateMoverOverlay.
+--! Раньше тащить можно было только за полосу 20 юнитов над кнопками меток (~14
+--! экранных пикселей при масштабе 0.7), а промах по ней ставил метку на цель.
+local moverOverlay = F.CreateMoverOverlay(marksFrame, function()
+    return CellDB["tools"]["marks"][4]
+end)
+
+--! WotLK fix: world markers do not exist on 3.3.5 (added in 4.0) and the whole
+--! branch is now deleted (see the header note), so this coercion is the ONLY
+--! thing standing between a SavedVariables file migrated from a newer client and
+--! a broken marks bar: "world_*"/"both_*" would no longer match any branch, the
+--! bar would keep target-mark geometry for a mode that has no widgets left.
+--! Keep it, and keep calling it from BOTH readers (ShowMover, CheckPermission)
+--! before the mode string is used. Orientation is preserved.
+--! Guard `Cell.isVanilla or Cell.isWrath` вырезан - на 3.3.5 он всегда истина.
 local function NormalizeMarksMode()
-    if Cell.isVanilla or Cell.isWrath then
-        local mode = CellDB["tools"]["marks"][3]
-        if strfind(mode, "^world") or strfind(mode, "^both") then
-            CellDB["tools"]["marks"][3] = strfind(mode, "_v$") and "target_v" or "target_h"
-        end
+    local mode = CellDB["tools"]["marks"][3]
+    if strfind(mode, "^world") or strfind(mode, "^both") then
+        CellDB["tools"]["marks"][3] = strfind(mode, "_v$") and "target_v" or "target_h"
     end
 end
 
@@ -58,19 +71,15 @@ local function ShowMover(show)
         if not CellDB["tools"]["marks"][1] then return end
         NormalizeMarksMode() --! WotLK fix
         marksFrame:EnableMouse(true)
+        marksFrame.moverText:SetText(L["Mover"]) --! WotLK fix: см. выше
         marksFrame.moverText:Show()
         Cell.StylizeFrame(marksFrame, {0, 1, 0, 0.4}, {0, 0, 0, 0})
         if not F.HasPermission(true) then -- button not shown
-            if strfind(CellDB["tools"]["marks"][3], "^target") then
-                marks:Show()
-            elseif strfind(CellDB["tools"]["marks"][3], "^world") then
-                worldMarks:Show()
-            else
-                marks:Show()
-                worldMarks:Show()
-            end
+            --! WotLK fix: только метки по цели - ветки ^world / both вырезаны.
+            marks:Show()
         end
         marksFrame:SetAlpha(1)
+        moverOverlay:Show()
     else
         marksFrame:EnableMouse(false)
         marksFrame.moverText:Hide()
@@ -79,9 +88,9 @@ local function ShowMover(show)
             if not (Cell.vars.groupType == "solo" and CellDB["tools"]["marks"][2]) then
                 marks:Hide()
             end
-            worldMarks:Hide()
         end
         marksFrame:SetAlpha(CellDB["tools"]["fadeOut"] and 0 or 1)
+        moverOverlay:Hide()
     end
 end
 Cell.RegisterCallback("ShowMover", "RaidMarks_ShowMover", ShowMover)
@@ -196,7 +205,9 @@ for i = 1, 9 do
         end)
     end
 
-    markButtons[i].bg:SetColorTexture(0.1, 0.1, 0.1, 0.7)
+    --! WotLK fix: SetColorTexture на 3.3.5 нет - это нативная числовая форма
+    --! SetTexture(r, g, b[, a]); шим TextureBase в WidgetAPI удалён.
+    markButtons[i].bg:SetTexture(0.1, 0.1, 0.1, 0.7)
     markButtons[i]:SetBackdropColor(0, 0, 0, 0)
     markButtons[i].color = {0, 0, 0, 0}
     markButtons[i].hoverColor = {markColors[i][1], markColors[i][2], markColors[i][3], 0.35}
@@ -220,82 +231,10 @@ marks:SetScript("OnHide", function()
 end)
 
 -------------------------------------------------
--- world marks
--------------------------------------------------
-worldMarks = Cell.CreateFrame("CellRaidMarksFrame_WorldMarks", marksFrame, 196, 20, true)
-worldMarks:SetPoint("BOTTOMLEFT")
-worldMarks:Hide()
-
-local worldMarkIndices = {5, 6, 3, 2, 7, 1, 4, 8}
-local worldMarkButtons = {}
-for i = 1, 9 do
-    worldMarkButtons[i] = Cell.CreateButton(worldMarks, "", "accent-hover", {20, 20}, false, false, nil, nil, "SecureActionButtonTemplate")
-    --! WotLK fix: on 3.3.5 SecureActionButton_OnClick executes the action on
-    --! BOTH down and up (the ActionButtonUseKeyDown cvar gating is a later
-    --! addition), so registering Up+Down fires the action twice per click.
-    --! Register down-only, matching the target-mark buttons above.
-    worldMarkButtons[i]:RegisterForClicks("LeftButtonDown")
-    worldMarkButtons[i].texture = worldMarkButtons[i]:CreateTexture(nil, "ARTWORK")
-
-    if i == 9 then
-        -- clear all marks
-        P.Point(worldMarkButtons[i].texture, "TOPLEFT", worldMarkButtons[i], "TOPLEFT", 2, -2)
-        P.Point(worldMarkButtons[i].texture, "BOTTOMRIGHT", worldMarkButtons[i], "BOTTOMRIGHT", -2, 2)
-        worldMarkButtons[i].texture:SetTexture("Interface\\Buttons\\UI-GroupLoot-Pass-Up")
-        worldMarkButtons[i]:SetAttribute("type", "worldmarker")
-        worldMarkButtons[i]:SetAttribute("action", "clear")
-    else
-        P.Point(worldMarkButtons[i].texture, "TOPLEFT", worldMarkButtons[i], "TOPLEFT", 1, -1)
-        P.Point(worldMarkButtons[i].texture, "BOTTOMRIGHT", worldMarkButtons[i], "BOTTOMRIGHT", -1, 1)
-        worldMarkButtons[i].texture:SetColorTexture(markColors[i][1], markColors[i][2], markColors[i][3], 0.4)
-        worldMarkButtons[i]:SetAttribute("type", "worldmarker")
-        worldMarkButtons[i]:SetAttribute("marker", worldMarkIndices[i])
-        -- worldMarkButtons[i]:SetAttribute("type", "macro")
-        -- worldMarkButtons[i]:SetAttribute("macrotext", "/wm "..worldMarkIndices[i])
-    end
-
-    worldMarkButtons[i].bg:SetColorTexture(0.1, 0.1, 0.1, 0.7)
-    worldMarkButtons[i]:SetBackdropColor(0, 0, 0, 0)
-    worldMarkButtons[i].color = {0, 0, 0, 0}
-    worldMarkButtons[i].hoverColor = {markColors[i][1], markColors[i][2], markColors[i][3], 0.35}
-
-    -- if i == 1 then
-    --     P.Point(worldMarkButtons[i], "TOPLEFT")
-    -- else
-    --     P.Point(worldMarkButtons[i], "LEFT", worldMarkButtons[i-1], "RIGHT", 2, 0)
-    -- end
-end
-
-local worldMarksTimer
-worldMarks:SetScript("OnShow", function()
-    --! WotLK fix: IsRaidMarkerActive does not exist on 3.3.5 - never start
-    --! the poller there (worldMarks should not be shown on wrath anyway).
-    if not IsRaidMarkerActive then return end
-    worldMarksTimer = C_Timer.NewTicker(0.5, function()
-        for i = 1, 8 do
-            if IsRaidMarkerActive(worldMarkIndices[i]) then
-                worldMarkButtons[i]:SetBackdropBorderColor(markColors[i][1], markColors[i][2], markColors[i][3], 1)
-            else
-                worldMarkButtons[i]:SetBackdropBorderColor(0, 0, 0, 1)
-            end
-        end
-    end)
-end)
-worldMarks:SetScript("OnHide", function()
-    if worldMarksTimer then
-        worldMarksTimer:Cancel()
-        worldMarksTimer = nil
-    end
-end)
-
--------------------------------------------------
 -- fade out
 -------------------------------------------------
 local buttons = {}
 for _, b in pairs(markButtons) do
-    tinsert(buttons, b)
-end
-for _, b in pairs(worldMarkButtons) do
     tinsert(buttons, b)
 end
 A.ApplyFadeInOutToParent(marksFrame, function()
@@ -308,76 +247,41 @@ end, unpack(buttons))
 local function Rearrange(marksConfig)
     local scaled20 = P.Scale(20)
 
+    --! WotLK fix: остался только режим "по цели" - ветки ^world и both вырезаны
+    --! вместе с фреймом. Строка режима по-прежнему несёт ориентацию (_h/_v),
+    --! поэтому разбор по суффиксу сохранён как был.
     if strfind(marksConfig, "_h$") then
         local width = scaled20 * 9 + P.Scale(2) * 8
 
         marks:SetSize(width, scaled20)
-        worldMarks:SetSize(width, scaled20)
-
-        if strfind(marksConfig, "^target") then
-            marksFrame:SetSize(width, P.Scale(40))
-            worldMarks:Hide()
-            P.ClearPoints(marks)
-            P.Point(marks, "BOTTOMLEFT")
-        elseif strfind(marksConfig, "^world") then
-            marksFrame:SetSize(width, P.Scale(40))
-            marks:Hide()
-            P.ClearPoints(worldMarks)
-            P.Point(worldMarks, "BOTTOMLEFT")
-        else -- both
-            marksFrame:SetSize(width, P.Scale(60))
-            P.ClearPoints(worldMarks)
-            P.Point(worldMarks, "BOTTOMLEFT")
-            P.ClearPoints(marks)
-            P.Point(marks, "BOTTOMLEFT", worldMarks, "TOPLEFT", 0, 2)
-        end
+        marksFrame:SetSize(width, P.Scale(40))
+        P.ClearPoints(marks)
+        P.Point(marks, "BOTTOMLEFT")
 
         -- repoint each button
         for i = 1, 9 do
             P.ClearPoints(markButtons[i])
-            P.ClearPoints(worldMarkButtons[i])
             if i == 1 then
                 P.Point(markButtons[i], "TOPLEFT")
-                P.Point(worldMarkButtons[i], "TOPLEFT")
             else
                 P.Point(markButtons[i], "TOPLEFT", markButtons[i-1], "TOPRIGHT", 2, 0)
-                P.Point(worldMarkButtons[i], "TOPLEFT", worldMarkButtons[i-1], "TOPRIGHT", 2, 0)
             end
         end
     elseif strfind(marksConfig, "_v$") then
         local height = scaled20 * 9 + P.Scale(2) * 8
 
         marks:SetSize(scaled20, height)
-        worldMarks:SetSize(scaled20, height)
-
-        if strfind(marksConfig, "^target") then
-            marksFrame:SetSize(scaled20, height + scaled20)
-            worldMarks:Hide()
-            P.ClearPoints(marks)
-            P.Point(marks, "BOTTOMLEFT")
-        elseif strfind(marksConfig, "^world") then
-            marksFrame:SetSize(scaled20, height + scaled20)
-            marks:Hide()
-            P.ClearPoints(worldMarks)
-            P.Point(worldMarks, "BOTTOMLEFT")
-        else -- both
-            marksFrame:SetSize(P.Scale(40) + P.Scale(2), height + scaled20)
-            P.ClearPoints(worldMarks)
-            P.Point(worldMarks, "BOTTOMLEFT")
-            P.ClearPoints(marks)
-            P.Point(marks, "BOTTOMLEFT", worldMarks, "BOTTOMRIGHT", 2, 0)
-        end
+        marksFrame:SetSize(scaled20, height + scaled20)
+        P.ClearPoints(marks)
+        P.Point(marks, "BOTTOMLEFT")
 
         -- repoint each button
         for i = 1, 9 do
             P.ClearPoints(markButtons[i])
-            P.ClearPoints(worldMarkButtons[i])
             if i == 1 then
                 P.Point(markButtons[i], "TOPLEFT")
-                P.Point(worldMarkButtons[i], "TOPLEFT")
             else
                 P.Point(markButtons[i], "TOPLEFT", markButtons[i-1], "BOTTOMLEFT", 0, -2)
-                P.Point(worldMarkButtons[i], "TOPLEFT", worldMarkButtons[i-1], "BOTTOMLEFT", 0, -2)
             end
         end
     end
@@ -390,28 +294,11 @@ local function CheckPermission()
         marksFrame:UnregisterEvent("PLAYER_REGEN_ENABLED")
         NormalizeMarksMode() --! WotLK fix
         if CellDB["tools"]["marks"][1] then
-            if strfind(CellDB["tools"]["marks"][3], "^target") then
-                if marksFrame.moverText:IsShown() or Cell.vars.hasPartyMarkPermission then
-                    marks:Show()
-                else
-                    marks:Hide()
-                end
-
-            elseif strfind(CellDB["tools"]["marks"][3], "^world") then
-                if marksFrame.moverText:IsShown() or Cell.vars.hasPartyMarkPermission then
-                    worldMarks:Show()
-                else
-                    worldMarks:Hide()
-                end
-
-            else -- both
-                if marksFrame.moverText:IsShown() or Cell.vars.hasPartyMarkPermission then
-                    marks:Show()
-                    worldMarks:Show()
-                else
-                    marks:Hide()
-                    worldMarks:Hide()
-                end
+            --! WotLK fix: единственный оставшийся режим - метки по цели.
+            if marksFrame.moverText:IsShown() or Cell.vars.hasPartyMarkPermission then
+                marks:Show()
+            else
+                marks:Hide()
             end
 
             -- override
@@ -422,7 +309,6 @@ local function CheckPermission()
             Rearrange(CellDB["tools"]["marks"][3])
         else
             marks:Hide()
-            worldMarks:Hide()
         end
     end
 end
@@ -457,14 +343,11 @@ Cell.RegisterCallback("UpdateTools", "RaidMarks_UpdateTools", UpdateTools)
 local function UpdatePixelPerfect()
     -- P.Resize(marksFrame)
     -- P.Resize(marks)
-    -- P.Resize(worldMarks)
     P.Repoint(marks) -- only marks needs to repoint
 
     for i = 1, 9 do
         markButtons[i]:UpdatePixelPerfect()
-        worldMarkButtons[i]:UpdatePixelPerfect()
         P.Repoint(markButtons[i].texture)
-        P.Repoint(worldMarkButtons[i].texture)
     end
 end
 Cell.RegisterCallback("UpdatePixelPerfect", "Marks_UpdatePixelPerfect", UpdatePixelPerfect)

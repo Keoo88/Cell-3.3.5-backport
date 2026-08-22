@@ -295,6 +295,14 @@ Cell.defaults.layout = {
             ["position"] = {"TOPLEFT", "button", "TOPLEFT", 0, 0},
             ["frameLevel"] = 7,
             ["size"] = {11, 11},
+            --! WotLK fix: 100 - это ровно прежнее поведение (мигаем, когда юнит
+            --! набрал угрозу того, кто моба держит). Ниже - раннее предупреждение,
+            --! выше - только реальный съём. hideForTanks выключен, чтобы обновление
+            --! ничего не поменяло молча. Существующим базам ключи доберёт
+            --! RepairAgainstDefaults в Revise (он ходит по built-in индикаторам
+            --! каждый вход в игру).
+            ["threatThreshold"] = 100,
+            ["hideForTanks"] = false,
         }, -- 13
         {
             ["name"] = "Aggro (bar)",
@@ -312,6 +320,10 @@ Cell.defaults.layout = {
             ["enabled"] = false,
             ["frameLevel"] = 3,
             ["thickness"] = 2,
+            --! WotLK fix: свой порог и свой "не показывать танков" - рамка и мигание
+            --! это два разных индикатора, включают их независимо. См. 13.
+            ["threatThreshold"] = 100,
+            ["hideForTanks"] = false,
         }, -- 15
         {
             ["name"] = "Shield Bar",
@@ -517,6 +529,10 @@ Cell.defaults.layout = {
             ["frameLevel"] = 10,
             ["size"] = {13, 13},
             ["orientation"] = "right-to-left",
+            --! WotLK fix: подсветка иконки стала отдельной настройкой. true - как
+            --! было раньше, чтобы обновление ничего не меняло молча; существующим
+            --! базам ключ доберёт RepairAgainstDefaults в Revise.
+            ["showGlow"] = true,
         }, -- 29
     },
 }

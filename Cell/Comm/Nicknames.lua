@@ -1,6 +1,13 @@
 local _, Cell = ...
+--! WotLK fix: bind Cell timers privately so standalone !!!ClassicAPI cannot change semantics.
+local C_Timer = Cell.C_Timer
 local L = Cell.L
 local F = Cell.funcs
+--! WotLK fix: consume Cell-private group adapters.
+local IsInGroup = Cell.IsInGroup
+local IsInRaid = Cell.IsInRaid
+--! WotLK fix: realm normalization is private to Cell.
+local GetNormalizedRealmName = Cell.GetNormalizedRealmName
 
 local LBW = LibStub:GetLibrary("LibBadWords")
 local Comm = LibStub:GetLibrary("AceComm-3.0")
@@ -10,14 +17,8 @@ local Comm = LibStub:GetLibrary("AceComm-3.0")
 -----------------------------------------
 local sendChannel
 local function UpdateSendChannel()
-    -- 3.3.5a lacks INSTANCE_CHAT for addon traffic; use group/raid instead.
-    if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
-        sendChannel = IsInRaid() and "RAID" or "PARTY"
-    elseif IsInRaid() then
-        sendChannel = "RAID"
-    else
-        sendChannel = "PARTY"
-    end
+    --! WotLK fix: 3.3.5a has no instance-group category or INSTANCE_CHAT addon channel.
+    sendChannel = IsInRaid() and "RAID" or "PARTY"
 end
 
 -----------------------------------------
@@ -112,7 +113,9 @@ function nickname:PLAYER_ENTERING_WORLD()
     Cell.Fire("UpdateNicknames")
 end
 
-function nickname:GROUP_ROSTER_UPDATE()
+--! WotLK fix: nickname sync uses Cell's private roster callback; 3.3.5a has
+--! no native GROUP_ROSTER_UPDATE frame event.
+local function GroupRosterUpdate()
     CheckNicknames()
 end
 ---------------------------------------
@@ -127,7 +130,7 @@ local function UpdateNicknames(which, value1, value2)
 
         if CellDB["nicknames"]["sync"] then
             CheckNicknames()
-            nickname:RegisterEvent("GROUP_ROSTER_UPDATE")
+            Cell.RegisterCallback("GroupRosterUpdate", "Nicknames_GroupRosterUpdate", GroupRosterUpdate)
         end
 
         -- customs
@@ -152,11 +155,11 @@ local function UpdateNicknames(which, value1, value2)
     elseif which == "sync" then
         if CellDB["nicknames"]["sync"] then
             CheckNicknames()
-            nickname:RegisterEvent("GROUP_ROSTER_UPDATE")
+            Cell.RegisterCallback("GroupRosterUpdate", "Nicknames_GroupRosterUpdate", GroupRosterUpdate)
         else
             -- clear all except mine
             F.RemoveElementsExceptKeys(Cell.vars.nicknames, Cell.vars.playerNameShort)
-            nickname:UnregisterEvent("GROUP_ROSTER_UPDATE")
+            Cell.UnregisterCallback("GroupRosterUpdate", "Nicknames_GroupRosterUpdate")
 
             if nic_check then nic_check:Cancel() end
             -- disabled, notify others

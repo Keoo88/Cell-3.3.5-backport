@@ -203,7 +203,9 @@ LoadList = function()
             customs[i].separator1 = customs[i]:CreateTexture(nil, "ARTWORK")
             customs[i].separator1:SetPoint("TOP")
             customs[i].separator1:SetPoint("BOTTOM")
-            customs[i].separator1:SetColorTexture(0, 0, 0, 1)
+            --! WotLK fix: SetColorTexture на 3.3.5 нет - это нативная числовая форма
+            --! SetTexture(r, g, b[, a]); шим TextureBase в WidgetAPI удалён.
+            customs[i].separator1:SetTexture(0, 0, 0, 1)
             P.Size(customs[i].separator1, 1, 1)
 
             -- nickname
@@ -216,7 +218,7 @@ LoadList = function()
             -- separator2
             -- customs[i].separator2 = customs[i]:CreateTexture(nil, "ARTWORK")
             -- customs[i].separator2:SetPoint("RIGHT", -17, 0)
-            -- customs[i].separator2:SetColorTexture(0, 0, 0, 1)
+            -- customs[i].separator2:SetTexture(0, 0, 0, 1)
             -- P.Size(customs[i].separator2, 1, 20)
 
             -- del

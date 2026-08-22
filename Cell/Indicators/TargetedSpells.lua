@@ -41,6 +41,10 @@ local casts = {}
 local castsOnUnit, sortedCastsOnUnit = {}, {}
 local recheck = {}
 local maxIcons, showAllSpells
+--! WotLK fix: собственный флаг включённости. Нужен пересчёту ниже, а спросить у
+--! кадра нельзя дёшево: IsEventRegistered есть на 3.3.5 (проверено codex), но это
+--! вызов на каждую проверку, а флаг ставится один раз в I.EnableTargetedSpells.
+local isEnabled
 local eventFrame = CreateFrame("Frame")
 
 local function Reset()
@@ -238,26 +242,97 @@ local function CheckUnitCast(sourceUnit, isRecheck)
 end
 
 -------------------------------------------------
+-- list / glow changed
+-------------------------------------------------
+--! WotLK fix: смена списка заклинаний, настроек свечения или галки "show all spells"
+--! раньше только переписывала Cell.vars.* / файловый локал, а экран оставался в
+--! старом состоянии (последняя незакрытая часть GAP-029). Причина - casts заполняется
+--! уже через фильтр (CheckUnitCast: заклинание в списке ИЛИ showAllSpells), поэтому
+--! каст, начавшийся когда заклинания в списке ещё не было, в таблице отсутствует
+--! вообще, а каст только что удалённого заклинания продолжает висеть до истечения.
+--! Полная пересборка индикатора здесь запрещена, поэтому: выкидываем записи, которые
+--! больше не проходят фильтр, перерисовываем затронутые кнопки и - только если фильтр
+--! расширился - перечитываем источники, которые на 3.3.5 вообще можно назвать: свою
+--! цель, фокус, наведение и цели группы. Кастера, которого никто не держит в цели,
+--! взять негде: перечисления нейтлайтов на этом клиенте нет (NAME_PLATE_UNIT_ADDED -
+--! это 7.0, см. комментарий в I.EnableTargetedSpells), такой каст подхватится
+--! следующим UNIT_SPELLCAST_*.
+local dirtyGUIDs = {}
+local scanUnits = {"target", "focus", "mouseover"}
+
+function I.RefreshTargetedSpells(rescanSources)
+    if not isEnabled then return end
+
+    wipe(dirtyGUIDs)
+    local now = GetTime()
+
+    for sourceGUID, castInfo in pairs(casts) do
+        if castInfo["targetGUID"] then
+            dirtyGUIDs[castInfo["targetGUID"]] = true
+        end
+        if castInfo["endTime"] <= now or not (showAllSpells or Cell.vars.targetedSpellsList[castInfo["spellId"]]) then
+            casts[sourceGUID] = nil
+            recheck[sourceGUID] = nil
+        end
+    end
+
+    if rescanSources then
+        --! CheckUnitCast сам отсеивает несуществующие и не враждебные юниты
+        --! (UnitIsEnemy первой строкой), отдельная проверка UnitExists была бы
+        --! вторым C-вызовом на тот же токен.
+        for i = 1, #scanUnits do
+            CheckUnitCast(scanUnits[i])
+        end
+        for unit in F.IterateGroupMembers() do
+            CheckUnitCast(unit.."target")
+        end
+    end
+
+    for guid in pairs(dirtyGUIDs) do
+        UpdateCastsOnUnit(guid)
+    end
+end
+
+-------------------------------------------------
 -- recheck
 -------------------------------------------------
 eventFrame:Hide()
+
+--! WotLK perf: накопитель троттлинга держится в файловом локале, а не в поле
+--! кадра. Поле стоило три хеш-лукапа в таблице за кадр, а кадр этот - на полном
+--! фреймрейте всё время, пока в очереди перепроверки есть хоть один каст.
+--! Фрейм тут один на модуль, снаружи поле никто не читал (греп по Cell/).
+local recheckElapsed = 0
+
 eventFrame:SetScript("OnUpdate", function(self, elapsed)
-    self.elapsed = (self.elapsed or 0) + elapsed
-    if self.elapsed >= 0.1 then
-        self.elapsed = 0
+    recheckElapsed = recheckElapsed + elapsed
+    if recheckElapsed >= 0.1 then
+        recheckElapsed = 0
 
         local empty = true
 
         for guid, unit in pairs(recheck) do
-            if casts[guid] then
-                casts[guid]["recheck"] = casts[guid]["recheck"] + 1
-                if casts[guid]["recheck"] >= 6 then
+            --! WotLK perf: запись каста берётся из таблицы один раз за итерацию.
+            --! Было шесть индексаций `casts[guid]` и два чтения `["targetUnit"]`
+            --! на каждый элемент очереди. Ссылка живёт до конца итерации:
+            --! единственное, что может подменить запись - CheckUnitCast, а он
+            --! зовётся последним действием, после всех чтений.
+            local cast = casts[guid]
+            if cast then
+                local tries = cast["recheck"] + 1
+                cast["recheck"] = tries
+                if tries >= 6 then
                     recheck[guid] = nil
                 else
                     empty = false
-                    local recheckRequired = (not casts[guid]["targetUnit"] and UnitExists(unit.."target")) or (casts[guid]["targetUnit"] and not UnitIsUnit(unit.."target", casts[guid]["targetUnit"]))
+                    --! WotLK perf: "<unit>target" склеивается один раз. На Lua 5.1
+                    --! конкатенация - это интернирование строки, то есть хеш и
+                    --! поиск в общей таблице строк, а не дешёвая склейка буфера.
+                    local target = unit.."target"
+                    local targetUnit = cast["targetUnit"]
+                    local recheckRequired = (not targetUnit and UnitExists(target)) or (targetUnit and not UnitIsUnit(target, targetUnit))
                     if recheckRequired then
-                        -- print(unit, casts[guid]["recheck"], recheckRequired)
+                        -- print(unit, tries, recheckRequired)
                         CheckUnitCast(unit, true)
                     end
                 end
@@ -267,7 +342,7 @@ eventFrame:SetScript("OnUpdate", function(self, elapsed)
         end
 
         if empty then
-            eventFrame:Hide()
+            self:Hide()
         end
     end
 end)
@@ -287,7 +362,12 @@ eventFrame:SetScript("OnEvent", function(_, event, sourceUnit)
     elseif event == "UNIT_SPELLCAST_STOP" or event == "UNIT_SPELLCAST_INTERRUPTED" or event == "UNIT_SPELLCAST_FAILED" or event == "UNIT_SPELLCAST_CHANNEL_STOP" then
         local sourceGUID = UnitGUID(sourceUnit)
         if casts[sourceGUID] then
-            previousTarget = casts[sourceGUID]["targetGUID"]
+            --! WotLK fix: было без local. Локальный previousTarget объявлен внутри
+            --! CheckUnitCast выше и в этот обработчик не виден, так что запись уходила
+            --! в глобал _G.previousTarget - на каждое прерывание каста любого врага.
+            --! Cell не владеет глобалами; имя достаточно общее, чтобы им пользовался
+            --! чужой аддон. Значение нужно только на следующей строке.
+            local previousTarget = casts[sourceGUID]["targetGUID"]
             casts[sourceGUID] = nil
             UpdateCastsOnUnit(previousTarget)
         end
@@ -309,10 +389,10 @@ local function SetCooldown(frame, start, duration, icon, count)
 
     frame.border:Show()
     frame.cooldown:Show()
-    -- alpha may be missing from saved color; ClassicAPI's SetSwipeColor requires 4 args
-    local sr, sg, sb, sa = unpack(Cell.vars.targetedSpellsGlow[2])
-    frame.cooldown:SetSwipeColor(sr, sg, sb, sa or 1)
-    frame.cooldown:SetCooldown(start, duration)
+    --! WotLK fix: native 3.3.5 has no SetSwipeColor (проверено codex). The
+    --! configured targeted-spell color remains on Cell's glow; use the native
+    --! cooldown spiral here. Ретейл-ветка вырезана - это горячий путь.
+    frame.cooldown:_SetCooldown(start, duration)
     frame.icon:SetTexture(icon)
     frame:Show()
 end
@@ -389,7 +469,9 @@ function I.CreateTargetedSpells(parent)
         frame.SetCooldown = SetCooldown
         -- frame:SetScript("OnShow", targetedSpells.UpdateSize)
         -- frame:SetScript("OnHide", targetedSpells.UpdateSize)
-        frame.cooldown:SetScript("OnCooldownDone", function()
+        --! WotLK fix: OnCooldownDone is not a native 3.3.5 Cooldown script.
+        --! Track completion only on this Cell-owned cooldown instance.
+        I.SetCooldownDoneHandler(frame.cooldown, function()
             frame:Hide()
         end)
     end
@@ -405,6 +487,7 @@ local function EnterLeaveInstance()
 end
 
 function I.EnableTargetedSpells(enabled)
+    isEnabled = enabled
     if enabled then
         F.IterateAllUnitButtons(function(b)
             b.indicators.targetedSpells:Show()
@@ -450,9 +533,25 @@ function I.EnableTargetedSpells(enabled)
 end
 
 function I.ShowAllTargetedSpells(showAll)
+    --! WotLK fix: галка меняет тот же фильтр, что и список, поэтому её переключение
+    --! обязано пересчитать экран. Пересчёт только на реальном изменении: эта же
+    --! функция вызывается при применении раскладки (UnitButton_Cata_Wrath.lua:347),
+    --! где сканировать источники не за чем. Сканируем только при включении - при
+    --! выключении новых кастов появиться не может, нужна лишь чистка.
+    local changed = isEnabled and showAll ~= showAllSpells
     showAllSpells = showAll
+    if changed then
+        I.RefreshTargetedSpells(showAll)
+    end
 end
 
 function I.UpdateTargetedSpellsNum(num)
+    --! WotLK fix: ползунок менял только границу maxIcons, а лишние иконки висели на
+    --! экране до следующего каст-события (тот же класс, что GAP-029). Перерисовка без
+    --! сканирования источников: фильтр не менялся, изменилось только сколько показывать.
+    local changed = isEnabled and maxIcons and num ~= maxIcons
     maxIcons = num
+    if changed then
+        I.RefreshTargetedSpells()
+    end
 end

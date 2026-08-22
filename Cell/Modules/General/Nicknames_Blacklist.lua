@@ -9,7 +9,15 @@ local LoadList
 local customs = {}
 
 local function CreateNicknameBlacklistFrame()
-    nicknameBlacklistFrame = CreateFrame("Frame", "CellOptionsFrame_Nicknames", Cell.frames.generalTab, nil)
+    --! WotLK fix: имя фрейма было тем же, что у панели Custom Nicknames
+    --! ("CellOptionsFrame_Nicknames" в обоих файлах). На 3.3.5 CreateFrame при занятом
+    --! имени глобал НЕ перезаписывает (кодекс, CreateFrame: "unless another global by
+    --! that name already exists") — глобал остаётся у созданной первой, но GetName()
+    --! у двух разных фреймов совпадает. Внутри Cell имя никто не читает, зато
+    --! Widgets.lua:2761 строит имя дочернего ScrollFrame из имени родителя, и любой
+    --! внешний доступ через _G получал не ту панель. Даём своё имя.
+    --! Апстрим-баг (Cell-retail/Modules/General/Nicknames_Blacklist.lua:12).
+    nicknameBlacklistFrame = CreateFrame("Frame", "CellOptionsFrame_NicknameBlacklist", Cell.frames.generalTab, nil)
     Cell.StylizeFrame(nicknameBlacklistFrame, nil, Cell.GetAccentColorTable())
     nicknameBlacklistFrame:SetFrameLevel(Cell.frames.generalTab:GetFrameLevel() + 50)
     nicknameBlacklistFrame:Hide()
@@ -21,7 +29,19 @@ local function CreateNicknameBlacklistFrame()
     nicknameBlacklistFrame:SetScript("OnHide", function()
         nicknameBlacklistFrame:Hide()
         Cell.frames.generalTab.mask:Hide()
-        Cell.frames.generalTab.customNicknamesBtn:SetFrameLevel(Cell.frames.generalTab:GetFrameLevel() + 2)
+        --! WotLK fix: сбрасывался уровень ЧУЖОЙ кнопки — "Custom Nicknames" вместо
+        --! своей "Nickname Blacklist" (копипаста из Nicknames_Custom.lua:24). Открытие
+        --! панели поднимает свою кнопку на +50, чтобы она осталась выше маски (+30) и
+        --! её можно было нажать повторно. OnHide срабатывает и когда прячется предок —
+        --! это подтверждает FrameXML 3.3.5a (FloatingChatFrame.xml:722: "If UIParent is
+        --! hidden (Alt-Z), OnHide is called"). Alt-Z, закрытие окна опций, переход на
+        --! другую вкладку или боевая маска — и кнопка "Nickname Blacklist" оставалась
+        --! на +50 навсегда. Дальше: открываем "Custom Nicknames" — маска показана, но
+        --! забытая кнопка выше маски и нажимается сквозь неё. Обе панели открываются
+        --! друг на друге в одной точке с одинаковым уровнем, а закрытие любой из них
+        --! гасит общую маску, и вторая остаётся висеть без затемнения, с кликабельной
+        --! вкладкой под ней. Апстрим-баг (Cell-retail/…/Nicknames_Blacklist.lua:24).
+        Cell.frames.generalTab.nicknameBlacklistBtn:SetFrameLevel(Cell.frames.generalTab:GetFrameLevel() + 2)
     end)
 
     -- button

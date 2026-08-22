@@ -9,12 +9,19 @@
 ]]
 
 local MAJOR_VERSION = "LibResComm-1.0"
-local MINOR_VERSION = 90000 + tonumber(("$Revision: 92 $"):match("%d+"))
+--! WotLK fix: claim one compatibility upgrade over the old revision 92 copies
+--! embedded by several addons so Cell can stop future shared-hook layering.
+local MINOR_VERSION = 90093
 
-local lib = LibStub:NewLibrary(MAJOR_VERSION, MINOR_VERSION)
+local lib, previousMinor = LibStub:NewLibrary(MAJOR_VERSION, MINOR_VERSION)
 if not lib then
   return
 end
+
+--! WotLK fix: old LibResComm copies installed their shared wrappers before an
+--! upgrade and left no ownership marker. Their closures resolve methods through
+--! this same LibStub table, so re-use that layer instead of wrapping it again.
+local inheritedHooks = previousMinor ~= nil and not lib._cellHooksInstalled
 
 if lib.disable then
   lib.disable()
@@ -120,7 +127,6 @@ local sentTargetName = nil
 
 -- Mouse down target
 local mouseDownTarget = nil
-local worldFrameHook = nil
 
 -- Battleground/Arena/Group Indicators
 local inBattlegroundOrArena = nil
@@ -353,78 +359,66 @@ function lib:start()
 
   lib.eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 
-  worldFrameHook = WorldFrame:GetScript("OnMouseDown")
-  if not worldFrameHook then
-    worldFrameHook = lib.noop
-  end
+  if not inheritedHooks and not lib._cellHooksInstalled then
+    --! WotLK fix: preserve WorldFrame's script owner. Native HookScript adds one
+    --! stable post-hook instead of replacing OnMouseDown and retaining a foreign
+    --! script in a private wrapper chain.
+    WorldFrame:HookScript("OnMouseDown", function()
+      lib:worldFrameOnMouseDown()
+    end)
 
-  WorldFrame:SetScript("OnMouseDown", function(...)
-    lib:worldFrameOnMouseDown()
-    worldFrameHook(...)
-  end)
-
-  local res = StaticPopupDialogs["RESURRECT"].OnShow
-  StaticPopupDialogs["RESURRECT"].OnShow = function(...)
-    lib:popupFuncRessed()
-    res(...)
-  end
-
-  local resNoSick = StaticPopupDialogs["RESURRECT_NO_SICKNESS"].OnShow
-  StaticPopupDialogs["RESURRECT_NO_SICKNESS"].OnShow = function(...)
-    lib:popupFuncRessed()
-    resNoSick(...)
-  end
-
-  local resNoTimer = StaticPopupDialogs["RESURRECT_NO_TIMER"].OnShow
-  StaticPopupDialogs["RESURRECT_NO_TIMER"].OnShow = function(...)
-    lib:popupFuncRessed()
-    resNoTimer(...)
-  end
-
-  local death = StaticPopupDialogs["DEATH"].OnShow
-  StaticPopupDialogs["DEATH"].OnShow = function(...)
-    lib:popupFuncCanRes()
-    death(...)
-  end
-
-  if not StaticPopupDialogs["RESURRECT"].OnCancel then
-    StaticPopupDialogs["RESURRECT"].OnCancel = function()
-      lib:popupFuncExpired()
+    --! WotLK fix: StaticPopupDialogs has no hook API on 3.3.5. Install exactly
+    --! one dispatcher layer and route it through the shared LibStub table so a
+    --! later library upgrade changes behavior without wrapping callbacks again.
+    local res = StaticPopupDialogs["RESURRECT"].OnShow
+    StaticPopupDialogs["RESURRECT"].OnShow = function(...)
+      lib:popupFuncRessed()
+      if res then res(...) end
     end
-  else
+
+    local resNoSick = StaticPopupDialogs["RESURRECT_NO_SICKNESS"].OnShow
+    StaticPopupDialogs["RESURRECT_NO_SICKNESS"].OnShow = function(...)
+      lib:popupFuncRessed()
+      if resNoSick then resNoSick(...) end
+    end
+
+    local resNoTimer = StaticPopupDialogs["RESURRECT_NO_TIMER"].OnShow
+    StaticPopupDialogs["RESURRECT_NO_TIMER"].OnShow = function(...)
+      lib:popupFuncRessed()
+      if resNoTimer then resNoTimer(...) end
+    end
+
+    local death = StaticPopupDialogs["DEATH"].OnShow
+    StaticPopupDialogs["DEATH"].OnShow = function(...)
+      lib:popupFuncCanRes()
+      if death then death(...) end
+    end
+
     local resurrect = StaticPopupDialogs["RESURRECT"].OnCancel
     StaticPopupDialogs["RESURRECT"].OnCancel = function(...)
       lib:popupFuncExpired()
-      resurrect(...)
+      if resurrect then resurrect(...) end
     end
-  end
 
-  if not StaticPopupDialogs["RESURRECT_NO_SICKNESS"].OnCancel then
-    StaticPopupDialogs["RESURRECT_NO_SICKNESS"].OnCancel = function()
-      lib:popupFuncExpired()
-    end
-  else
-    local resNoSick = StaticPopupDialogs["RESURRECT_NO_SICKNESS"].OnCancel
+    local cancelNoSick = StaticPopupDialogs["RESURRECT_NO_SICKNESS"].OnCancel
     StaticPopupDialogs["RESURRECT_NO_SICKNESS"].OnCancel = function(...)
       lib:popupFuncExpired()
-      resNoSick(...)
+      if cancelNoSick then cancelNoSick(...) end
     end
-  end
 
-  if not StaticPopupDialogs["RESURRECT_NO_TIMER"].OnCancel then
-    StaticPopupDialogs["RESURRECT_NO_TIMER"].OnCancel = function()
-      if not StaticPopup_FindVisible("DEATH") then
-        lib:popupFuncExpired()
-      end
-    end
-  else
-    local resNoTimer = StaticPopupDialogs["RESURRECT_NO_TIMER"].OnCancel
+    local cancelNoTimer = StaticPopupDialogs["RESURRECT_NO_TIMER"].OnCancel
     StaticPopupDialogs["RESURRECT_NO_TIMER"].OnCancel = function(...)
       if not StaticPopup_FindVisible("DEATH") then
         lib:popupFuncExpired()
       end
-      resNoTimer(...)
+      if cancelNoTimer then cancelNoTimer(...) end
     end
+
+    lib._cellHooksInstalled = true
+  elseif inheritedHooks then
+    --! WotLK fix: the inherited legacy dispatchers already call methods on this
+    --! shared table. Mark their ownership so this and later upgrades stay flat.
+    lib._cellHooksInstalled = true
   end
 end
 

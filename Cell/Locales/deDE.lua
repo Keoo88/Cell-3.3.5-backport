@@ -22,7 +22,7 @@ L["ABOUT"] = "Cell ist ein schönes Raid-Frame-Addon, dass von mehreren großart
 L["ACCEPTED"] = "AKZEPTIERT"
 L["Action"] = "Aktion"
 --[[Translation missing --]]
---[[ L["Actions"] = ""--]]
+L["Actions"] = "Aktionen"
 L["Add"] = "Hinzufügen"
 L["Add new spell"] = "Neuen Zauber hinzufügen"
 L["Added |T%d:0|t|cFFFF3030%s(%d)|r into debuff blacklist."] = "|T%d:0|t|cFFFF3030%s(%d)|r zur Blockliste der Debuffs hinzugefügt."
@@ -117,7 +117,6 @@ L["Changelogs"] = "Änderungsverlauf"
 L["Check all visible enemy nameplates."] = "Überprüfe alle sichtbaren feindlichen Namensplaketten."
 L["Check If Exists"] = "Prüfen, ob vorhanden"
 L["Check if your group members need some raid buffs"] = "Prüfen, ob Gruppenmitglieder Raidbuffs benötigen"
-L["circledStackNums"] = "Eingekreiste Stapelnummern"
 L["Class Color"] = "Klassenfarben"
 L["Class Color (dark)"] = "Klassenfarben (dunkel)"
 L["Class Filter"] = "Klassenfilter"
@@ -232,7 +231,7 @@ L["Fade Out These Buttons"] = "Diese Tasten ausblenden"
 L["fadeOut"] = "Mit der Zeit ausblenden"
 L["Faster Health Updates"] = "Schnellere HP-Aktualisierungsrate"
 --[[Translation missing --]]
---[[ L["FEIGN"] = ""--]]
+L["FEIGN"] = "TOTSTELLEN"
 L["Filter Auto Switch"] = "Filter Auto Switch"
 L["first %d"] = "erste(r) %d"
 L["Flash"] = "Flash"
@@ -688,7 +687,7 @@ L["Use CLEU events to increase health update rate"] = "Verwende CLEU-Ereignisse,
 L["Use common profile"] = "Benutze gemeinsames Profil"
 L["Use Elapsed Time"] = "Verstrichene Zeit verwenden"
 --[[Translation missing --]]
---[[ L["Use Game Font"] = ""--]]
+L["Use Game Font"] = "Spielschrift verwenden"
 L["Use Same Arrangement As Main"] = "Benutze die gleiche Anordnung wie im Hauptprofil"
 L["Use Same Size As Main"] = "Benutze die gleiche Größe wie im Hauptprofil"
 L["use separate profile for current spec"] = "separates Profil für die aktuelle Spezialisierung verwenden"

@@ -1,4 +1,6 @@
 local _, Cell = ...
+--! WotLK fix: bind Cell timers privately so standalone !!!ClassicAPI cannot change semantics.
+local C_Timer = Cell.C_Timer
 local L = Cell.L
 local F = Cell.funcs
 local P = Cell.pixelPerfectFuncs
@@ -239,7 +241,8 @@ local function CreateNicknamePane()
     nicknameEB:SetPoint("TOPLEFT", 5, -27)
     nicknameEB:SetScript("OnTextChanged", function(self, userChanged)
         local text = strtrim(nicknameEB:GetText())
-        nicknameEB.tip:SetShown(text == "")
+        --! WotLK fix: SetShown нет на 3.3.5, шим WidgetAPI удалён — нативная пара.
+        if text == "" then nicknameEB.tip:Show() else nicknameEB.tip:Hide() end
 
         if userChanged then
             if CellDB["nicknames"]["mine"] ~= "" then -- already set a nickname
@@ -314,7 +317,9 @@ local function CreateMiscPane()
         Cell.vars.alwaysUpdateAuras = checked
     end, L["Ignore UNIT_AURA payloads"], L["This may help solve issues of indicators not updating correctly"])
     alwaysUpdateAurasCB:SetPoint("TOPLEFT", 5, -27)
-    alwaysUpdateAurasCB:SetEnabled(Cell.isMists)
+    --! WotLK fix: ретейл-флаг свёрнут в константу 3.3.5 - Cell.is* заданы литералами в Utils.lua. Опция для Mists,
+    --! на 3.3.5 остаётся выключенной.
+    alwaysUpdateAurasCB:SetEnabled(false)
 
     useCleuCB = Cell.CreateCheckButton(miscPane, L["Faster Health Updates"], function(checked, self)
         CellDB["general"]["useCleuHealthUpdater"] = checked
@@ -389,7 +394,7 @@ local function CreateFramePriorityWidget(parent)
             self:SetFrameStrata("LOW")
             -- self:Hide() --! Hide() will cause OnDragStop trigger TWICE!!!
             C_Timer.After(0.05, function()
-                local b = F.GetMouseFocus()
+                local b = GetMouseFocus()
                 if b ~= self and b and b._priority and b._enabled then
                     -- print(self._priorityName, "->", b._priorityName)
 

@@ -8,9 +8,10 @@
 ## SavedVariables: CellDB, CellDBBackup
 ## SavedVariablesPerCharacter: CellCharacterDB
 
-## X-Curse-Project-ID: 409666
-## X-Wago-ID: qv63LLKb
-## X-WoWI-ID: 26244
+# WotLK backport: upstream shipped X-Curse-Project-ID / X-Wago-ID / X-WoWI-ID here. Those ids
+# belong to enderneko's retail project, and addon managers match an installed folder by them --
+# one would happily "update" this backport with retail files that cannot run on 3.3.5. Credit
+# lives in "## Author" above and in the README. Do not restore them from upstream.
 
 DebugSnapshot.lua
 

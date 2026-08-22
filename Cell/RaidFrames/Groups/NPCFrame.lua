@@ -1,18 +1,6 @@
 local _, Cell = ...
-
---! WotLK fix (coexistence): our PixelUtil (Cell.PixelUtil, built in Polyfills.lua)
---! is the one whose GetNearestPixelSize/SetPoint use the real gxResolution based
---! screen size. The global may belong to the standalone !!!ClassicAPI, so read ours
---! first and fall back to the global only if Polyfills has not run yet.
-local PixelUtil = (Cell and Cell.PixelUtil) or _G.PixelUtil
-
-
---! WotLK fix (coexistence): CombatLogGetCurrentEventInfo is a TRANSLATOR of the
---! native COMBAT_LOG_EVENT varargs, not a retail-style no-arg getter. The global
---! may belong to the standalone !!!ClassicAPI, whose copy has different semantics,
---! so always prefer OUR implementation from the private CellClassicAPI namespace.
-local CombatLogGetCurrentEventInfo = (_G.CellClassicAPI and _G.CellClassicAPI.CombatLogGetCurrentEventInfo) or _G.CombatLogGetCurrentEventInfo
-
+--! WotLK fix: bind Cell pixel math privately so standalone !!!ClassicAPI cannot change layout semantics.
+local PixelUtil = Cell.PixelUtil
 local L = Cell.L
 local F = Cell.funcs
 local B = Cell.bFuncs
@@ -23,9 +11,33 @@ local npcFrame = CreateFrame("Frame", "CellNPCFrame", Cell.frames.mainFrame, "Se
 Cell.frames.npcFrame = npcFrame
 -- Cell.StylizeFrame(npcFrame, {1, 0.5, 0.5})
 
+--! WotLK fix: SecureStateDriver evaluates every registered condition 5 times per
+--! second. Keep the two CellNPCFrame drivers alive only while NPC frames are
+--! enabled and attached to the group frames; separate/disabled/hidden layouts do
+--! not consume their state and must not leave the pollers running.
+local npcStateDriversEnabled
+local function SetNPCStateDriversEnabled(enabled)
+    enabled = enabled and true or false
+    if npcStateDriversEnabled == enabled then return end
+    npcStateDriversEnabled = enabled
+
+    if enabled then
+        RegisterStateDriver(npcFrame, "groupstate", "[@raid1,exists] raid;[@party1,exists] party;solo")
+        RegisterStateDriver(npcFrame, "petstate", "[@pet,exists] pet; [@partypet1,exists] pet1; [@partypet2,exists] pet2; [@partypet3,exists] pet3; [@partypet4,exists] pet4; nopet")
+    else
+        UnregisterStateDriver(npcFrame, "groupstate")
+        UnregisterStateDriver(npcFrame, "petstate")
+    end
+end
+
+--! WotLK fix: PartyFrame.lua creates fixed manual buttons named
+--! CellPartyFrameMember1/CellPartyFrameMember1Pet. The retail header-child
+--! globals never exist in this backport, leaving the NPC party frame reference
+--! nil and breaking attached NPC positioning. Resolve Cell-owned buttons after
+--! PartyFrame has loaded and keep the secure reference in sync out of combat.
 local anchors = {
     ["solo"] = CellSoloFramePlayer,
-    ["party"] = CellPartyFrameHeaderUnitButton1Pet,
+    ["party"] = Cell.unitButtons.party["pet1"],
     ["raid"] = CellNPCFrameAnchor,
 }
 
@@ -34,6 +46,38 @@ for k, v in pairs(anchors) do
         npcFrame:SetFrameRef(k, v)
     end
 end
+
+local pendingPartyAnchor
+local partyAnchorFrame = CreateFrame("Frame")
+local function UpdatePartyAnchor(layout)
+    local party = Cell.unitButtons.party["player1"]
+    local petParty = Cell.unitButtons.party["pet1"]
+    local usePet = layout["pet"]["partyEnabled"]
+        and not layout["pet"]["partyDetached"]
+    local anchor = usePet and petParty or party
+
+    if not anchor then return end
+    anchors["party"] = anchor
+
+    if InCombatLockdown() then
+        pendingPartyAnchor = anchor
+        partyAnchorFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+    else
+        pendingPartyAnchor = nil
+        npcFrame:SetFrameRef("party", anchor)
+    end
+end
+
+partyAnchorFrame:SetScript("OnEvent", function(self, event)
+    if event ~= "PLAYER_REGEN_ENABLED" then return end
+    self:UnregisterEvent("PLAYER_REGEN_ENABLED")
+    if pendingPartyAnchor then
+        --! WotLK fix: secure frame references cannot be changed during combat;
+        --! apply the most recent party/pet anchor as soon as lockdown ends.
+        npcFrame:SetFrameRef("party", pendingPartyAnchor)
+        pendingPartyAnchor = nil
+    end
+end)
 
 
 -------------------------------------------------
@@ -130,8 +174,8 @@ local pointUpdater = [[
         end
     end
 
-    -- WotLK: CallMethod doesn't exist in restricted environment
-    -- UpdateSeparateAnchor is called from regular Lua code elsewhere (line 448)
+    --! WotLK fix: control:CallMethod exists on 3.3.5, but this shared snippet
+    --! only owns secure re-anchoring; UpdateSeparateAnchor stays in regular Lua.
 ]]
 npcFrame:SetAttribute("pointUpdater", pointUpdater)
 
@@ -165,17 +209,17 @@ for i = 1, 8 do
     --     RegisterUnitWatch(button)
     -- elseif i == 2 then
     --     button:SetAttribute("unit", "target")
-    --     RegisterAttributeDriver(button, "state-visibility", "[@target, exists] show; hide")
+    --     Cell.RegisterAttributeDriver(button, "state-visibility", "[@target, exists] show; hide")
     -- elseif i == 4 then
     --     button:SetAttribute("unit", "target")
-    --     RegisterAttributeDriver(button, "state-visibility", "[@target, help] show; hide")
+    --     Cell.RegisterAttributeDriver(button, "state-visibility", "[@target, help] show; hide")
     -- elseif i == 6 then
     --     button:SetAttribute("unit", "target")
-    --     RegisterAttributeDriver(button, "state-visibility", "[@target, harm] show; hide")
+    --     Cell.RegisterAttributeDriver(button, "state-visibility", "[@target, harm] show; hide")
     -- end
 
     -- if i >= 6 then
-    --     UnregisterAttributeDriver(button, "state-visibility")
+    --     Cell.UnregisterAttributeDriver(button, "state-visibility")
     --     button:SetAttribute("unit", "target")
     --     RegisterUnitWatch(button)
 
@@ -206,8 +250,6 @@ for i = 1, 8 do
         local unitSpacing = self:GetAttribute("unitSpacing")
 
         local npcFrame = self:GetFrameRef("npcFrame")
-        -- WotLK: neither RunAttribute nor RunFor exist in the restricted
-        -- environment; inline the npc button re-anchor loop directly.
         local last
         for i = 1, 8 do
             local button = npcFrame:GetFrameRef("button"..i)
@@ -228,64 +270,14 @@ for i = 1, 8 do
             end
         end
     ]])
-    -- WotLK: RunAttribute doesn't exist, inline the pointUpdater logic
+    --! WotLK fix: RunAttribute is a native 3.3.5 control-handle method.
+    --! Keep one restricted re-anchor body instead of compiling two duplicate
+    --! loops per boss button for _onshow and _onhide.
     button.helper:SetAttribute("_onshow", [[
-        local orientation = self:GetAttribute("orientation")
-        local point = self:GetAttribute("point")
-        local anchorPoint = self:GetAttribute("anchorPoint")
-        local unitSpacing = self:GetAttribute("unitSpacing")
-
-        local npcFrame = self:GetFrameRef("npcFrame")
-        -- WotLK: neither RunAttribute nor RunFor exist in the restricted
-        -- environment; inline the npc button re-anchor loop directly.
-        local last
-        for i = 1, 8 do
-            local button = npcFrame:GetFrameRef("button"..i)
-            if button then
-                button:ClearAllPoints()
-                if button:IsVisible() then
-                    if last then
-                        if orientation == "vertical" then
-                            button:SetPoint(point, last, anchorPoint, 0, unitSpacing)
-                        else
-                            button:SetPoint(point, last, anchorPoint, unitSpacing, 0)
-                        end
-                    else
-                        button:SetPoint("TOPLEFT", npcFrame)
-                    end
-                    last = button
-                end
-            end
-        end
+        control:RunAttribute("pointUpdater")
     ]])
     button.helper:SetAttribute("_onhide", [[
-        local orientation = self:GetAttribute("orientation")
-        local point = self:GetAttribute("point")
-        local anchorPoint = self:GetAttribute("anchorPoint")
-        local unitSpacing = self:GetAttribute("unitSpacing")
-
-        local npcFrame = self:GetFrameRef("npcFrame")
-        -- WotLK: neither RunAttribute nor RunFor exist in the restricted
-        -- environment; inline the npc button re-anchor loop directly.
-        local last
-        for i = 1, 8 do
-            local button = npcFrame:GetFrameRef("button"..i)
-            if button then
-                button:ClearAllPoints()
-                if button:IsVisible() then
-                    if last then
-                        if orientation == "vertical" then
-                            button:SetPoint(point, last, anchorPoint, 0, unitSpacing)
-                        else
-                            button:SetPoint(point, last, anchorPoint, unitSpacing, 0)
-                        end
-                    else
-                        button:SetPoint("TOPLEFT", npcFrame)
-                    end
-                    last = button
-                end
-            end
-        end
+        control:RunAttribute("pointUpdater")
     ]])
 end
 
@@ -297,20 +289,18 @@ local boss678_guidToButton = {}
 local boss678_buttonToGuid = {}
 
 local cleu = CreateFrame("Frame")
-cleu:SetScript("OnEvent", function(self, event, ...)
-    -- WotLK 3.3.5a: sourceRaidFlags and destRaidFlags don't exist (added in 4.2.0)
-    --! WotLK fix: the translator shim called WITHOUT arguments returns nothing, so
-    --! destGUID was always nil and the boss6-8 CLEU health updater was dead (health
-    --! only refreshed via the 5s poll). Pass the native varargs through.
-    local timestamp, subEvent, _, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags
-    if CombatLogGetCurrentEventInfo then
-        -- Retail/Cata+ has sourceRaidFlags and destRaidFlags
-        local sourceRaidFlags, destRaidFlags
-        timestamp, subEvent, _, sourceGUID, sourceName, sourceFlags, sourceRaidFlags, destGUID, destName, destFlags, destRaidFlags = CombatLogGetCurrentEventInfo(...)
-    else
-        -- WotLK 3.3.5a: No sourceRaidFlags/destRaidFlags
-        timestamp, subEvent, _, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags = ...
-    end
+--! WotLK perf: named parameters instead of `...` plus an eight-slot vararg unpack -
+--! in Lua 5.1 a vararg function pays adjust_varargs and a VARARG copy on every
+--! call, and this frame is registered for COMBAT_LOG_EVENT_UNFILTERED while any
+--! boss-678 frame is visible. The GUID-gate lookup now also runs before the
+--! subEvent chain, which is the cheapest possible rejection.
+cleu:SetScript("OnEvent", function(self, event,
+    timestamp, subEvent, sourceGUID, sourceName, sourceFlags,
+    destGUID, destName, destFlags)
+
+    --! WotLK fix: native 3.3.5 CLEU has no hideCaster or raid-flag slots.
+    --! Parse it directly so boss health/aura updates are independent of the
+    --! global ClassicAPI translator selected by addon load order.
     if boss678_guidToButton[destGUID] then
         if subEvent == "SPELL_HEAL" or subEvent == "SPELL_PERIODIC_HEAL" or subEvent == "SPELL_DAMAGE" or subEvent == "SPELL_PERIODIC_DAMAGE" then
             -- print("UpdateHealth:", boss678_guidToButton[destGUID]:GetName())
@@ -375,8 +365,10 @@ for i = 6, 8 do
         end
 
         if button.helper.elapsed3 >= 5 then
-            B.UpdateHealth(button)
+            --! WotLK fix/perf: max-health refresh already snapshots current health;
+            --! repaint from that snapshot instead of querying both values twice.
             B.UpdateHealthMax(button)
+            B.UpdateHealth(button, nil, true)
             button.helper.elapsed3 = 0
         end
     end)
@@ -433,7 +425,8 @@ npcFrame:SetAttribute("_onstate-groupstate", [[
     end
 
     -- NOTE: update each npc button
-    -- WotLK: RunAttribute doesn't exist, inline the pointUpdater logic
+    --! WotLK fix: RunAttribute exists on 3.3.5's control handle, but this state
+    --! snippet already owns the required values locally, so keep one direct pass.
     local last
     for i = 1, 8 do
         local button = self:GetFrameRef("button"..i)
@@ -453,8 +446,8 @@ npcFrame:SetAttribute("_onstate-groupstate", [[
         end
     end
 
-    -- WotLK: CallMethod doesn't exist in restricted environment
-    -- UpdateSeparateAnchor is called from regular Lua code elsewhere (line 448)
+    --! WotLK fix: control:CallMethod exists on 3.3.5, but this shared snippet
+    --! only owns secure re-anchoring; UpdateSeparateAnchor stays in regular Lua.
 ]])
 
 -------------------------------------------------
@@ -571,11 +564,16 @@ Cell.RegisterCallback("UpdateMenu", "NPCFrame_UpdateMenu", UpdateMenu)
 local function NPCFrame_UpdateLayout(layout, which)
     -- visibility
     if Cell.vars.isHidden then
-        UnregisterAttributeDriver(npcFrame, "state-visibility")
+        Cell.UnregisterAttributeDriver(npcFrame, "state-visibility")
+        SetNPCStateDriversEnabled(false)
         npcFrame:Hide()
         return
     end
-    RegisterAttributeDriver(npcFrame, "state-visibility", "[@raid1,exists] show;[@party1,exists] show;show")
+    --! WotLK fix: the old condition ended in unconditional "show", so the
+    --! 3.3.5 state driver only reparsed a constant result every 0.2 seconds.
+    --! Layout updates are already deferred out of combat; show directly.
+    Cell.UnregisterAttributeDriver(npcFrame, "state-visibility")
+    npcFrame:Show()
 
     -- update
     layout = Cell.vars.currentLayoutTable
@@ -613,20 +611,7 @@ local function NPCFrame_UpdateLayout(layout, which)
     end
 
     if not which or which == "pet" then
-        local party      = CellPartyFrameHeaderUnitButton1
-        local petParty   = CellPartyFrameHeaderUnitButton1Pet
-
-        if not layout["pet"]["partyEnabled"] or layout["pet"]["partyDetached"] then
-            if party then
-                npcFrame:SetFrameRef("party", party)
-                anchors["party"] = party
-            end
-        else
-            if petParty then
-                npcFrame:SetFrameRef("party", petParty)
-                anchors["party"] = petParty
-            end
-        end
+        UpdatePartyAnchor(layout)
     end
 
 
@@ -759,34 +744,32 @@ local function NPCFrame_UpdateLayout(layout, which)
 
     if not which or which == "npc" then
         if layout["npc"]["enabled"] then
-            -- NOTE: RegisterAttributeDriver
+            -- NOTE: Cell.RegisterAttributeDriver
             for i, b in ipairs(Cell.unitButtons.npc) do
                 --! WotLK fix: 3.3.5 only has boss1-boss4 (FrameXML TargetFrame.xml
                 --! creates exactly four BossTargetFrames). Drivers for boss5-boss8
                 --! can never resolve to "show", yet SecureStateDriver still parses
                 --! them 5 times per second forever. Register only the first four.
                 if i <= 4 then
-                    RegisterAttributeDriver(b, "state-visibility", "[@boss"..i..", help] show; hide")
-                    -- RegisterAttributeDriver(b, "state-visibility", "[@player, help] show; hide")
+                    Cell.RegisterAttributeDriver(b, "state-visibility", "[@boss"..i..", help] show; hide")
+                    -- Cell.RegisterAttributeDriver(b, "state-visibility", "[@player, help] show; hide")
                 else
-                    UnregisterAttributeDriver(b, "state-visibility")
+                    Cell.UnregisterAttributeDriver(b, "state-visibility")
                     b:Hide()
                 end
             end
             if layout["npc"]["separate"] then
-                UnregisterStateDriver(npcFrame, "groupstate")
-                UnregisterStateDriver(npcFrame, "petstate")
+                SetNPCStateDriversEnabled(false)
                 -- load separate npc frame position
                 P.LoadPosition(separateAnchor, layout["npc"]["position"])
             else
-                -- RegisterStateDriver(npcFrame, "groupstate", "[group:raid] raid;[group:party] party;solo")
-                RegisterStateDriver(npcFrame, "groupstate", "[@raid1,exists] raid;[@party1,exists] party;solo")
-                RegisterStateDriver(npcFrame, "petstate", "[@pet,exists] pet; [@partypet1,exists] pet1; [@partypet2,exists] pet2; [@partypet3,exists] pet3; [@partypet4,exists] pet4; nopet")
+                SetNPCStateDriversEnabled(true)
             end
         else
-            -- NOTE: RegisterAttributeDriver
+            SetNPCStateDriversEnabled(false)
+            -- NOTE: Cell.RegisterAttributeDriver
             for _, b in ipairs(Cell.unitButtons.npc) do
-                UnregisterAttributeDriver(b, "state-visibility")
+                Cell.UnregisterAttributeDriver(b, "state-visibility")
                 b:Hide()
             end
         end
@@ -798,8 +781,8 @@ Cell.RegisterCallback("UpdateLayout", "NPCFrame_UpdateLayout", NPCFrame_UpdateLa
 --     if not which or which == "solo" or which == "party" then
 --         local showSolo = CellDB["general"]["showSolo"] and "show" or "hide"
 --         local showParty = CellDB["general"]["showParty"] and "show" or "hide"
---         -- RegisterAttributeDriver(npcFrame, "state-visibility", "[group:raid] show; [group:party] "..showParty.."; "..showSolo)
---         RegisterAttributeDriver(npcFrame, "state-visibility", "[@raid1,exists] show;[@party1,exists] "..showParty..";"..showSolo)
+--         -- Cell.RegisterAttributeDriver(npcFrame, "state-visibility", "[group:raid] show; [group:party] "..showParty.."; "..showSolo)
+--         Cell.RegisterAttributeDriver(npcFrame, "state-visibility", "[@raid1,exists] show;[@party1,exists] "..showParty..";"..showSolo)
 --     end
 -- end
 -- Cell.RegisterCallback("UpdateVisibility", "NPCFrame_UpdateVisibility", NPCFrame_UpdateVisibility)

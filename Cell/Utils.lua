@@ -1,10 +1,14 @@
 ---@class Cell
 local Cell = select(2, ...)
+--! WotLK fix: bind Cell timers privately so standalone !!!ClassicAPI cannot change semantics.
+local C_Timer = Cell.C_Timer
 local L = Cell.L
 ---@class CellFuncs
 local F = Cell.funcs
 ---@type CellIndicatorFuncs
 local I = Cell.iFuncs
+--! WotLK fix: realm normalization is private to Cell.
+local GetNormalizedRealmName = Cell.GetNormalizedRealmName
 
 Cell.vars.playerFaction = UnitFactionGroup("player")
 
@@ -13,16 +17,16 @@ Cell.vars.playerFaction = UnitFactionGroup("player")
 -------------------------------------------------
 Cell.isAsian = LOCALE_zhCN or LOCALE_zhTW or LOCALE_koKR
 
-Cell.isRetail = WOW_PROJECT_ID == WOW_PROJECT_MAINLINE
-Cell.isVanilla = WOW_PROJECT_ID == WOW_PROJECT_CLASSIC
--- Cell.isBCC = WOW_PROJECT_ID == WOW_PROJECT_BURNING_CRUSADE_CLASSIC and LE_EXPANSION_LEVEL_CURRENT == LE_EXPANSION_BURNING_CRUSADE
--- Cell.isWrath = WOW_PROJECT_ID == WOW_PROJECT_WRATH_CLASSIC and LE_EXPANSION_LEVEL_CURRENT == LE_EXPANSION_WRATH_OF_THE_LICH_KING
-Cell.isWrath = WOW_PROJECT_ID == WOW_PROJECT_WRATH_CLASSIC
-Cell.isCata = WOW_PROJECT_ID == WOW_PROJECT_CATACLYSM_CLASSIC
-Cell.isMists = WOW_PROJECT_ID == WOW_PROJECT_MISTS_CLASSIC
-Cell.isTWW = LE_EXPANSION_LEVEL_CURRENT == LE_EXPANSION_WAR_WITHIN
-
+--! WotLK fix: Polyfills.lua establishes private flavor state from this addon's
+--! fixed Interface 30300 target. Do not recompute it from optional project
+--! globals supplied by a custom core or standalone compatibility addon.
 Cell.flavor = "wrath"
+Cell.isRetail = false
+Cell.isVanilla = false
+Cell.isWrath = true
+Cell.isCata = false
+Cell.isMists = false
+Cell.isTWW = false
 
 -------------------------------------------------
 -- class
@@ -78,7 +82,10 @@ function F.IterateClasses()
     local i = 0
     return function()
         i = i + 1
-        if i <= GetNumClasses() then
+        --! WotLK fix: iterate the private list actually discovered from the
+        --! active class-info provider instead of publishing/reading a hard-coded
+        --! retail GetNumClasses compatibility global.
+        if i <= #sortedClasses then
             return sortedClasses[i], classFileToID[sortedClasses[i]], i
         end
     end
@@ -91,24 +98,41 @@ end
 -------------------------------------------------
 -- Classic
 -------------------------------------------------
-    function F.GetActiveTalentInfo()
-        local which = GetActiveTalentGroup() == 1 and L["Primary Talents"] or L["Secondary Talents"]
-
-        local maxPoints = 0
-        local specName, specIcon, specFileName
+    --! WotLK fix: there is no GetSpecialization on build 12340, so "spec" has to be
+    --! derived from the talent trees. Returns the dominant tab index, or nil when the
+    --! trees are unreadable (right after login) or when no point is spent at all -
+    --! callers must be able to tell "not known yet" from "tab 1", which is why the
+    --! index is a separate return value and not folded into a default.
+    function F.GetDominantTalentTab()
+        local maxPoints, maxTab, tabName, tabIcon = 0, nil, nil, nil
 
         for i = 1, GetNumTalentTabs() do
-            local id, name, description, icon, pointsSpent, background = GetTalentTabInfo(i)
-            if pointsSpent > maxPoints then
+            --! WotLK fix: build 12340 returns name, icon, pointsSpent,
+            --! background, previewPointsSpent; the later id-first tuple does not
+            --! apply here (verified against 3.3.5a FrameXML).
+            local name, icon, pointsSpent = GetTalentTabInfo(i)
+            --! WotLK fix: pointsSpent is nil while the tree is still loading; the old
+            --! bare `pointsSpent > maxPoints` threw "attempt to compare nil with
+            --! number" there. Same readiness trap that left divineAegisMultiplier nil
+            --! for nine minutes in run 13 (Core_Wrath.lua:847).
+            if pointsSpent and pointsSpent > maxPoints then
                 maxPoints = pointsSpent
-                specIcon = icon
-                specName = name
-            -- elseif pointsSpent == maxPoints then
-            --     specIcon = 132148
+                maxTab = i
+                tabIcon = icon
+                tabName = name
             end
         end
 
-        return which, specIcon or 134400, specName or L["No Spec"]
+        return maxTab, tabName, tabIcon
+    end
+
+    function F.GetActiveTalentInfo()
+        local which = GetActiveTalentGroup() == 1 and L["Primary Talents"] or L["Secondary Talents"]
+
+        local _, specName, specIcon = F.GetDominantTalentTab()
+
+        --! WotLK fix: fileID textures are unsupported on build 12340.
+        return which, specIcon or "Interface\\Icons\\INV_Misc_QuestionMark", specName or L["No Spec"]
     end
 
 -- local specRoles = {
@@ -485,11 +509,22 @@ function F.FitWidth(fs, text, alignment)
     fs:SetText(text)
 
     if fs:IsTruncated() then
-        for i = 1, string.utf8len(text) do
+        --! WotLK fix: strlenutf8 is native on 3.3.5 (codex: API function), while
+        --! string.utf8len is the byte-by-byte Lua loop from Libs/utf8.lua - see the
+        --! same substitution in F.SetFont at :1060. string.utf8sub below stays: this
+        --! client has no native substring-by-code-point, so Libs/utf8.lua is loaded
+        --! either way and only the length call is worth reclaiming.
+        --! The end index is passed explicitly for the same reason: utf8sub defaults
+        --! j to -1 (Libs/utf8.lua:187) and a negative index makes it re-walk the whole
+        --! string with utf8len on every call (:205), so the loop was quadratic. With
+        --! both indices >= 0 that inner walk is skipped; j = len means end-of-string,
+        --! exactly what -1 meant.
+        local len = strlenutf8(text)
+        for i = 1, len do
             if strlower(alignment) == "right" then
-                fs:SetText("..."..string.utf8sub(text, i))
+                fs:SetText("..."..string.utf8sub(text, i, len))
             else
-                fs:SetText(string.utf8sub(text, i).."...")
+                fs:SetText(string.utf8sub(text, i, len).."...")
             end
 
             if not fs:IsTruncated() then
@@ -867,21 +902,9 @@ end
 local combinedHeader = "CellRaidFrameHeader0"
 local separatedHeaders = {"CellRaidFrameHeader1", "CellRaidFrameHeader2", "CellRaidFrameHeader3", "CellRaidFrameHeader4", "CellRaidFrameHeader5", "CellRaidFrameHeader6", "CellRaidFrameHeader7", "CellRaidFrameHeader8"}
 
--- REVIEW:
--- Cell.clickCastFrames = {}
--- Cell.clickCastFrameQueue = {}
-
--- function F.RegisterFrame(frame)
---     Cell.clickCastFrames[frame] = true
---     Cell.clickCastFrameQueue[frame] = true  -- put into queue
---     Cell.Fire("UpdateQueuedClickCastings")
--- end
-
--- function F.UnregisterFrame(frame)
---     Cell.clickCastFrames[frame] = nil       -- ignore
---     Cell.clickCastFrameQueue[frame] = false -- mark for only cleanup
---     Cell.Fire("UpdateQueuedClickCastings")
--- end
+--! WotLK fix: remove the dormant retail click-casting frame queue. No live
+--! RegisterFrame/UnregisterFrame producer exists in this backport; active secure
+--! buttons are enumerated directly by F.IterateAllUnitButtons instead.
 
 function F.IterateAllUnitButtons(func, updateCurrentGroupOnly, updateQuickAssists, skipShared)
     -- solo
@@ -1001,26 +1024,33 @@ end
 function F.HandleUnitButton(type, unit, func, ...)
     if not unit then return end
 
+    --! WotLK perf: Cell.vars и Cell.unitButtons - глобал плюс хеш-лукап на каждое
+    --! обращение, а их тут было по три-четыре штуки. Функция вызывается из CLEU-
+    --! обработчиков (AoEHealing, TargetedSpells, StatusIcon, Request_Show, диффы
+    --! здоровья и щитов в UnitButton_Cata_Wrath), то есть сотни раз в секунду в рейде.
+    local vars = Cell.vars
     if type == "guid" then
-        unit = Cell.vars.guids[unit]
+        unit = vars.guids[unit]
     elseif type == "name" then
-        unit = Cell.vars.names[unit]
+        unit = vars.names[unit]
     end
 
     if not unit then return end
 
+    local buttons = Cell.unitButtons
     local handled, normal
 
-    if Cell.vars.groupType == "raid" then
-        if Cell.vars.inBattleground == 5 then
-            normal = Cell.unitButtons.raid.units[unit] or Cell.unitButtons.npc.units[unit] or Cell.unitButtons.arena[unit]
+    local groupType = vars.groupType
+    if groupType == "raid" then
+        if vars.inBattleground == 5 then
+            normal = buttons.raid.units[unit] or buttons.npc.units[unit] or buttons.arena[unit]
         else
-            normal = Cell.unitButtons.raid.units[unit] or Cell.unitButtons.npc.units[unit] or Cell.unitButtons.pet.units[unit]
+            normal = buttons.raid.units[unit] or buttons.npc.units[unit] or buttons.pet.units[unit]
         end
-    elseif Cell.vars.groupType == "party" then
-        normal = Cell.unitButtons.party.units[unit] or Cell.unitButtons.npc.units[unit]
+    elseif groupType == "party" then
+        normal = buttons.party.units[unit] or buttons.npc.units[unit]
     else -- solo
-        normal = Cell.unitButtons.solo[unit] or Cell.unitButtons.npc.units[unit]
+        normal = buttons.solo[unit] or buttons.npc.units[unit]
     end
 
     if normal then
@@ -1028,8 +1058,19 @@ function F.HandleUnitButton(type, unit, func, ...)
         handled = true
     end
 
-    for _, b in pairs(Cell.unitButtons.spotlight) do
-        if b.states.unit and UnitIsUnit(b.states.unit, unit) then
+    --! WotLK perf: числовой for вместо pairs. Cell.unitButtons.spotlight - плотный
+    --! массив 1..15: SpotlightFrame.lua создаёт все пятнадцать кнопок при загрузке
+    --! безусловно и никогда не вынимает элементы (проверено grep'ом), поэтому обход
+    --! эквивалентен. Разница в цене: pairs - это C-вызов плюс по C-вызову next на
+    --! каждый элемент, то есть семнадцать переходов Lua->C на КАЖДЫЙ вызов
+    --! HandleUnitButton, даже когда spotlight вообще не используется и states.unit
+    --! пуст у всех пятнадцати. Числовой for не делает ни одного.
+    local spotlight = buttons.spotlight
+    for i = 1, #spotlight do
+        local b = spotlight[i]
+        --! WotLK perf: states.unit читается один раз, а не два на попадании.
+        local spotlightUnit = b.states.unit
+        if spotlightUnit and UnitIsUnit(spotlightUnit, unit) then
             func(b, ...)
             handled = true
         end
@@ -1097,10 +1138,11 @@ end
 -- global functions
 -------------------------------------------------
 local UnitGUID = UnitGUID
-local GetNumGroupMembers = GetNumGroupMembers
+--! WotLK fix: consume Cell-private group adapters; do not depend on shared compatibility globals.
+local GetNumGroupMembers = Cell.GetNumGroupMembers
 local GetRaidRosterInfo = GetRaidRosterInfo
-local IsInRaid = IsInRaid
-local IsInGroup = IsInGroup
+local IsInRaid = Cell.IsInRaid
+local IsInGroup = Cell.IsInGroup
 local UnitIsPlayer = UnitIsPlayer
 local UnitIsUnit = UnitIsUnit
 local UnitInParty = UnitInParty
@@ -1108,10 +1150,11 @@ local UnitInRaid = UnitInRaid
 local UnitPlayerOrPetInParty = UnitPlayerOrPetInParty
 local UnitPlayerOrPetInRaid = UnitPlayerOrPetInRaid
 local UnitClass = UnitClass
-local UnitClassBase = UnitClassBase
+--! WotLK fix: use Cell's private class-token normalizer; keep native UnitClassBase untouched.
+local UnitClassBase = Cell.GetUnitClassToken
 local UnitName = UnitName
-local UnitIsGroupLeader = UnitIsGroupLeader
-local UnitIsGroupAssistant = UnitIsGroupAssistant
+local UnitIsGroupLeader = Cell.UnitIsGroupLeader
+local UnitIsGroupAssistant = Cell.UnitIsGroupAssistant
 local UnitInPartyIsAI = UnitInPartyIsAI or function() end
 
 -------------------------------------------------
@@ -1164,14 +1207,21 @@ function F.GetClassColor(class)
     end
 end
 
+local function GetColorCode(color)
+    if not color then return "|cffffffff" end
+    return string.format("|cFF%02X%02X%02X",
+        math.floor(color.r * 255 + 0.5),
+        math.floor(color.g * 255 + 0.5),
+        math.floor(color.b * 255 + 0.5))
+end
+
 function F.GetClassColorStr(class)
     local token = NormalizeClassToken(class)
     if token and RAID_CLASS_COLORS[token] then
-        if CUSTOM_CLASS_COLORS and CUSTOM_CLASS_COLORS[token] then
-            return "|c"..CUSTOM_CLASS_COLORS[token].colorStr
-        else
-            return "|c"..RAID_CLASS_COLORS[token].colorStr
-        end
+        --! WotLK fix: compute Cell's color escape privately. Do not require or
+        --! inject retail colorStr fields into Blizzard/foreign shared tables.
+        local color = CUSTOM_CLASS_COLORS and CUSTOM_CLASS_COLORS[token] or RAID_CLASS_COLORS[token]
+        return GetColorCode(color)
     else
         return "|cffffffff"
     end
@@ -1504,9 +1554,23 @@ local OBJECT_AFFILIATION_MINE = 0x00000001
 local OBJECT_AFFILIATION_PARTY = 0x00000002
 local OBJECT_AFFILIATION_RAID = 0x00000004
 
+--! WotLK perf: three bit.band calls collapsed into one, and `bit.band` is resolved
+--! once at load instead of on every call. Testing each affiliation bit separately
+--! and OR-ing the results answers the same question as masking all three at once -
+--! "is any of these bits set" - so the mask is precomputed here. This runs on the
+--! combat log: the cleu health updater calls it on EVERY
+--! COMBAT_LOG_EVENT_UNFILTERED, hundreds a second in a 25-man raid, and each old
+--! call was a global read of `bit`, a table index for `band` and a C call, done up
+--! to three times. `bit` is provided by the client itself on 3.3.5 (codex: bit
+--! library), so caching the reference here is not a foreign-global assumption -
+--! it is a read, and Cell keeps it privately in a file local.
+local OBJECT_AFFILIATION_FRIENDLY = OBJECT_AFFILIATION_MINE + OBJECT_AFFILIATION_PARTY + OBJECT_AFFILIATION_RAID
+--! The alias also serves GetGUIDType below, which had its own identical copy.
+local band = bit.band
+
 function F.IsFriend(unitFlags)
     if not unitFlags then return false end
-    return (bit.band(unitFlags, OBJECT_AFFILIATION_MINE) ~= 0) or (bit.band(unitFlags, OBJECT_AFFILIATION_RAID) ~= 0) or (bit.band(unitFlags, OBJECT_AFFILIATION_PARTY) ~= 0)
+    return band(unitFlags, OBJECT_AFFILIATION_FRIENDLY) ~= 0
 end
 
 --! WotLK fix: these helpers matched retail string GUIDs ("Player-1-...",
@@ -1518,7 +1582,6 @@ end
 --! 0x000 = player; otherwise the low nibble is 3 = NPC, 4 = pet,
 --! 5 = vehicle. Retail-style prefixes are kept as a fallback for servers
 --! with custom GUID formats.
-local band = bit.band
 local function GetGUIDType(guid)
     -- returns "player" | "npc" | "pet" | "vehicle" | nil
     if strfind(guid, "^0x") then
@@ -1601,7 +1664,7 @@ end
 
 function F.HasPermission(isPartyMarkPermission)
     if isPartyMarkPermission and IsInGroup() and not IsInRaid() then return true end
-    return UnitIsGroupLeader("player") or (IsInRaid() and UnitIsGroupAssistant("player"))
+    return Cell.UnitIsGroupLeader("player") or (IsInRaid() and Cell.UnitIsGroupAssistant("player"))
 end
 
 -------------------------------------------------
@@ -1611,11 +1674,11 @@ Cell.vars.texture = "Interface\\AddOns\\Cell\\Media\\statusbar.tga"
 Cell.vars.emptyTexture = "Interface\\AddOns\\Cell\\Media\\empty.tga"
 Cell.vars.whiteTexture = "Interface\\AddOns\\Cell\\Media\\white.tga"
 
--- Get LSM from other addons if available (Cell no longer embeds it to avoid conflicts)
+--! WotLK fix: Cell embeds a WotLK-safe LSM fallback but remains fetch-only.
 local LSM = LibStub and LibStub("LibSharedMedia-3.0", true) or nil
 
--- REMOVED: LSM Registration AND Embedding
--- Cell now operates in FETCH-ONLY mode with LibSharedMedia.
+-- REMOVED: Cell-owned LSM registration.
+-- Cell operates in FETCH-ONLY mode with LibSharedMedia.
 -- This prevents triggering LSM callbacks that affect other addons (Quartz, NotPlater, XPerl).
 --
 -- Cell can still FETCH textures/fonts from other addons, but won't REGISTER its own.
@@ -1701,12 +1764,6 @@ function F.GetFontItems()
             ["font"] = defaultFont,
         })
     end
-    --         -- ["onClick"] = function()
-    --         --     CellDB["appearance"]["font"] = defaultFontName
-    --         --     Cell.Fire("UpdateAppearance", "font")
-    --         -- end,
-    --     })
-    -- end
     return items, fonts, defaultFontName, defaultFont
 end
 
@@ -1828,15 +1885,91 @@ function F.GetDefaultRoleIconEscapeSequence(role, size)
     return "|TInterface\\AddOns\\Cell\\Media\\Roles\\Default_" .. role .. ":" .. (size or 0) .. "|t"
 end
 
+--! WotLK fix: class + dominant talent tab -> role, for the Role mode of Layout Auto
+--! Switch. This deliberately does NOT go through Cell.UnitGroupRolesAssigned: that one
+--! prefers the role out of GetRaidRosterInfo, which the raid leader can change at any
+--! moment, so a storage key built on it would silently repoint the player's saved
+--! profile mid-raid. The talent tree is intrinsic - it only changes when the player
+--! respecs or switches talent group, which is exactly when the profile should change.
+--! Tab order is fixed per class on 3.3.5a, so the index is a stable key.
+--! Known limit: bear and cat share the Feral tab and are indistinguishable from
+--! talents alone, so a feral druid resolves to DAMAGER. Spec mode keys on the tab
+--! itself and is unaffected. Same table as LibGroupInfo.lua:251, kept private here so
+--! Cell does not depend on a library's internals for its own config key.
+local WRATH_TREE_ROLES = {
+    WARRIOR     = {"DAMAGER", "DAMAGER", "TANK"},
+    PALADIN     = {"HEALER", "TANK", "DAMAGER"},
+    HUNTER      = {"DAMAGER", "DAMAGER", "DAMAGER"},
+    ROGUE       = {"DAMAGER", "DAMAGER", "DAMAGER"},
+    PRIEST      = {"HEALER", "HEALER", "DAMAGER"},
+    DEATHKNIGHT = {"TANK", "DAMAGER", "DAMAGER"},
+    SHAMAN      = {"DAMAGER", "DAMAGER", "HEALER"},
+    MAGE        = {"DAMAGER", "DAMAGER", "DAMAGER"},
+    WARLOCK     = {"DAMAGER", "DAMAGER", "DAMAGER"},
+    DRUID       = {"DAMAGER", "DAMAGER", "HEALER"},
+}
+
+--! Returns TANK / HEALER / DAMAGER, or nil while the trees are still unreadable.
+--! nil means "not known yet", never "no role": callers must skip rather than guess,
+--! or a fresh character with no points spent would be written under the wrong key.
+function F.GetPlayerTalentRole()
+    local class = Cell.vars.playerClass
+    local roles = class and WRATH_TREE_ROLES[class]
+    if not roles then return nil end
+
+    local tab = F.GetDominantTalentTab()
+    if not tab then return nil end
+
+    return roles[tab]
+end
+
 -------------------------------------------------
 -- frame
 -------------------------------------------------
-function F.GetMouseFocus()
-    if GetMouseFoci then
-        return GetMouseFoci()[1]
-    else
-        return GetMouseFocus()
-    end
+--! WotLK fix: здесь была обёртка F.GetMouseFocus, которая сначала пробовала
+--! ретейловый GetMouseFoci() и индексировала его результат как [1], а лишь потом
+--! падала на нативный GetMouseFocus(). На 3.3.5 ретейлового имени нет ни в C-API
+--! (кодекс), ни в 383 файлах FrameXML, поэтому ответить на пробу мог только ЧУЖОЙ
+--! аддон, опубликовавший ретейл-имя, - и Cell поверил бы его ФОРМЕ возврата, взяв
+--! [1] у чего угодно (правило 3: прочитанный глобал никогда не считается своей
+--! реализацией; вернись форма не таблицей - "attempt to index"). Нативный
+--! GetMouseFocus() отдаёт фрейм под курсором или nil (кодекс: 3.3.5a, не protected) -
+--! именно это и нужно всем семи местам, и Core_Wrath.lua уже звал его напрямую.
+--! Обёртка убрана, все вызовы идут в нативную функцию.
+
+--! WotLK fix: у Marks Bar и ReadyCheck/PullTimer в режиме мувера единственная зона
+--! хвата - узкая полоса под moverText: сами фреймы 40 и 55 юнитов высотой, а кнопки
+--! занимают всё, кроме верхних 20/18. При пиксель-перфект масштабе ~0.7 это ~14
+--! экранных пикселей прозрачного воздуха, попасть в который вслепую почти нельзя,
+--! а вокруг - живые кнопки, которые ставят метки и запускают ready check.
+--! На 3.3.5 нет SetPropagateMouseClicks, поэтому мышь у верхнего фрейма событие
+--! съедает и до parent-а drag не доходит - оверлей обязан тащить сам.
+--! Оверлей: mouse-enabled фрейм на всю площадь, поверх кнопок (frame level +10),
+--! видим только в режиме мувера. Кнопки при этом не трогаем - ни EnableMouse, ни
+--! Hide: они secure (SecureActionButtonTemplate), а ShowMover может прийти в бою.
+---@param frame table фрейм инструмента, который двигаем
+---@param getPositionTable function геттер таблицы позиции - именно функция, а не сама
+---! таблица: /cell reset position подменяет CellDB[...][4] новой таблицей, ссылка,
+---! захваченная при загрузке, после сброса писала бы в осиротевшую копию.
+function F.CreateMoverOverlay(frame, getPositionTable)
+    local P = Cell.pixelPerfectFuncs
+
+    local overlay = CreateFrame("Frame", nil, frame)
+    overlay:SetAllPoints(frame)
+    overlay:EnableMouse(true)
+    overlay:SetFrameLevel(frame:GetFrameLevel() + 10)
+    overlay:RegisterForDrag("LeftButton")
+    overlay:SetScript("OnDragStart", function()
+        frame:StartMoving()
+        frame:SetUserPlaced(false)
+    end)
+    overlay:SetScript("OnDragStop", function()
+        frame:StopMovingOrSizing()
+        P.SavePosition(frame, getPositionTable())
+    end)
+    overlay:Hide()
+
+    return overlay
 end
 
 -------------------------------------------------
@@ -1847,19 +1980,16 @@ function F.GetInstanceName()
         local name = GetInstanceInfo()
         if not name then name = GetRealZoneText() end
         return name
-    else
-        local mapID = C_Map.GetBestMapForUnit("player")
-        if type(mapID) ~= "number" or mapID < 1 then
-            return ""
-        end
-
-        local info = MapUtil.GetMapParentInfo(mapID, Enum.UIMapType.Continent, true)
-        if info then
-            return info.name, info.mapID
-        end
-
-        return ""
     end
+
+    --! WotLK fix: 3.3.5 has no retail C_Map/MapUtil hierarchy. Raid-debuff
+    --! lookup outside instances needs only the current localized zone name, so
+    --! use the native legacy APIs and avoid mutating the global map selection.
+    local name = GetRealZoneText()
+    if not name or name == "" then
+        name = GetZoneText()
+    end
+    return name or ""
 end
 
 -------------------------------------------------
@@ -1876,23 +2006,9 @@ end
 --     end
 -- end
 
--- https://wowpedia.fandom.com/wiki/Patch_10.0.2/API_changes
-local lines = {}
-function F.GetSpellTooltipInfo(spellId)
-    wipe(lines)
-
-    local name, icon = F.GetSpellInfo(spellId)
-    if not name then return end
-
-    local data = C_TooltipInfo.GetSpellByID(spellId)
-    for i, line in ipairs(data.lines) do
-        TooltipUtil.SurfaceArgs(line)
-        -- line.leftText
-        -- line.rightText
-    end
-
-    return name, icon, table.concat(lines, "\n")
-end
+--! WotLK fix: the unused retail tooltip-data helper was removed. Publishing a
+--! fake C_TooltipInfo.GetSpellByID that always returned no lines hid unsupported
+--! behavior without providing a usable contract.
 
     local GetSpellInfo = GetSpellInfo
     function F.GetSpellInfo(spellId)
@@ -1903,72 +2019,75 @@ end
         return name, icon, tonumber(rank)
     end
 
-if Cell.isWrath or Cell.isVanilla then
-    local GetSpellInfo = GetSpellInfo
-    local GetNumSpellTabs = GetNumSpellTabs
-    local GetSpellTabInfo = GetSpellTabInfo
-    local GetSpellBookItemName = GetSpellBookItemName
+--! WotLK fix: guard `if Cell.isWrath or Cell.isVanilla` вырезан - на 3.3.5 он
+--! всегда истина. Блок объявлял F.GetRankSuffix и F.GetMaxSpellRank плюс свои
+--! файловые локалы; тело поднято на верхний уровень как есть.
+local GetSpellInfo = GetSpellInfo
+local GetNumSpellTabs = GetNumSpellTabs
+local GetSpellTabInfo = GetSpellTabInfo
+--! WotLK fix: GetSpellName is the native 3.3.5 spellbook API and preserves
+--! both localized name and rank/subtext. Do not depend on a global modern alias.
+local GetSpellBookItemName = GetSpellName
 
-    local MATCH_PATTERN, FORMAT_PATTERN = "Rank (%d+)", "Rank %d"
-    if LOCALE_deDE or LOCALE_frFR then
-        MATCH_PATTERN = "Rang (%d+)"
-        FORMAT_PATTERN = "Rang %d"
-    elseif LOCALE_esES or LOCALE_esMX then
-        MATCH_PATTERN = "Rango (%d+)"
-        FORMAT_PATTERN = "Rango %d"
-    elseif LOCALE_ruRU then
-        MATCH_PATTERN = "Уровень (%d+)"
-        FORMAT_PATTERN = "Уровень %d"
-    elseif LOCALE_zhCN then
-        MATCH_PATTERN = "等级 (%d+)"
-        FORMAT_PATTERN = "等级 %d"
-    elseif LOCALE_zhTW then
-        MATCH_PATTERN = "等級 (%d+)"
-        FORMAT_PATTERN = "等級 %d"
+local MATCH_PATTERN, FORMAT_PATTERN = "Rank (%d+)", "Rank %d"
+if LOCALE_deDE or LOCALE_frFR then
+    MATCH_PATTERN = "Rang (%d+)"
+    FORMAT_PATTERN = "Rang %d"
+elseif LOCALE_esES or LOCALE_esMX then
+    MATCH_PATTERN = "Rango (%d+)"
+    FORMAT_PATTERN = "Rango %d"
+elseif LOCALE_ruRU then
+    MATCH_PATTERN = "Уровень (%d+)"
+    FORMAT_PATTERN = "Уровень %d"
+elseif LOCALE_zhCN then
+    MATCH_PATTERN = "等级 (%d+)"
+    FORMAT_PATTERN = "等级 %d"
+elseif LOCALE_zhTW then
+    MATCH_PATTERN = "等級 (%d+)"
+    FORMAT_PATTERN = "等級 %d"
+end
+
+FORMAT_PATTERN = "(" .. FORMAT_PATTERN .. ")"
+
+function F.GetRankSuffix(rank)
+    return FORMAT_PATTERN:format(rank)
+end
+
+function F.GetMaxSpellRank(spellId)
+    local spellName = select(1, GetSpellInfo(spellId))
+    if not spellName then return end
+
+    local maxRank = 0
+    local bookType = BOOKTYPE_SPELL
+
+    local totalSpells = 0
+    for tab = 1, GetNumSpellTabs() do
+        local name, texture, offset, numSpells = GetSpellTabInfo(tab)
+        totalSpells = totalSpells + numSpells
     end
 
-    FORMAT_PATTERN = "(" .. FORMAT_PATTERN .. ")"
-
-    function F.GetRankSuffix(rank)
-        return FORMAT_PATTERN:format(rank)
-    end
-
-    function F.GetMaxSpellRank(spellId)
-        local spellName = select(1, GetSpellInfo(spellId))
-        if not spellName then return end
-
-        local maxRank = 0
-        local bookType = BOOKTYPE_SPELL
-
-        local totalSpells = 0
-        for tab = 1, GetNumSpellTabs() do
-            local name, texture, offset, numSpells = GetSpellTabInfo(tab)
-            totalSpells = totalSpells + numSpells
-        end
-
-        -- local spellSubText
-        for i = 1, totalSpells do
-            local name, subText = GetSpellBookItemName(i, bookType)
-            if name == spellName and subText then
-                local rank = tonumber(subText:match(MATCH_PATTERN))
-                -- spellSubText = subText
-                if rank and rank > maxRank then
-                    maxRank = rank
-                end
+    -- local spellSubText
+    for i = 1, totalSpells do
+        local name, subText = GetSpellBookItemName(i, bookType)
+        if name == spellName and subText then
+            local rank = tonumber(subText:match(MATCH_PATTERN))
+            -- spellSubText = subText
+            if rank and rank > maxRank then
+                maxRank = rank
             end
         end
-
-        -- if spellSubText then
-        --     print("----------------------------------------------")
-        --     print(spellSubText, MATCH_PATTERN, tonumber(spellSubText:match(MATCH_PATTERN)))
-        --     print("Max Rank of " .. spellName .. ": " .. maxRank)
-        --     print("----------------------------------------------")
-        -- else
-        --     print("Rank info not found: " .. spellName)
-        -- end
-
-        return maxRank
     end
+
+    -- if spellSubText then
+    --     print("----------------------------------------------")
+    --     print(spellSubText, MATCH_PATTERN, tonumber(spellSubText:match(MATCH_PATTERN)))
+    --     print("Max Rank of " .. spellName .. ": " .. maxRank)
+    --     print("----------------------------------------------")
+    -- else
+    --     print("Rank info not found: " .. spellName)
+    -- end
+
+    return maxRank
 end
 
 --! WotLK fix: C_Spell.GetSpellCooldown is a ClassicAPI shim that wraps the native
@@ -2024,21 +2143,19 @@ end
 -------------------------------------------------
 -- auras
 -------------------------------------------------
--- name, icon, count, debuffType, duration, expirationTime, source, isStealable, nameplateShowPersonal, spellId, canApplyAura, isBossDebuff, castByPlayer, nameplateShowAll, timeMod = UnitAura
--- NOTE: FrameXML/AuraUtil.lua
--- AuraUtil.FindAura(predicate, unit, filter, predicateArg1, predicateArg2, predicateArg3)
--- predicate(predicateArg1, predicateArg2, predicateArg3, ...)
-local function predicate(...)
-    local idToFind = ...
-    local id = select(13, ...)
-    return idToFind == id
-end
-
+--! WotLK fix: scan the native 3.3.5 aura tuple directly. The embedded
+--! AuraUtil implementation recursively rebuilt every tuple and also advertised
+--! a broken ForEachAura contract backed by nonexistent UnitAuraSlots APIs.
 function F.FindAuraById(unit, type, spellId)
-    if type == "BUFF" then
-        return AuraUtil.FindAura(predicate, unit, "HELPFUL", spellId)
-    else
-        return AuraUtil.FindAura(predicate, unit, "HARMFUL", spellId)
+    local filter = type == "BUFF" and "HELPFUL" or "HARMFUL"
+    for i = 1, 40 do
+        local name, rank, icon, count, debuffType, duration, expirationTime,
+            source, isStealable, shouldConsolidate, id = UnitAura(unit, i, filter)
+        if not name then return end
+        if id == spellId then
+            return name, icon, count, debuffType, duration, expirationTime,
+                source, isStealable, shouldConsolidate, id
+        end
     end
 end
 
@@ -2080,10 +2197,20 @@ end
 -- OmniCD
 -------------------------------------------------
 function F.UpdateOmniCDPosition(frame)
-    -- upstream r271: nil-guard OmniCD[1].db (errors when OmniCD's DB isn't initialized yet)
-    if OmniCD and OmniCD[1].db and OmniCD[1].db.position.uf == frame then
+    --! WotLK fix: guard был асимметричным - проверял сам глобал `OmniCD` и поле `.db`,
+    --! но индексы `[1]`, `.position` и `.Party` брал без проверки. Правило 3: Cell не
+    --! владеет глобалом `OmniCD` и не имеет права верить его ФОРМЕ. Любой аддон,
+    --! опубликовавший это имя иначе (не таблица с [1], или [1] без .position/.Party),
+    --! ронял хук `OnAttributeChanged` каждой spotlight-кнопки в "attempt to index".
+    --! Заодно глобал читается один раз в локальную E вместо трёх GETGLOBAL + трёх
+    --! индексов, и та же E уходит в замыкание - предсказуемее, чем перечитывать
+    --! чужой глобал через 0.5 c. Поведение при живом OmniCD не меняется.
+    local E = OmniCD and OmniCD[1]
+    if E and E.db and E.db.position and E.db.position.uf == frame then
         C_Timer.After(0.5, function()
-            OmniCD[1].Party:UpdatePosition()
+            if E.Party then
+                E.Party:UpdatePosition()
+            end
         end)
     end
 end
@@ -2173,12 +2300,19 @@ local UnitInRange = UnitInRange
 local UnitCanAssist = UnitCanAssist
 local UnitCanAttack = UnitCanAttack
 local UnitCanCooperate = UnitCanCooperate
-local IsSpellInRange = (C_Spell and C_Spell.IsSpellInRange) and C_Spell.IsSpellInRange or IsSpellInRange
---! WotLK fix: the guard checked C_Spell while dereferencing C_Item - any load order
---! where C_Spell exists but C_Item does not would error out the whole file.
-local IsItemInRange = (C_Item and C_Item.IsItemInRange) and C_Item.IsItemInRange or IsItemInRange
+--! WotLK fix: critical range checks bind directly to native 3.3.5 APIs.
+--! Standalone !!!ClassicAPI may expose C_Spell/C_Item wrappers with a retail
+--! boolean contract, while embedded ClassicAPI aliases the native 1/0/nil
+--! contract. Normalizing the native results locally makes both load modes
+--! identical and avoids foreign namespace ownership entirely.
+local IsSpellInRange = IsSpellInRange
+local IsItemInRange = IsItemInRange
 local CheckInteractDistance = CheckInteractDistance
 local UnitIsDead = UnitIsDead
+--! WotLK perf: последний голый глобал в горячем пути F.IsInRange - он звался
+--! на каждый дружественный юнит каждого тика 0.25s (40 юнитов x 4/s), а GETGLOBAL
+--! это хеш-лукап по таблице глобалов против прямого чтения upvalue.
+local UnitIsConnected = UnitIsConnected
 -- upstream r273 switched to IsSpellKnown; on 3.3.5 IsSpellKnownOrOverridesKnown
 -- doesn't exist at all (MoP+ API), so without this fallback the local is nil
 -- and SPELLS_CHANGED errors on every spellbook update
@@ -2188,24 +2322,33 @@ local IsSpellKnownOrOverridesKnown = IsSpellKnownOrOverridesKnown or IsSpellKnow
 -- local GetSpellBookItemName = GetSpellBookItemName
 -- local BOOKTYPE_SPELL = BOOKTYPE_SPELL
 
-local UnitInSamePhase = UnitInPhase
+--! WotLK fix: UnitInPhase на 3.3.5 не существует (кодекс: НЕТ), а вызов
+--! UnitInSamePhase("target") в GetResult1 ниже безусловный. На голом клиенте
+--! локал захватывал nil, и отладочный вид `/cellrc` падал в "attempt to call
+--! a nil value" каждый кадр, пока был открыт. Работало это только потому, что
+--! имя давал внешний !!!ClassicAPI - ровно класс GAP-015. Cell.UnitInPhase
+--! (Polyfills.lua) - приватная nil-безопасная версия: зовёт натив, если ядро
+--! сервера его всё-таки добавило, иначе true (фазинга на 3.3.5 нет).
+local UnitInSamePhase = Cell.UnitInPhase
 
 local playerClass = UnitClassBase("player")
 
 local friendSpells = {
     -- ["DEATHKNIGHT"] = 47541,
     -- ["DEMONHUNTER"] = ,
-    ["DRUID"] = (Cell.isWrath or Cell.isVanilla) and 5185 or 8936, -- 治疗之触 / 愈合
+    --! WotLK fix: тернарники по Cell.isWrath/isRetail свёрнуты в константы 3.3.5 -
+    --! флаги заданы литералами выше (строки 24-28), ветка выбиралась статически.
+    ["DRUID"] = 5185, -- 治疗之触 (Healing Touch)
     -- FIXME: [361469 活化烈焰] 会被英雄天赋 [431443 时序烈焰] 替代，但它而且有问题
     -- IsSpellInRange 始终返回 nil
     ["EVOKER"] = 355913, -- 翡翠之花
     -- ["HUNTER"] = 136,
     ["MAGE"] = 1459, -- 奥术智慧 / 奥术光辉
     ["MONK"] = 116670, -- 活血术
-    ["PALADIN"] = Cell.isRetail and 19750 or 635, -- 圣光闪现 / 圣光术
-    ["PRIEST"] = (Cell.isWrath or Cell.isVanilla) and 2050 or 2061, -- 次级治疗术 / 快速治疗
+    ["PALADIN"] = 635, -- 圣光术 (Holy Light)
+    ["PRIEST"] = 2050, -- 次级治疗术 (Lesser Heal)
     -- ["ROGUE"] = Cell.isWrath and 57934,
-    ["SHAMAN"] = Cell.isRetail and 8004 or 331, -- 治疗之涌 / 治疗波
+    ["SHAMAN"] = 331, -- 治疗波 (Healing Wave)
     ["WARLOCK"] = 5697, -- 无尽呼吸
     -- ["WARRIOR"] = 3411,
 }
@@ -2226,15 +2369,15 @@ local harmSpells = {
     -- IsSpellInRange 始终返回 nil
     ["EVOKER"] = 362969, -- 碧蓝打击
     ["HUNTER"] = 75, -- 自动射击
-    ["MAGE"] = Cell.isRetail and 116 or 133, -- 寒冰箭 / 火球术
+    ["MAGE"] = 133, -- 火球术 (Fireball)
     ["MONK"] = 117952, -- 碎玉闪电
     ["PALADIN"] = 20271, -- 审判
-    ["PRIEST"] = Cell.isRetail and 589 or 585, -- 暗言术：痛 / 惩击
+    ["PRIEST"] = 585, -- 惩击 (Smite)
     ["ROGUE"] = 1752, -- 影袭
-    ["SHAMAN"] = Cell.isRetail and 188196 or 403, -- 闪电箭
+    ["SHAMAN"] = 403, -- 闪电箭 (Lightning Bolt)
     --! WotLK fix: 234153 is the retail Drain Life ID; on 3.3.5 it is 689 (rank 1),
     --! so IsSpellKnown() never matched and warlocks fell back to the item check.
-    ["WARLOCK"] = Cell.isRetail and 234153 or 689, -- 吸取生命
+    ["WARLOCK"] = 689, -- 吸取生命 (Drain Life, rank 1)
     ["WARRIOR"] = 355, -- 嘲讽
 }
 
@@ -2427,11 +2570,18 @@ debug.text:SetSpacing(5)
 debug.text:SetPoint("LEFT", 5, 0)
 
 local function GetResult1()
-    local inRange, checked = UnitInRange("target")
+    --! WotLK fix: the second return (checkedRange) appeared in 4.0; on 3.3.5
+    --! UnitInRange gives 1/nil only (кодекс: inRange = UnitInRange("unit")), so
+    --! `checked` was always nil and this window permanently printed a red
+    --! "unchecked" about a concept the client does not have - a diagnostic lying
+    --! about the API it exists to explain. Print the raw value: nil means either
+    --! "out of range" or "not a group member", and F.IsInRange above deliberately
+    --! keeps falling through in that case instead of returning false.
+    local inRange = UnitInRange("target")
 
     return "UnitID: " .. (F.GetTargetUnitID("target") or "target") ..
         "\n|cffffff00F.IsInRange:|r " .. (F.IsInRange("target") and "true" or "false") ..
-        "\nUnitInRange: " .. (checked and "checked" or "unchecked") .. " " .. (inRange and "true" or "false") ..
+        "\nUnitInRange: " .. (inRange == 1 and "true" or "nil (out of range or not in group)") ..
         "\nUnitIsVisible: " .. (UnitIsVisible("target") and "true" or "false") ..
         "\n\nUnitCanAssist: " .. (UnitCanAssist("player", "target") and "true" or "false") ..
         "\nUnitCanCooperate: " .. (UnitCanCooperate("player", "target") and "true" or "false") ..
@@ -2447,10 +2597,12 @@ end
 
 local function GetResult2()
     if UnitCanAttack("player", "target") then
-        return "IsItemInRange: " .. (IsItemInRange(harmItems[playerClass], "target") and "true" or "false") ..
+        --! WotLK fix: the debug view must normalize native 1/0/nil too; Lua
+        --! treats 0 as true and otherwise reported an out-of-range target as true.
+        return "IsItemInRange: " .. (IsItemInRange(harmItems[playerClass], "target") == 1 and "true" or "false") ..
             "\nCheckInteractDistance(28y): " .. (CheckInteractDistance("target", 4) and "true" or "false")
     else
-        return "IsItemInRange: " .. (InCombatLockdown() and "notAvailable" or (IsItemInRange(harmItems[playerClass], "target") and "true" or "false")) ..
+        return "IsItemInRange: " .. (InCombatLockdown() and "notAvailable" or (IsItemInRange(harmItems[playerClass], "target") == 1 and "true" or "false")) ..
             "\nCheckInteractDistance(28y): " .. (InCombatLockdown() and "notAvailable" or (CheckInteractDistance("target", 4) and "true" or "false"))
     end
 end
@@ -2463,8 +2615,9 @@ debug:SetScript("OnUpdate", function(self, elapsed)
         result = string.gsub(result, "none", "|cffabababnone|r")
         result = string.gsub(result, "true", "|cff00ff00true|r")
         result = string.gsub(result, "false", "|cffff0000false|r")
-        result = string.gsub(result, " checked", " |cff00ff00checked|r")
-        result = string.gsub(result, "unchecked", "|cffff0000unchecked|r")
+        --! WotLK fix: the "checked"/"unchecked" colouring is gone with the word
+        --! itself - two gsub passes per 0.25s tick over a string that can never
+        --! contain it.
 
         debug.text:SetText("|cffff0066Cell Range Check (Target)|r\n\n" .. result)
 

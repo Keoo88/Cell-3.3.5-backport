@@ -22,6 +22,8 @@ local type		= _G.type
 
 local band			= _G.bit.band
 local table_sort	= _G.table.sort
+local math_floor	= _G.math.floor
+local table_insert	= _G.table.insert
 
 local locale = GetLocale()
 local locale_is_western
@@ -56,21 +58,17 @@ lib.MediaType.STATUSBAR		= "statusbar"			-- statusbar textures
 lib.MediaType.SOUND			= "sound"				-- sound files
 
 -- populate lib with default Blizzard data
+--! WotLK fix: Keep only default background paths verified in the 3.3.5a enUS client.
 -- BACKGROUND
 if not lib.MediaTable.background then lib.MediaTable.background = {} end
 lib.MediaTable.background["None"]									= [[]]
-lib.MediaTable.background["Blizzard Collections Background"]		= [[Interface\Collections\CollectionsBackgroundTile]]
 lib.MediaTable.background["Blizzard Dialog Background"]				= [[Interface\DialogFrame\UI-DialogBox-Background]]
 lib.MediaTable.background["Blizzard Dialog Background Dark"]		= [[Interface\DialogFrame\UI-DialogBox-Background-Dark]]
 lib.MediaTable.background["Blizzard Dialog Background Gold"]		= [[Interface\DialogFrame\UI-DialogBox-Gold-Background]]
-lib.MediaTable.background["Blizzard Garrison Background"]			= [[Interface\Garrison\GarrisonUIBackground]]
-lib.MediaTable.background["Blizzard Garrison Background 2"]			= [[Interface\Garrison\GarrisonUIBackground2]]
-lib.MediaTable.background["Blizzard Garrison Background 3"]			= [[Interface\Garrison\GarrisonMissionUIInfoBoxBackgroundTile]]
 lib.MediaTable.background["Blizzard Low Health"]					= [[Interface\FullScreenTextures\LowHealth]]
 lib.MediaTable.background["Blizzard Marble"]						= [[Interface\FrameGeneral\UI-Background-Marble]]
 lib.MediaTable.background["Blizzard Out of Control"]				= [[Interface\FullScreenTextures\OutOfControl]]
 lib.MediaTable.background["Blizzard Parchment"]						= [[Interface\AchievementFrame\UI-Achievement-Parchment-Horizontal]]
-lib.MediaTable.background["Blizzard Parchment 2"]					= [[Interface\AchievementFrame\UI-GuildAchievement-Parchment-Horizontal]]
 lib.MediaTable.background["Blizzard Rock"]							= [[Interface\FrameGeneral\UI-Background-Rock]]
 lib.MediaTable.background["Blizzard Tabard Background"]				= [[Interface\TabardFrame\TabardFrameBackground]]
 lib.MediaTable.background["Blizzard Tooltip"]						= [[Interface\Tooltips\UI-Tooltip-Background]]
@@ -171,17 +169,11 @@ else
 	LOCALE_MASK = lib.LOCALE_BIT_western
 	locale_is_western = true
 --
-	SML_MT_font["2002"]								= [[Fonts\2002.TTF]]
-	SML_MT_font["2002 Bold"]						= [[Fonts\2002B.TTF]]
-	SML_MT_font["AR CrystalzcuheiGBK Demibold"]		= [[Fonts\ARHei.TTF]]
-	SML_MT_font["AR ZhongkaiGBK Medium (Combat)"]	= [[Fonts\ARKai_C.TTF]]
-	SML_MT_font["AR ZhongkaiGBK Medium"]			= [[Fonts\ARKai_T.TTF]]
+	--! WotLK fix: The enUS 3.3.5a archive provides only these four LSM defaults.
 	SML_MT_font["Arial Narrow"]						= [[Fonts\ARIALN.TTF]]
 	SML_MT_font["Friz Quadrata TT"]					= [[Fonts\FRIZQT__.TTF]]
-	SML_MT_font["MoK"]								= [[Fonts\K_Pagetext.TTF]]
-	SML_MT_font["Morpheus"]							= [[Fonts\MORPHEUS_CYR.TTF]]
-	SML_MT_font["Nimrod MT"]						= [[Fonts\NIM_____.ttf]]
-	SML_MT_font["Skurri"]							= [[Fonts\SKURRI_CYR.TTF]]
+	SML_MT_font["Morpheus"]							= [[Fonts\MORPHEUS.TTF]]
+	SML_MT_font["Skurri"]							= [[Fonts\SKURRI.TTF]]
 --
 	lib.DefaultMedia.font = "Friz Quadrata TT"
 --
@@ -214,6 +206,26 @@ local function rebuildMediaList(mediatype)
 	table_sort(mlist)
 end
 
+--! WotLK fix: Preserve the r164 lazy-list behavior so foreign registrations do
+-- not rebuild and sort the complete shared list on every LSM:Register call.
+local function updateMediaList(mediatype, value)
+	if not mediaList[mediatype] then
+		return
+	end
+
+	local mlist = mediaList[mediatype]
+	local s, e, m = 1, #mlist
+	while s <= e do
+		m = math_floor((s + e) / 2)
+		if mlist[m] > value then
+			e = m - 1
+		else
+			s = m + 1
+		end
+	end
+	table_insert(mlist, s, value)
+end
+
 function lib:Register(mediatype, key, data, langmask)
 	if type(mediatype) ~= "string" then
 		error(MAJOR..":Register(mediatype, key, data, langmask) - mediatype must be string, got "..type(mediatype))
@@ -242,7 +254,7 @@ function lib:Register(mediatype, key, data, langmask)
 	if mtable[key] then return false end
 
 	mtable[key] = data
-	rebuildMediaList(mediatype)
+	updateMediaList(mediatype, key)
 	self.callbacks:Fire("LibSharedMedia_Registered", mediatype, key)
 	return true
 end

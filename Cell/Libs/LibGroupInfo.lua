@@ -9,6 +9,11 @@ local MAJOR, MINOR = "LibGroupInfo", 7
 local lib = LibStub:NewLibrary(MAJOR, MINOR)
 if not lib then return end -- already loaded
 
+--! WotLK fix: this embedded library uses Cell's private timer contract rather
+--! than whichever global C_Timer standalone !!!ClassicAPI published first.
+local C_Timer = _G.Cell and _G.Cell.C_Timer
+assert(C_Timer, MAJOR.." requires Cell.C_Timer")
+
 lib.callbacks = LibStub("CallbackHandler-1.0"):New(lib)
 if not lib.callbacks then error(MAJOR.." requires CallbackHandler") end
 
@@ -20,8 +25,10 @@ local PLAYER_GUID
 local RETRY_INTERVAL = 1.5
 local MAX_ATTEMPTS = 3
 
--- WOW_PROJECT_ID is polyfilled in Polyfills.lua which loads before this library
-local IS_WRATH = WOW_PROJECT_ID == WOW_PROJECT_WRATH_CLASSIC
+--! WotLK fix: this embedded library belongs to the Interface 30300 backport.
+--! Do not derive its path from optional global project constants owned by a
+--! custom core or standalone compatibility addon.
+local IS_WRATH = true
 
 local debugMode = false
 local function Print(...)
@@ -138,7 +145,9 @@ lib.specRoles = specRoles
 -- functions
 local NotifyInspect = NotifyInspect
 local UnitGUID = UnitGUID
-local UnitClassBase = UnitClassBase
+--! WotLK fix: use Cell's private class-token normalizer; keep native UnitClassBase untouched.
+local UnitClassBase = _G.Cell and _G.Cell.GetUnitClassToken
+assert(UnitClassBase, MAJOR.." requires Cell.GetUnitClassToken")
 local UnitIsUnit = UnitIsUnit
 local UnitIsDead = UnitIsDead
 local UnitIsConnected = UnitIsConnected
@@ -151,24 +160,22 @@ if not UnitNameUnmodified then
 end
 local UnitNameUnmodified = UnitNameUnmodified
 
--- Polyfill for GetNormalizedRealmName (doesn't exist in WotLK 3.3.5a)
-if not GetNormalizedRealmName then
-    GetNormalizedRealmName = function()
-        return GetRealmName()
-    end
-end
-local GetNormalizedRealmName = GetNormalizedRealmName
+--! WotLK fix: consume Cell's private realm normalizer. Do not publish or depend
+--! on a shared global; standalone !!!ClassicAPI/custom cores keep their owners.
+local GetNormalizedRealmName = Cell.GetNormalizedRealmName
+assert(GetNormalizedRealmName, MAJOR.." requires Cell.GetNormalizedRealmName")
 local UnitLevel = UnitLevel
 local UnitRace = UnitRace
 local UnitSex = UnitSex
 local UnitFactionGroup = UnitFactionGroup
 local IsInInstance = IsInInstance
-local IsInRaid = IsInRaid
-local IsInGroup = IsInGroup
-local GetNumGroupMembers = GetNumGroupMembers
+--! WotLK fix: consume Cell-private group adapters; shared compatibility globals may belong to another addon.
+local IsInRaid = Cell.IsInRaid
+local IsInGroup = Cell.IsInGroup
+local GetNumGroupMembers = Cell.GetNumGroupMembers
 local UnitInParty = UnitInParty
 local UnitInRaid = UnitInRaid
-local UnitGroupRolesAssigned = Cell_UnitGroupRolesAssigned or UnitGroupRolesAssigned --! WotLK fix: prefer Cell's private retail-contract polyfill; the bare global is native (3 booleans)
+local UnitGroupRolesAssigned = Cell.UnitGroupRolesAssigned --! WotLK fix: Cell-private retail-contract adapter; the bare global remains native (3 booleans).
 
 local GetNumTalentTabs = GetNumTalentTabs
 local GetTalentTabInfo = GetTalentTabInfo
@@ -178,6 +185,10 @@ local frame = CreateFrame("Frame", MAJOR.."Frame")
 frame:Hide()
 frame:RegisterEvent("PLAYER_LOGIN")
 -- frame:RegisterEvent("PLAYER_LOGOUT")
+--! WotLK fix: держать закомментированным. PLAYER_LOGOUT на 3.3.5 есть, но
+--! обработчика frame:PLAYER_LOGOUT в библиотеке нет ни одного, а диспетчер ниже
+--! зовёт self[event] без проверки - раскомментировать значит получить
+--! "attempt to call field 'PLAYER_LOGOUT' (a nil value)" при выходе из игры.
 frame:SetScript("OnEvent", function(self, event, ...)
     self[event](self, ...)
 end)
@@ -418,19 +429,6 @@ function frame:PLAYER_LOGIN()
     frame:RegisterEvent("PLAYER_TALENT_UPDATE")
     frame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 
-    --! WotLK fix: group members outside inspect range (28y) are skipped
-    --! by AddToQueue and nothing re-queues them until the next roster
-    --! event - in a static group they stayed uninspected forever (role
-    --! defaulted to DAMAGER). Rescan periodically; already-inspected
-    --! members are skipped, so this only touches missing ones.
-    if not lib.rescanTicker then
-        lib.rescanTicker = C_Timer.NewTicker(15, function()
-            if IsInGroup() and PLAYER_GUID then
-                frame:GROUP_ROSTER_UPDATE(true)
-            end
-        end)
-    end
-
     frame:RegisterEvent("PLAYER_ENTERING_WORLD")
     frame:RegisterEvent("PLAYER_REGEN_ENABLED")
     frame:RegisterEvent("PLAYER_REGEN_DISABLED")
@@ -441,7 +439,17 @@ function frame:PLAYER_LOGIN()
     else
         frame:RegisterEvent("INSPECT_READY")
     end
-    frame:RegisterEvent("GROUP_ROSTER_UPDATE")
+    --! WotLK fix: Cell normalizes the native roster events and broadcasts one
+    --! private callback; GROUP_ROSTER_UPDATE is not native on 3.3.5a.
+    if _G.Cell and _G.Cell.RegisterCallback then
+        _G.Cell.RegisterCallback(
+            "GroupRosterUpdate",
+            "LibGroupInfo_GroupRosterUpdate",
+            function()
+                frame:GroupRosterUpdate()
+            end
+        )
+    end
     frame:RegisterEvent("UNIT_LEVEL")
     frame:RegisterEvent("UNIT_NAME_UPDATE")
     -- frame:RegisterEvent("UNIT_PHASE")
@@ -486,7 +494,7 @@ function frame:PLAYER_ENTERING_WORLD(isLogin, isReload)
         Query("player")
 
         -- update group
-        frame:GROUP_ROSTER_UPDATE(true)
+        frame:GroupRosterUpdate(true)
     end
 end
 
@@ -599,13 +607,45 @@ function frame:INSPECT_TALENT_READY()
 end
 
 ---------------------------------------------------------------------
--- GROUP_ROSTER_UPDATE: update queue
+--! WotLK fix: private GroupRosterUpdate callback updates the queue
 ---------------------------------------------------------------------
+--! WotLK fix: members outside inspect range need periodic retries while
+--! grouped, but the old login-owned ticker stayed alive forever in solo and
+--! kept Cell.C_Timer's driver shown. Own it by the actual group lifecycle.
+local function StopRescanTicker()
+    if lib.rescanTicker then
+        lib.rescanTicker:Cancel()
+        lib.rescanTicker = nil
+    end
+end
+
+local function StartRescanTicker()
+    if lib.rescanTicker then return end
+
+    lib.rescanTicker = C_Timer.NewTicker(15, function()
+        if not IsInGroup() then
+            StopRescanTicker()
+        elseif PLAYER_GUID then
+            frame:GroupRosterUpdate(true)
+        end
+    end)
+    --! WotLK fix: identify the expected group-owned ticker in diagnostics even
+    --! when this client exposes no Lua debug library.
+    if lib.rescanTicker.SetDebugLabel then
+        lib.rescanTicker:SetDebugLabel("LibGroupInfo: grouped roster rescan (15s)")
+    end
+end
+
 local wasInGroup
 local function IterateAllUnits()
     cache[PLAYER_GUID].unit = "player"
 
     local currentMembers = {[PLAYER_GUID] = true}
+    if IsInGroup() then
+        StartRescanTicker()
+    else
+        StopRescanTicker()
+    end
 
     if IsInRaid() then
         wasInGroup = true
@@ -665,7 +705,7 @@ local function IterateAllUnits()
 end
 
 local timer
-function frame:GROUP_ROSTER_UPDATE(immediate)
+function frame:GroupRosterUpdate(immediate)
     if timer then timer:Cancel() end
 
     if immediate then

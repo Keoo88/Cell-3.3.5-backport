@@ -3,7 +3,8 @@ This library contains work of Hendrick "nevcairiel" Leppkes
 https://www.wowace.com/projects/libbuttonglow-1-0
 ]]
 
--- luacheck: globals CreateFromMixins ObjectPoolMixin CreateTexturePool CreateFramePool
+--! WotLK fix: this Cell fork owns its texture/frame/mask pools below and does
+--! not consume ClassicAPI's global pool mixins or constructors.
 
 local MAJOR_VERSION = "LibCustomGlow-1.0-Cell"
 local MINOR_VERSION = 99
@@ -11,6 +12,50 @@ if not LibStub then error(MAJOR_VERSION .. " requires LibStub.") end
 local lib, oldversion = LibStub:NewLibrary(MAJOR_VERSION, MINOR_VERSION)
 if not lib then return end
 local Masque = LibStub("Masque", true)
+
+--! WotLK fix: defer native animation cancellation out of Frame/Animation
+--! callbacks. Build 12340 can crash in AnimationGroup:Stop() when a stop
+--! handler releases and hides the same animation owner reentrantly.
+local C_Timer = _G.Cell and _G.Cell.C_Timer
+assert(C_Timer, MAJOR_VERSION .. " requires Cell.C_Timer")
+
+--! WotLK perf: floor и sin зовутся из драйверов на полном фреймрейте: pCalc1 и
+--! pCalc2 - по два раза на текстуру за кадр из pUpdate (при N=8 это 32 вызова на
+--! кадр на один глоу), SetTile - из FlipbookAnimation_OnUpdate, sin - из
+--! PulseAnimation_OnUpdate. Файловый локал убирает из каждого вызова GETGLOBAL
+--! math (хеш-лукап в _G) плюс хеш-лукап поля. Тот же приём и по той же причине
+--! уже применён в Indicators/Base.lua и Built-in.lua. Два math.min ниже (ветки
+--! перекраски в ButtonGlow_Start) оставлены как есть - это холодный путь
+--! настройки, а не кадровый.
+local floor = math.floor
+local sin = math.sin
+
+--! WotLK fix: this is the only active texture-sheet consumer. Keep the animator
+--! private instead of depending on or publishing the retail AnimateTexCoords global.
+local function AnimateTexCoords(texture, width, height, frameWidth, frameHeight, numFrames, elapsed, throttle)
+    throttle = throttle or 0.1
+    if not texture.frame then
+        texture.frame = 0
+        texture.throttleTimer = 0
+        texture.maxFrames = numFrames
+        texture.numColumns = floor(width / frameWidth)
+        texture.columnWidth = frameWidth / width
+        texture.rowHeight = frameHeight / height
+    end
+
+    texture.throttleTimer = texture.throttleTimer + elapsed
+    if texture.throttleTimer >= throttle then
+        local frame = (texture.frame + 1) % texture.maxFrames
+        texture.frame = frame
+        texture.throttleTimer = 0
+
+        local column = frame % texture.numColumns
+        local row = floor(frame / texture.numColumns)
+        local left = column * texture.columnWidth
+        local top = row * texture.rowHeight
+        texture:SetTexCoord(left, left + texture.columnWidth, top, top + texture.rowHeight)
+    end
+end
 
 local textureList = {
     empty = [[Interface\AdventureMap\BrokenIsles\AM_29]],
@@ -37,73 +82,93 @@ lib.stopList = {}
 
 local GlowParent = UIParent
 
--- WotLK: CreateMaskTexture doesn't exist, so we create stub objects
-local GlowMaskPool = {
-    createFunc = function(self)
-        -- WotLK: CreateMaskTexture doesn't exist, return a stub object
-        if self.parent.CreateMaskTexture then
-            return self.parent:CreateMaskTexture()
-        else
-            -- Return a stub object with minimal methods
-            return {
-                Hide = function() end,
-                Show = function() end,
-                ClearAllPoints = function() end,
-                SetPoint = function() end,
-                SetSize = function() end,
-                SetTexture = function() end,
-            }
-        end
-    end,
-    resetFunc = function(self, mask)
-        if mask.Hide then mask:Hide() end
-        if mask.ClearAllPoints then mask:ClearAllPoints() end
-    end,
-    AddObject = function(self, object)
-        local dummy = true
-        self.activeObjects[object] = dummy
-        self.activeObjectCount = self.activeObjectCount + 1
-    end,
-    ReclaimObject = function(self, object)
-        tinsert(self.inactiveObjects, object)
-        self.activeObjects[object] = nil
-        self.activeObjectCount = self.activeObjectCount - 1
-    end,
-    Release = function(self, object)
-        local active = self.activeObjects[object] ~= nil
-        if active then
-            self:resetFunc(object)
-            self:ReclaimObject(object)
-        end
-        return active
-    end,
-    Acquire = function(self)
-        local object = tremove(self.inactiveObjects)
-        local new = object == nil
-        if new then
-            object = self:createFunc()
-            self:resetFunc(object, new)
-        end
-        self:AddObject(object)
-        return object, new
-    end,
-    Init = function(self, parent)
-        self.activeObjects = {}
-        self.inactiveObjects = {}
-        self.activeObjectCount = 0
-        self.parent = parent
+--! WotLK fix: own mask capability and attachment bookkeeping inside this
+--! library. Never rely on, probe, or add methods on the shared Texture
+--! metatable; standalone !!!ClassicAPI may publish void stubs there.
+local GlowMaskPool
+local GlowTextureMasks = setmetatable({}, {__mode = "k"})
+local NativeCreateMaskTexture = not (_G.Cell and _G.Cell.isWrath)
+    and type(GlowParent.CreateMaskTexture) == "function"
+    and GlowParent.CreateMaskTexture
+
+local function GlowTextureAddMask(texture, mask)
+    if not (NativeCreateMaskTexture and texture.AddMaskTexture and mask) then
+        return false
     end
-}
-GlowMaskPool:Init(GlowParent)
+
+    local masks = GlowTextureMasks[texture]
+    if not masks then
+        masks = {}
+        GlowTextureMasks[texture] = masks
+    end
+
+    if not masks[mask] then
+        texture:AddMaskTexture(mask)
+        masks[mask] = true
+    end
+    return true
+end
+
+local function GlowTextureRemoveAllMasks(texture)
+    local masks = GlowTextureMasks[texture]
+    if masks then
+        if texture.RemoveMaskTexture then
+            for mask in pairs(masks) do
+                texture:RemoveMaskTexture(mask)
+            end
+        end
+        GlowTextureMasks[texture] = nil
+    end
+end
+
+if NativeCreateMaskTexture then
+    GlowMaskPool = {
+        createFunc = function(self)
+            return NativeCreateMaskTexture(self.parent)
+        end,
+        resetFunc = function(self, mask)
+            mask:Hide()
+            mask:ClearAllPoints()
+        end,
+        AddObject = function(self, object)
+            self.activeObjects[object] = true
+            self.activeObjectCount = self.activeObjectCount + 1
+        end,
+        ReclaimObject = function(self, object)
+            tinsert(self.inactiveObjects, object)
+            self.activeObjects[object] = nil
+            self.activeObjectCount = self.activeObjectCount - 1
+        end,
+        Release = function(self, object)
+            local active = self.activeObjects[object] ~= nil
+            if active then
+                self:resetFunc(object)
+                self:ReclaimObject(object)
+            end
+            return active
+        end,
+        Acquire = function(self)
+            local object = tremove(self.inactiveObjects)
+            local new = object == nil
+            if new then
+                object = self:createFunc()
+                self:resetFunc(object)
+            end
+            self:AddObject(object)
+            return object, new
+        end,
+        Init = function(self, parent)
+            self.activeObjects = {}
+            self.inactiveObjects = {}
+            self.activeObjectCount = 0
+            self.parent = parent
+        end,
+    }
+    GlowMaskPool:Init(GlowParent)
+end
 
 local TexPoolResetter = function(pool,tex)
-    -- Mask textures API may not exist in WotLK
-    if tex.GetNumMaskTextures then
-        local maskNum = tex:GetNumMaskTextures()
-        for i = maskNum , 1, -1 do
-            tex:RemoveMaskTexture(tex:GetMaskTexture(i))
-        end
-    end
+    GlowTextureRemoveAllMasks(tex)
     tex:Hide()
     tex:ClearAllPoints()
 end
@@ -149,8 +214,12 @@ local FramePoolResetter = function(framePool,frame)
         frame.bg = nil
     end
     if frame.masks then
-        for _,mask in pairs(frame.masks) do
-            GlowMaskPool:Release(mask)
+        --! WotLK fix: GlowMaskPool only exists when this client exposes real
+        --! mask regions. Wrath renders PixelGlow without mask objects.
+        if GlowMaskPool then
+            for _,mask in pairs(frame.masks) do
+                GlowMaskPool:Release(mask)
+            end
         end
         frame.masks = nil
     end
@@ -239,7 +308,7 @@ local pCalc1 = function(progress,s,th,p)
     else
         c = (progress-p[0])/(p[1]-p[0])*(s-th)
     end
-    return math.floor(c+0.5)
+    return floor(c+0.5)
 end
 
 local pCalc2 = function(progress,s,th,p)
@@ -255,7 +324,7 @@ local pCalc2 = function(progress,s,th,p)
     else
         c = s-th-(progress+1-p[3])/(p[0]+1-p[3])*(s-th)
     end
-    return math.floor(c+0.5)
+    return floor(c+0.5)
 end
 
 local  pUpdate = function(self,elapsed)
@@ -298,22 +367,38 @@ local  pUpdate = function(self,elapsed)
         }
     end
     if self:IsShown() then
-        if not (self.masks[1]:IsShown()) then
-            self.masks[1]:Show()
-            self.masks[1]:SetPoint("TOPLEFT",self,"TOPLEFT",self.info.th,-self.info.th)
-            self.masks[1]:SetPoint("BOTTOMRIGHT",self,"BOTTOMRIGHT",-self.info.th,self.info.th)
-        end
-        if self.masks[2] and not(self.masks[2]:IsShown()) then
-            self.masks[2]:Show()
-            self.masks[2]:SetPoint("TOPLEFT",self,"TOPLEFT",self.info.th+1,-self.info.th-1)
-            self.masks[2]:SetPoint("BOTTOMRIGHT",self,"BOTTOMRIGHT",-self.info.th-1,self.info.th+1)
+        if self.masks then
+            if not (self.masks[1]:IsShown()) then
+                self.masks[1]:Show()
+                self.masks[1]:SetPoint("TOPLEFT",self,"TOPLEFT",self.info.th,-self.info.th)
+                self.masks[1]:SetPoint("BOTTOMRIGHT",self,"BOTTOMRIGHT",-self.info.th,self.info.th)
+            end
+            if self.masks[2] and not(self.masks[2]:IsShown()) then
+                self.masks[2]:Show()
+                self.masks[2]:SetPoint("TOPLEFT",self,"TOPLEFT",self.info.th+1,-self.info.th-1)
+                self.masks[2]:SetPoint("BOTTOMRIGHT",self,"BOTTOMRIGHT",-self.info.th-1,self.info.th+1)
+            end
         end
         if self.bg and not(self.bg:IsShown()) then
             self.bg:Show()
         end
+        --! WotLK perf: цикл идёт на полном фреймрейте по всем текстурам глоу (N
+        --! задаёт вызывающий, по умолчанию 8), и глоу может висеть сразу на
+        --! нескольких рейдовых кнопках. Выражение прогресса
+        --! (progress+step*(k-1))%1 было выписано четыре раза подряд с одними и
+        --! теми же операндами - считаем один раз в локал. Заодно подняты поля
+        --! self.info: их читали 12 раз за итерацию, а каждое чтение - это два
+        --! хеш-лукапа (self.info, потом само поле). Таблица self.info внутри
+        --! pUpdate не переприсваивается, блок выше правит только её поля, так
+        --! что ссылка остаётся той же.
+        local info = self.info
+        local step, th = info.step, info.th
+        local pTLx, pTLy, pBRx, pBRy = info.pTLx, info.pTLy, info.pBRx, info.pBRy
+
         for k,line  in pairs(self.textures) do
-            line:SetPoint("TOPLEFT",self,"TOPLEFT",pCalc1((progress+self.info.step*(k-1))%1,width,self.info.th,self.info.pTLx),-pCalc2((progress+self.info.step*(k-1))%1,height,self.info.th,self.info.pTLy))
-            line:SetPoint("BOTTOMRIGHT",self,"TOPLEFT",self.info.th+pCalc2((progress+self.info.step*(k-1))%1,width,self.info.th,self.info.pBRx),-height+pCalc1((progress+self.info.step*(k-1))%1,height,self.info.th,self.info.pBRy))
+            local p = (progress+step*(k-1))%1
+            line:SetPoint("TOPLEFT",self,"TOPLEFT",pCalc1(p,width,th,pTLx),-pCalc2(p,height,th,pTLy))
+            line:SetPoint("BOTTOMRIGHT",self,"TOPLEFT",th+pCalc2(p,width,th,pBRx),-height+pCalc1(p,height,th,pBRy))
         end
     end
 end
@@ -350,18 +435,20 @@ function lib.PixelGlow_Start(r,color,N,frequency,length,th,xOffset,yOffset,borde
 
     addFrameAndTex(r,color,"_PixelGlow",key,N,xOffset,yOffset,textureList.white,{0,1,0,1},nil,frameLevel)
     local f = r["_PixelGlow"..key]
-    if not f.masks then
-        f.masks = {}
+    if GlowMaskPool then
+        if not f.masks then
+            f.masks = {}
+        end
+        if not f.masks[1] then
+            f.masks[1] = GlowMaskPool:Acquire()
+            f.masks[1]:SetTexture(textureList.empty, "CLAMPTOWHITE","CLAMPTOWHITE")
+            f.masks[1]:Show()
+        end
+        f.masks[1]:SetPoint("TOPLEFT",f,"TOPLEFT",th,-th)
+        f.masks[1]:SetPoint("BOTTOMRIGHT",f,"BOTTOMRIGHT",-th,th)
     end
-    if not f.masks[1] then
-        f.masks[1] = GlowMaskPool:Acquire()
-        f.masks[1]:SetTexture(textureList.empty, "CLAMPTOWHITE","CLAMPTOWHITE")
-        f.masks[1]:Show()
-    end
-    f.masks[1]:SetPoint("TOPLEFT",f,"TOPLEFT",th,-th)
-    f.masks[1]:SetPoint("BOTTOMRIGHT",f,"BOTTOMRIGHT",-th,th)
 
-    if not(border==false) then
+    if not(border==false) and GlowMaskPool then
         if not f.masks[2] then
             f.masks[2] = GlowMaskPool:Acquire()
             f.masks[2]:SetTexture(textureList.empty, "CLAMPTOWHITE","CLAMPTOWHITE")
@@ -371,38 +458,27 @@ function lib.PixelGlow_Start(r,color,N,frequency,length,th,xOffset,yOffset,borde
 
         if not f.bg then
             f.bg = GlowTexPool:Acquire()
-            f.bg:SetColorTexture(0.1,0.1,0.1,0.8)
+            --! WotLK fix: SetColorTexture на 3.3.5 нет - это нативная числовая форма
+            --! SetTexture(r, g, b[, a]); шим TextureBase в WidgetAPI удалён.
+            f.bg:SetTexture(0.1,0.1,0.1,0.8)
             f.bg:SetParent(f)
             f.bg:SetAllPoints(f)
             f.bg:SetDrawLayer("ARTWORK",6)
-            -- WotLK: AddMaskTexture may not exist
-            if f.bg.AddMaskTexture then
-                f.bg:AddMaskTexture(f.masks[2])
-            else
-                -- WotLK 3.3.5a: no mask texture API. In retail this dark bg is
-                -- clipped by masks[2] down to a thin border band. Unmasked, its
-                -- SetAllPoints(f) makes it a solid 0.1,0.1,0.1,0.8 rectangle over
-                -- the ENTIRE unit frame (the "dark texture on frame" bug). It
-                -- cannot be confined to the border without a mask, so hide it.
-                f.bg:Hide()
-            end
+            GlowTextureAddMask(f.bg, f.masks[2])
         end
     else
         if f.bg then
             GlowTexPool:Release(f.bg)
             f.bg = nil
         end
-        if f.masks[2] then
+        if GlowMaskPool and f.masks and f.masks[2] then
             GlowMaskPool:Release(f.masks[2])
             f.masks[2] = nil
         end
     end
-    for _,tex in pairs(f.textures) do
-        -- WotLK: GetNumMaskTextures and AddMaskTexture may not exist
-        if tex.GetNumMaskTextures and tex.AddMaskTexture then
-            if tex:GetNumMaskTextures() < 1 then
-                tex:AddMaskTexture(f.masks[1])
-            end
+    if GlowMaskPool then
+        for _,tex in pairs(f.textures) do
+            GlowTextureAddMask(tex, f.masks[1])
         end
     end
     f.timer = f.timer or 0
@@ -448,23 +524,41 @@ local function acUpdate(self,elapsed)
         self.info.space = self.info.perimeter/self.info.N
     end
 
+    --! WotLK perf: вложенный цикл - это 4*N итераций на кадр (N задаёт вызывающий,
+    --! по умолчанию 4, то есть 16 проходов), и всё это на полном фреймрейте на
+    --! каждом глоу. В теле было по 6-7 обращений вида self.info.X, а каждое - два
+    --! хеш-лукапа. Поля подняты в локалы после блока пересчёта выше: до него
+    --! читать нельзя, он их и записывает. Сама таблица self.info тут не
+    --! переприсваивается, только её поля, так что ссылка остаётся той же.
+    --! self.timer[k] читался четыре раза за внешнюю итерацию - стал локалом,
+    --! запись в таблицу осталась одна и на том же месте.
+    local info = self.info
+    local timer = self.timer
+    local textures = self.textures
+    local N, period = info.N, info.period
+    local space, perimeter = info.space, info.perimeter
+    local bottomlim, rightlim, infoHeight = info.bottomlim, info.rightlim, info.height
+
     local texIndex = 0;
     for k=1,4 do
-        self.timer[k] = self.timer[k]+elapsed/(self.info.period*k)
-        if self.timer[k] > 1 or self.timer[k] <-1 then
-            self.timer[k] = self.timer[k]%1
+        local t = timer[k]+elapsed/(period*k)
+        if t > 1 or t <-1 then
+            t = t%1
         end
-        for i = 1,self.info.N do
+        timer[k] = t
+
+        local offset = perimeter*t
+        for i = 1,N do
             texIndex = texIndex+1
-            local position = (self.info.space*i+self.info.perimeter*self.timer[k])%self.info.perimeter
-            if position>self.info.bottomlim then
-                self.textures[texIndex]: SetPoint("CENTER",self,"BOTTOMRIGHT",-position+self.info.bottomlim,0)
-            elseif position>self.info.rightlim then
-                self.textures[texIndex]: SetPoint("CENTER",self,"TOPRIGHT",0,-position+self.info.rightlim)
-            elseif position>self.info.height then
-                self.textures[texIndex]: SetPoint("CENTER",self,"TOPLEFT",position-self.info.height,0)
+            local position = (space*i+offset)%perimeter
+            if position>bottomlim then
+                textures[texIndex]: SetPoint("CENTER",self,"BOTTOMRIGHT",-position+bottomlim,0)
+            elseif position>rightlim then
+                textures[texIndex]: SetPoint("CENTER",self,"TOPRIGHT",0,-position+rightlim)
+            elseif position>infoHeight then
+                textures[texIndex]: SetPoint("CENTER",self,"TOPLEFT",position-infoHeight,0)
             else
-                self.textures[texIndex]: SetPoint("CENTER",self,"BOTTOMLEFT",0,position)
+                textures[texIndex]: SetPoint("CENTER",self,"BOTTOMLEFT",0,position)
             end
         end
     end
@@ -532,17 +626,43 @@ lib.startList["Autocast Shine"] = lib.AutoCastGlow_Start
 lib.stopList["Autocast Shine"] = lib.AutoCastGlow_Stop
 
 --Action Button Glow--
+local ButtonGlowPool
+
+--! WotLK fix: never call AnimationGroup:Stop() while OnHide, OnStop, or pool
+--! release is already unwinding. Queue cancellation for the next timer pass
+--! and reject stale work when the pooled frame has already been reused.
+local function CancelButtonGlowAnimations(frame, generation)
+    if frame._cellGlowGeneration ~= generation then return end
+
+    frame._cancelAnimOutForRestart = true
+    if frame.animIn and frame.animIn:IsPlaying() then frame.animIn:Stop() end
+    if frame.animOut and frame.animOut:IsPlaying() then frame.animOut:Stop() end
+    frame._cancelAnimOutForRestart = nil
+end
+
+local function QueueButtonGlowAnimationCancel(frame)
+    if frame._cellGlowCancelQueued then return end
+
+    frame._cellGlowCancelQueued = true
+    local generation = frame._cellGlowGeneration
+    C_Timer.After(0, function()
+        frame._cellGlowCancelQueued = nil
+        CancelButtonGlowAnimations(frame, generation)
+    end)
+end
+
 local function ButtonGlowResetter(framePool,frame)
     frame:SetScript("OnUpdate",nil)
     local parent = frame:GetParent()
-    if parent._ButtonGlow then
+    if parent and parent._ButtonGlow == frame then
         parent._ButtonGlow = nil
     end
     frame:Hide()
     frame:ClearAllPoints()
+    QueueButtonGlowAnimationCancel(frame)
 end
 -- Custom ButtonGlowPool for WotLK compatibility
-local ButtonGlowPool = {
+ButtonGlowPool = {
     parent = GlowParent,
     inactive = {},
     active = {},
@@ -556,40 +676,159 @@ function ButtonGlowPool:Acquire()
         frame = CreateFrame("Frame", nil, self.parent)
         isNew = true
     end
+    frame._cellGlowGeneration = (frame._cellGlowGeneration or 0) + 1
+    frame._cellGlowCancelQueued = nil
     self.active[frame] = true
     return frame, isNew
 end
 function ButtonGlowPool:Release(frame)
     if self.active[frame] then
+        --! WotLK fix: mark inactive before Hide() runs OnHide, preventing a
+        --! finishing animOut from recursively returning the frame twice.
         self.active[frame] = nil
+        frame._cellGlowRestartRequested = nil
         ButtonGlowResetter(self, frame)
         tinsert(self.inactive, frame)
     end
 end
 lib.ButtonGlowPool = ButtonGlowPool
 
-local function CreateScaleAnim(group, target, order, duration, x, y, delay)
-    -- WotLK doesn't have SetChildKey, so we skip complex animations
-    -- This function is now a no-op for WotLK compatibility
+--! WotLK fix: Action Button Glow animation helpers ported from the
+--! WeakAuras-WotLK LibCustomGlow-1.0 fork. Native 3.3.5 Alpha/Scale animations
+--! apply a relative transform on the texture's render scale, which compounds
+--! with SetSize/SetAlpha overrides and produces visible triangle spikes
+--! around the spark frame. We instead create plain Animation objects, keep
+--! our own target/scale/alpha state, and drive the texture directly from
+--! OnUpdate using a captured base size/alpha. This matches WeakAuras-WotLK,
+--! which has shipped without the visual artefact on 3.3.5a for years.
+local function InitAlphaAnimation(self)
+    self.target = self.target or self:GetRegionParent()
+    self.change = self.change or 0
+
+    self.frameAlpha = self.target:GetAlpha()
+    self.alphaFactor = self.frameAlpha + self.change - self.frameAlpha
 end
 
-local function CreateAlphaAnim(group, target, order, duration, fromAlpha, toAlpha, delay, appear)
-    -- WotLK doesn't have SetChildKey, so we skip complex animations
-    -- This function is now a no-op for WotLK compatibility
+local function TidyAlphaAnimation(self)
+    self.alphaFactor = nil
+    self.frameAlpha = nil
+end
+
+local function AlphaAnimation_OnUpdate(animation)
+    local progress = animation:GetSmoothProgress() or 0
+    if progress ~= 0 then
+        if not animation.played then
+            InitAlphaAnimation(animation)
+            animation.played = true
+        end
+        if animation.frameAlpha then
+            animation.target:SetAlpha(animation.frameAlpha + animation.alphaFactor * progress)
+            if progress == 1 then
+                TidyAlphaAnimation(animation)
+            end
+        end
+    end
+end
+
+local function AlphaAnimation_OnStop(animation)
+    if animation.frameAlpha then
+        TidyAlphaAnimation(animation)
+    end
+    animation.played = nil
+end
+
+local function InitScaleAnimation(self)
+    self.target = self.target or self:GetRegionParent()
+    self.scaleX = self.scaleX or 0
+    self.scaleY = self.scaleY or 0
+
+    local _, _, width, height = self.target:GetRect()
+    if not width then return end
+
+    self.frameWidth = width
+    self.frameHeight = height
+
+    self.widthFactor = width * self.scaleX - width
+    self.heightFactor = height * self.scaleY - height
+
+    return 1
+end
+
+local function TidyScaleAnimation(self)
+    self.widthFactor = nil
+    self.heightFactor = nil
+    self.frameWidth = nil
+    self.frameHeight = nil
+end
+
+local function ScaleAnimation_OnUpdate(animation)
+    local progress = animation:GetSmoothProgress() or 0
+    if progress ~= 0 then
+        if not animation.played then
+            if InitScaleAnimation(animation) then
+                animation.played = true
+            end
+        end
+        if animation.frameWidth then
+            animation.target:SetSize(
+                animation.frameWidth + animation.widthFactor * progress,
+                animation.frameHeight + animation.heightFactor * progress
+            )
+            if progress == 1 then
+                TidyScaleAnimation(animation)
+            end
+        end
+    end
+end
+
+local function ScaleAnimation_OnStop(animation)
+    if animation.frameWidth then
+        TidyScaleAnimation(animation)
+    end
+    animation.played = nil
+end
+
+local function CreateScaleAnim(group, target, order, duration, x, y, delay)
+    local scale = group:CreateAnimation()
+    scale.target = group:GetParent()[target]
+    scale:SetOrder(order)
+    scale:SetDuration(duration)
+    scale.scaleX, scale.scaleY = x, y
+    if delay then scale:SetStartDelay(delay) end
+    scale:SetScript("OnUpdate", ScaleAnimation_OnUpdate)
+    scale:SetScript("OnStop", ScaleAnimation_OnStop)
+    scale:SetScript("OnFinished", ScaleAnimation_OnStop)
+    return scale
+end
+
+local function CreateAlphaAnim(group, target, order, duration, change, delay, appear)
+    local alpha = group:CreateAnimation()
+    alpha.target = group:GetParent()[target]
+    alpha:SetOrder(order)
+    alpha:SetDuration(duration)
+    alpha.change = change
+    if delay then alpha:SetStartDelay(delay) end
+    alpha:SetScript("OnUpdate", AlphaAnimation_OnUpdate)
+    alpha:SetScript("OnStop", AlphaAnimation_OnStop)
+    alpha:SetScript("OnFinished", AlphaAnimation_OnStop)
+    table.insert(appear and group.appear or group.fade, alpha)
+    return alpha
 end
 
 local function AnimIn_OnPlay(group)
     local frame = group:GetParent()
     local frameWidth, frameHeight = frame:GetSize()
-    -- WotLK simplified: just show the ants texture
-    frame.spark:SetAlpha(0)
-    frame.innerGlow:SetAlpha(0)
-    frame.innerGlowOver:SetAlpha(0)
-    frame.outerGlow:SetSize(frameWidth, frameHeight)
-    frame.outerGlow:SetAlpha(not(frame.color) and 1.0 or frame.color[4])
-    frame.outerGlowOver:SetAlpha(0)
+    local alpha = not frame.color and 1 or frame.color[4]
+    frame.spark:SetSize(frameWidth, frameHeight)
+    frame.spark:SetAlpha(not frame.color and 1 or 0.3 * alpha)
+    frame.innerGlow:SetSize(frameWidth / 2, frameHeight / 2)
+    frame.innerGlow:SetAlpha(alpha)
+    frame.innerGlowOver:SetAlpha(alpha)
+    frame.outerGlow:SetSize(frameWidth * 2, frameHeight * 2)
+    frame.outerGlow:SetAlpha(alpha)
+    frame.outerGlowOver:SetAlpha(alpha)
     frame.ants:SetSize(frameWidth * 0.85, frameHeight * 0.85)
-    frame.ants:SetAlpha(not(frame.color) and 1.0 or frame.color[4])
+    frame.ants:SetAlpha(0)
     frame:Show()
 end
 
@@ -598,11 +837,12 @@ local function AnimIn_OnFinished(group)
     local frameWidth, frameHeight = frame:GetSize()
     frame.spark:SetAlpha(0)
     frame.innerGlow:SetAlpha(0)
-    frame.innerGlowOver:SetAlpha(0.0)
+    frame.innerGlow:SetSize(frameWidth, frameHeight)
+    frame.innerGlowOver:SetAlpha(0)
     frame.outerGlow:SetSize(frameWidth, frameHeight)
-    frame.outerGlowOver:SetAlpha(0.0)
+    frame.outerGlowOver:SetAlpha(0)
     frame.outerGlowOver:SetSize(frameWidth, frameHeight)
-    frame.ants:SetAlpha(not(frame.color) and 1.0 or frame.color[4])
+    frame.ants:SetAlpha(not frame.color and 1 or frame.color[4])
 end
 
 local function AnimIn_OnStop(group)
@@ -614,16 +854,18 @@ local function AnimIn_OnStop(group)
 end
 
 local function bgHide(self)
-    if self.animOut and self.animOut.playing then
-        self.animOut.playing = false
-        ButtonGlowPool:Release(self)
+    if (self.animIn and self.animIn:IsPlaying())
+        or (self.animOut and self.animOut:IsPlaying()) then
+        QueueButtonGlowAnimationCancel(self)
     end
 end
 
 local function bgUpdate(self, elapsed)
     AnimateTexCoords(self.ants, 256, 256, 48, 48, 22, elapsed, self.throttle);
     local cooldown = self:GetParent() and self:GetParent().cooldown;
-    if(cooldown and cooldown:IsShown() and cooldown.GetCooldownDuration and cooldown:GetCooldownDuration() > 3000) then
+    --! WotLK fix: GetCooldownDuration is not a native 3.3.5 widget method. Only
+    --! consult the instance-owned Cell helper; foreign cooldowns keep their API.
+    if(cooldown and cooldown:IsShown() and rawget(cooldown, "GetCooldownDuration") and cooldown:GetCooldownDuration() > 3000) then
         self:SetAlpha(0.5);
     else
         self:SetAlpha(1.0);
@@ -673,58 +915,58 @@ local function configureButtonGlow(f,alpha)
     f.ants:SetAlpha(0)
     f.ants:SetTexture(texturePath .. [[IconAlertAnts]]) --! WotLK fix: bundled (retail path absent on 3.3.5)
 
-    -- WotLK compatible: use simple mock animation groups that just show/hide
-    f.animIn = { appear = {}, fade = {}, playing = false }
-    f.animIn.Play = function(self)
-        self.playing = true
-        AnimIn_OnPlay(self)
-        -- Simulate animation finishing immediately
-        C_Timer.After(0.3, function()
-            if self.playing then
-                self.playing = false
-                AnimIn_OnFinished(self)
-            end
-        end)
-    end
-    f.animIn.Stop = function(self)
-        self.playing = false
-        AnimIn_OnStop(self)
-    end
-    f.animIn.IsPlaying = function(self) return self.playing end
-    f.animIn.GetParent = function(self) return f end
+    --! WotLK fix: port the WeakAuras-WotLK anim graph (plain Animation
+    --! objects + Init/Tidy state pattern). See helpers above. Parameter
+    --! list: (group, target, order, duration, scaleX, scaleY, delay).
+    f.animIn = f:CreateAnimationGroup()
+    f.animIn.appear = {}
+    f.animIn.fade = {}
+    CreateScaleAnim(f.animIn, "spark",          1, 0.2, 1.5, 1.5)
+    CreateAlphaAnim(f.animIn, "spark",          1, 0.2, alpha, nil, nil, true)
+    CreateScaleAnim(f.animIn, "innerGlow",      1, 0.3, 2, 2)
+    CreateScaleAnim(f.animIn, "innerGlowOver",  1, 0.3, 2, 2)
+    CreateAlphaAnim(f.animIn, "innerGlowOver",  1, 0.3, alpha, nil, nil, true)
+    CreateScaleAnim(f.animIn, "outerGlow",      1, 0.3, 0.5, 0.5)
+    CreateScaleAnim(f.animIn, "outerGlowOver",  1, 0.3, 0.5, 0.5)
+    CreateAlphaAnim(f.animIn, "outerGlowOver",  1, 0.3, -alpha, nil, nil, false)
+    CreateScaleAnim(f.animIn, "spark",          1, 0.2, 0.666666, 0.666666, 0.2)
+    CreateAlphaAnim(f.animIn, "spark",          1, 0.2, -alpha, 0.2, nil, false)
+    CreateAlphaAnim(f.animIn, "innerGlow",      1, 0.2, -alpha, 0.3, nil, false)
+    CreateAlphaAnim(f.animIn, "ants",           1, 0.2, alpha, 0.3, nil, true)
+    f.animIn:SetScript("OnPlay", AnimIn_OnPlay)
+    f.animIn:SetScript("OnStop", AnimIn_OnStop)
+    f.animIn:SetScript("OnFinished", AnimIn_OnFinished)
 
-    f.animOut = { appear = {}, fade = {}, playing = false }
-    f.animOut.Play = function(self)
-        self.playing = true
-        -- Fade out effect - just hide after delay
-        C_Timer.After(0.2, function()
-            if self.playing then
-                self.playing = false
-                ButtonGlowPool:Release(f)
-            end
-        end)
-    end
-    f.animOut.Stop = function(self)
-        self.playing = false
-    end
-    f.animOut.IsPlaying = function(self) return self.playing end
-    f.animOut.GetParent = function(self) return f end
+    f.animOut = f:CreateAnimationGroup()
+    f.animOut.appear = {}
+    f.animOut.fade = {}
+    CreateAlphaAnim(f.animOut, "outerGlowOver", 1, 0.2, alpha, nil, nil, true)
+    CreateAlphaAnim(f.animOut, "ants",          1, 0.2, -alpha, nil, nil, false)
+    CreateAlphaAnim(f.animOut, "outerGlowOver", 2, 0.2, -alpha, nil, nil, false)
+    CreateAlphaAnim(f.animOut, "outerGlow",     2, 0.2, -alpha, nil, nil, false)
+    f.animOut:SetScript("OnFinished", function()
+        ButtonGlowPool:Release(f)
+    end)
+    --! WotLK fix: OnStop is notification only. Releasing/hiding the owner from
+    --! inside the native Stop() callback reentered build 12340's animation
+    --! teardown and produced ERROR #132. Explicit callers own pool release.
+    f.animOut:SetScript("OnStop", nil)
 
     f:SetScript("OnHide", bgHide)
 end
 
 local function updateAlphaAnim(f,alpha)
     for _,anim in pairs(f.animIn.appear) do
-        anim:SetToAlpha(alpha)
+        anim.change = alpha
     end
     for _,anim in pairs(f.animIn.fade) do
-        anim:SetFromAlpha(alpha)
+        anim.change = -alpha
     end
     for _,anim in pairs(f.animOut.appear) do
-        anim:SetToAlpha(alpha)
+        anim.change = alpha
     end
     for _,anim in pairs(f.animOut.fade) do
-        anim:SetFromAlpha(alpha)
+        anim.change = -alpha
     end
 end
 
@@ -758,9 +1000,22 @@ function lib.ButtonGlow_Start(r,color,frequency,frameLevel)
         f:SetPoint("BOTTOMRIGHT", r, "BOTTOMRIGHT", width * 0.2, -height * 0.2)
         f.ants:SetSize(width*1.4*0.85, height*1.4*0.85)
 		AnimIn_OnFinished(f.animIn)
-		if f.animOut:IsPlaying() then
-            f.animOut:Stop()
-            f.animIn:Play()
+        if f.animOut:IsPlaying() then
+            --! WotLK fix: defer Stop() outside the current callback and only
+            --! restart if this parent still owns the same pooled generation.
+            local generation = f._cellGlowGeneration
+            f._cellGlowRestartRequested = true
+            C_Timer.After(0, function()
+                if ButtonGlowPool.active[f]
+                    and f._cellGlowGeneration == generation
+                    and r._ButtonGlow == f then
+                    CancelButtonGlowAnimations(f, generation)
+                    if f._cellGlowRestartRequested then
+                        f._cellGlowRestartRequested = nil
+                        f.animIn:Play()
+                    end
+                end
+            end)
         end
 
         if not(color) then
@@ -826,10 +1081,12 @@ end
 
 function lib.ButtonGlow_Stop(r)
     if r._ButtonGlow then
+        r._ButtonGlow._cellGlowRestartRequested = nil
         if r._ButtonGlow.animOut:IsPlaying() then
             -- Do nothing the animOut finishing will release
         elseif r._ButtonGlow.animIn:IsPlaying() then
-            r._ButtonGlow.animIn:Stop()
+            --! WotLK fix: detach/release first, then cancel the native animation
+            --! on the next timer pass so Stop() cannot reenter pool teardown.
             ButtonGlowPool:Release(r._ButtonGlow)
         elseif r:IsVisible() then
             r._ButtonGlow.animOut:Play()
@@ -861,7 +1118,7 @@ local BaseTexCoord = {
 
 local function SetTile(texture, frame, rows, columns, frameScaleW, frameScaleH, key)
     frame = frame - 1
-    local row = math.floor(frame / columns)
+    local row = floor(frame / columns)
     local column = frame % columns
 
     local leftStart, rightEnd, topStart, bottomEnd = BaseTexCoord[key][1], BaseTexCoord[key][2], BaseTexCoord[key][3], BaseTexCoord[key][4]
@@ -949,7 +1206,7 @@ local function PulseAnimation_OnUpdate(self, elapsed)
     local data = self.pulseData
     if not data then return end
     data.t = (data.t + elapsed * 1.5) % 1
-    data.texture:SetAlpha(0.55 + 0.45 * math.sin(data.t * 6.2831853))
+    data.texture:SetAlpha(0.55 + 0.45 * sin(data.t * 6.2831853))
 end
 
 local function StopPulse(f)

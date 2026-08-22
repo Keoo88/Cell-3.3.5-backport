@@ -1,7 +1,10 @@
 local _, Cell = ...
+--! WotLK fix: bind Cell timers privately so standalone !!!ClassicAPI cannot change semantics.
+local C_Timer = Cell.C_Timer
 local L = Cell.L
 local F = Cell.funcs
 local B = Cell.bFuncs
+local A = Cell.animations
 local P = Cell.pixelPerfectFuncs
 
 local LCG = LibStub("LibCustomGlow-1.0-Cell")
@@ -40,11 +43,16 @@ Cell.snippetVars.instanceNameMapping = instanceNameMapping
 local instanceIdToName = {}
 
 -- used for mapping bossId --> bossName
-local bossIdToName = {
-    [0] = L["General"]
-}
+--! WotLK fix: [0] is filled by LoadList() rather than here. At load time Cell's L still
+--! returns the key itself (translations arrive with ns.LoadUserLocale() on
+--! ADDON_LOADED), so a main-chunk read left the "General" pseudo-boss in English for
+--! the whole session on a non-enUS client. LoadList runs from the RaidDebuffsChanged /
+--! tab callbacks, i.e. always after the locale is up.
+local bossIdToName = {}
 
 local function LoadList()
+    bossIdToName[0] = L["General"]
+
     local list = F.GetExpansionList()
 
     newestExpansion = list[1]
@@ -53,17 +61,46 @@ local function LoadList()
         for i, iTable in pairs(encounterJournalList[eName]) do
             local iName = iTable["name"]
             local iId = iTable["id"]
-            instanceNameMapping[iName] = eName..":"..i..":"..iId -- NOTE: used for searching current zone debuffs & switch to current instance
-            instanceIdToName[iId] = iName
+            --! WotLK fix: expansions are ordered newest to oldest. Preserve the
+            --! first owner so Classic Naxxramas cannot replace WotLK Naxxramas,
+            --! and Classic's invalid duplicate id 745 cannot replace Karazhan.
+            if not instanceNameMapping[iName] then
+                instanceNameMapping[iName] = eName..":"..i..":"..iId -- NOTE: used for searching current zone debuffs & switch to current instance
+            end
+            if not instanceIdToName[iId] then
+                instanceIdToName[iId] = iName
+            end
 
             for _, bTable in pairs(iTable["bosses"]) do
-
-                bossIdToName[bTable["id"]] = bTable["name"]
+                --! WotLK fix: same first-owner rule as the two guards above. The
+                --! Classic Naxxramas-40 entry reuses ids 745-747, which belong to
+                --! Karazhan, Gruul's Lair and Magtheridon's Lair, so an
+                --! unconditional write handed TBC boss ids the names of Naxxramas
+                --! bosses (1564 "Thaddius" instead of "High King Maulgar", and so
+                --! on). These names go into the share string and the reset prompt,
+                --! so the receiver saw the wrong boss. Iteration is newest to
+                --! oldest -- WotLK, TBC, Classic on 3.3.5 -- and the TBC raids do
+                --! exist on this client while Naxxramas-40 does not, so first
+                --! owner is the correct owner. No data is dropped: the Classic
+                --! entry keeps its debuffs, it only stops overwriting labels.
+                if not bossIdToName[bTable["id"]] then
+                    bossIdToName[bTable["id"]] = bTable["name"]
+                end
             end
         end
 
     end
 
+    --! WotLK fix: native GetInstanceInfo/GetRealZoneText returns localized zone
+    --! names. Compact locale files map those names to the canonical entry without
+    --! duplicating the full ExpansionData table or changing UI/share labels.
+    local aliases = F.GetExpansionInstanceNameAliases and F.GetExpansionInstanceNameAliases()
+    for localizedName, canonicalName in pairs(aliases or {}) do
+        local target = instanceNameMapping[canonicalName]
+        if target then
+            instanceNameMapping[localizedName] = target
+        end
+    end
 end
 
 local LoadExpansion = function(eName)
@@ -309,7 +346,11 @@ local function CreateWidgets()
     expansionDropdown:SetItems(expansionItems)
 
     -- current instance button
-    local showCurrentBtn = Cell.CreateButton(debuffsTab, "", "accent-hover", {46, 20}, nil, nil, nil, nil, nil, L["Show Current Instance"])
+    --! WotLK fix: was `local showCurrentBtn`, which shadowed the file-level declaration
+    --! on line 268 and left that one nil forever - a trap for any later file-level
+    --! function that tries to touch the button, exactly like OpenInstanceBoss touches
+    --! expansionDropdown. Assign the declared local instead, same as the dropdown does.
+    showCurrentBtn = Cell.CreateButton(debuffsTab, "", "accent-hover", {46, 20}, nil, nil, nil, nil, nil, L["Show Current Instance"])
     showCurrentBtn:SetPoint("TOPRIGHT", -5, -7)
     showCurrentBtn.tex = showCurrentBtn:CreateTexture(nil, "ARTWORK")
     --! WotLK fix: 3.3.5 has no atlas system, and the ClassicAPI SetAtlas shim silently
@@ -320,7 +361,17 @@ local function CreateWidgets()
 
     showCurrentBtn:SetScript("OnClick", function()
         if IsInInstance() then
-            OpenInstanceBoss(GetInstanceInfo())
+            --! WotLK fix: GetInstanceInfo returns SEVEN values on 3.3.5 (codex:
+            --! name, type, difficulty, difficultyName, maxPlayers, playerDifficulty,
+            --! isDynamicInstance), and a bare call in argument position passes them all.
+            --! So OpenInstanceBoss got bossName = type ("raid"/"party"): the boss search
+            --! found nothing and silently skipped the whole "scroll to boss" block, and
+            --! the truthy bossName also disabled the `not bossName` force-refresh branch,
+            --! so on the instance already shown the button fell through to
+            --! instanceButtons[iIndex]:Click() -> ShowBosses(id) with no forceRefresh,
+            --! which returns early on `loadedInstance == iId`: the press did nothing at
+            --! all. Parentheses truncate to the one value this button means.
+            OpenInstanceBoss((GetInstanceInfo()))
         end
     end)
     Cell.RegisterForCloseDropdown(showCurrentBtn)
@@ -478,7 +529,9 @@ local function CreateInstanceFrame()
     local imageFrame = Cell.CreateFrame("RaidDebuffsTab_InstanceImage", debuffsTab, 128, 64, true)
     imageFrame.bg = imageFrame:CreateTexture(nil, "BACKGROUND")
     imageFrame.bg:SetTexture(Cell.vars.whiteTexture)
-    imageFrame.bg:SetGradient("HORIZONTAL", CreateColor(0.1, 0.1, 0.1, 0), CreateColor(0.1, 0.1, 0.1, 1))
+    --! WotLK fix: native Texture:SetGradientAlpha - 3.3.5 has no retail
+    --! SetGradient(orientation, color, color).
+    imageFrame.bg:SetGradientAlpha("HORIZONTAL", 0.1, 0.1, 0.1, 0, 0.1, 0.1, 0.1, 1)
 
     imageFrame.tex = imageFrame:CreateTexture(nil, "ARTWORK")
     imageFrame.tex:SetSize(121, 64)
@@ -580,7 +633,8 @@ local function CreateBossesFrame()
     local imageFrame = Cell.CreateFrame("RaidDebuffsTab_BossImage", debuffsTab, 128, 64, true)
     imageFrame.bg = imageFrame:CreateTexture(nil, "BACKGROUND")
     imageFrame.bg:SetTexture(Cell.vars.whiteTexture)
-    imageFrame.bg:SetGradient("HORIZONTAL", CreateColor(0.1, 0.1, 0.1, 0), CreateColor(0.1, 0.1, 0.1, 1))
+    --! WotLK fix: native SetGradientAlpha, same as the instance image above.
+    imageFrame.bg:SetGradientAlpha("HORIZONTAL", 0.1, 0.1, 0.1, 0, 0.1, 0.1, 0.1, 1)
     -- imageFrame.bg:SetAllPoints(imageFrame)
 
     imageFrame.tex = imageFrame:CreateTexture(nil, "ARTWORK")
@@ -895,7 +949,10 @@ local function RegisterForDrag(b)
     b:SetScript("OnDragStop", function(self)
         self:SetAlpha(1)
         dragged:Hide()
-        local newB = F.GetMouseFocus()
+        local newB = GetMouseFocus()
+        --! WotLK fix: releasing outside the debuff list can leave no focused
+        --! region on 3.3.5. Treat that as a cancelled drop before GetParent().
+        if not newB then return end
         -- move on a debuff button & not on currently moving button & not disabled
         if newB:GetParent() == debuffListFrame.scrollFrame.content and newB ~= self and newB.enabled then
             local temp, from, to = self, self.index, newB.index
@@ -1183,15 +1240,14 @@ local function CreatePreviewButton()
 
     previewButton.fadeIn = previewButton:CreateAnimationGroup()
     local fadeIn = previewButton.fadeIn:CreateAnimation("alpha")
-    fadeIn:SetFromAlpha(0)
-    fadeIn:SetToAlpha(1)
+    --! WotLK fix: use Cell's private absolute-alpha driver; do not modify shared Alpha methods.
+    A.SetAbsoluteAlpha(fadeIn, 0, 1)
     fadeIn:SetDuration(0.25)
     fadeIn:SetSmoothing("OUT")
 
     previewButton.fadeOut = previewButton:CreateAnimationGroup()
     local fadeOut = previewButton.fadeOut:CreateAnimation("alpha")
-    fadeOut:SetFromAlpha(1)
-    fadeOut:SetToAlpha(0)
+    A.SetAbsoluteAlpha(fadeOut, 1, 0)
     fadeOut:SetDuration(0.25)
     fadeOut:SetSmoothing("IN")
     fadeOut:SetScript("OnPlay", function()
@@ -1291,7 +1347,9 @@ local function CreateDetailsFrame()
     spellIconBG:SetSize(27, 27)
     spellIconBG:SetDrawLayer("ARTWORK", 6)
     spellIconBG:SetPoint("TOPLEFT", 5, -5)
-    spellIconBG:SetColorTexture(0, 0, 0, 1)
+    --! WotLK fix: SetColorTexture на 3.3.5 нет - это нативная числовая форма
+    --! SetTexture(r, g, b[, a]); шим TextureBase в WidgetAPI удалён.
+    spellIconBG:SetTexture(0, 0, 0, 1)
 
     spellIcon = detailsContentFrame:CreateTexture(nil, "ARTWORK")
     spellIcon:SetDrawLayer("ARTWORK", 7)

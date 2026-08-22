@@ -1,4 +1,6 @@
 local _, Cell = ...
+--! WotLK fix: bind Cell timers privately so standalone !!!ClassicAPI cannot change semantics.
+local C_Timer = Cell.C_Timer
 local F = Cell.funcs
 local B = Cell.bFuncs
 local P = Cell.pixelPerfectFuncs
@@ -22,11 +24,11 @@ Cell.unitButtons.solo["pet"] = petButton
 local function SoloFrame_UpdateLayout(layout, which)
     -- visibility
     if Cell.vars.groupType ~= "solo" or Cell.vars.isHidden then
-        UnregisterAttributeDriver(soloFrame, "state-visibility")
+        Cell.UnregisterAttributeDriver(soloFrame, "state-visibility")
         soloFrame:Hide()
         return
     else
-        RegisterAttributeDriver(soloFrame, "state-visibility", "[@raid1,exists] hide;[@party1,exists] hide;[group] hide;show")
+        Cell.RegisterAttributeDriver(soloFrame, "state-visibility", "[@raid1,exists] hide;[@party1,exists] hide;[group] hide;show")
     end
 
     -- update
@@ -100,9 +102,9 @@ local function SoloFrame_UpdateLayout(layout, which)
 
     if not which or which == "pet" then
         if layout["pet"]["soloEnabled"] then
-            RegisterAttributeDriver(petButton, "state-visibility", "[nopet] hide; [vehicleui] hide; show")
+            Cell.RegisterAttributeDriver(petButton, "state-visibility", "[nopet] hide; [vehicleui] hide; show")
         else
-            UnregisterAttributeDriver(petButton, "state-visibility")
+            Cell.UnregisterAttributeDriver(petButton, "state-visibility")
             petButton:Hide()
         end
     end
@@ -110,42 +112,54 @@ end
 Cell.RegisterCallback("UpdateLayout", "SoloFrame_UpdateLayout", SoloFrame_UpdateLayout)
 
 -- WotLK Fix: Force update solo buttons when returning to solo group type
--- The RegisterAttributeDriver visibility state doesn't always sync properly after leaving BG/raid
+-- The Cell.RegisterAttributeDriver visibility state doesn't always sync properly after leaving BG/raid
 local function SoloFrame_GroupTypeChanged(groupType)
     if groupType == "solo" then
         -- Force update after a delay to ensure frame is visible
         C_Timer.After(0.5, function()
-            if Cell.vars.groupType == "solo" then
-                -- Force update player button
-                if playerButton then
-                    if playerButton:IsVisible() then
-                        playerButton._updateRequired = 1
-                        playerButton._powerUpdateRequired = 1
-                        if playerButton._indicatorsReady and Cell.bFuncs and Cell.bFuncs.UpdateAll then
-                            Cell.bFuncs.UpdateAll(playerButton)
+            --! WotLK fix: the group can change again, select a hidden layout, or
+            --! enter combat before this fallback fires. Never touch the protected
+            --! frame in a stale state; Core_Wrath owns the deferred layout rebuild.
+            if Cell.vars.groupType ~= "solo" or Cell.vars.isHidden then return end
+            if InCombatLockdown() then
+                F.UpdateLayout("solo")
+                return
+            end
+
+            -- Force update player button
+            if playerButton then
+                if playerButton:IsVisible() then
+                    playerButton._updateRequired = 1
+                    playerButton._powerUpdateRequired = 1
+                    if playerButton._indicatorsReady and Cell.bFuncs and Cell.bFuncs.UpdateAll then
+                        Cell.bFuncs.UpdateAll(playerButton)
+                    end
+                else
+                    -- Button not visible - the attribute driver may not have updated
+                    -- Force show the frame and retry
+                    soloFrame:Show()
+                    C_Timer.After(0.2, function()
+                        if Cell.vars.groupType ~= "solo" or Cell.vars.isHidden then return end
+                        if InCombatLockdown() then
+                            F.UpdateLayout("solo")
+                            return
                         end
-                    else
-                        -- Button not visible - the attribute driver may not have updated
-                        -- Force show the frame and retry
-                        soloFrame:Show()
-                        C_Timer.After(0.2, function()
-                            if playerButton:IsVisible() then
-                                playerButton._updateRequired = 1
-                                playerButton._powerUpdateRequired = 1
-                                if playerButton._indicatorsReady and Cell.bFuncs and Cell.bFuncs.UpdateAll then
-                                    Cell.bFuncs.UpdateAll(playerButton)
-                                end
+                        if playerButton:IsVisible() then
+                            playerButton._updateRequired = 1
+                            playerButton._powerUpdateRequired = 1
+                            if playerButton._indicatorsReady and Cell.bFuncs and Cell.bFuncs.UpdateAll then
+                                Cell.bFuncs.UpdateAll(playerButton)
                             end
-                        end)
-                    end
+                        end
+                    end)
                 end
-                -- Force update pet button
-                if petButton and petButton:IsVisible() then
-                    petButton._updateRequired = 1
-                    petButton._powerUpdateRequired = 1
-                    if petButton._indicatorsReady and Cell.bFuncs and Cell.bFuncs.UpdateAll then
-                        Cell.bFuncs.UpdateAll(petButton)
-                    end
+            end
+            -- Force update pet button
+            if petButton and petButton:IsVisible() then
+                petButton._updateRequired = 1
+                petButton._powerUpdateRequired = 1
+                if petButton._indicatorsReady and Cell.bFuncs and Cell.bFuncs.UpdateAll then
+                    Cell.bFuncs.UpdateAll(petButton)
                 end
             end
         end)
@@ -158,9 +172,9 @@ Cell.RegisterCallback("GroupTypeChanged", "SoloFrame_GroupTypeChanged", SoloFram
 
 --     if not which or which == "solo" then
 --         if CellDB["general"]["showSolo"] then
---             RegisterAttributeDriver(soloFrame, "state-visibility", "[@raid1,exists] hide;[@party1,exists] hide;[group] hide;show")
+--             Cell.RegisterAttributeDriver(soloFrame, "state-visibility", "[@raid1,exists] hide;[@party1,exists] hide;[group] hide;show")
 --         else
---             UnregisterAttributeDriver(soloFrame, "state-visibility")
+--             Cell.UnregisterAttributeDriver(soloFrame, "state-visibility")
 --             soloFrame:Hide()
 --         end
 --     end

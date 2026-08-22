@@ -10,7 +10,9 @@ local I = Cell.iFuncs
 -------------------------------------------------
 --! WotLK: the whole counting engine is removed. It was driven by
 --! NAME_PLATE_UNIT_ADDED / NAME_PLATE_UNIT_REMOVED and C_NamePlate.GetNamePlates(),
---! none of which exist on 3.3.5 (C_NamePlate is only a stub polyfill returning {}).
+--! none of which exist on 3.3.5 (codex: all four report НЕТ - nameplates only
+--! became addressable units in 7.0). Cell publishes no C_NamePlate stub either:
+--! Polyfills.lua:691 states why an empty modern namespace is worse than none.
 --! The nameplate table could never be populated, so the 0.25s ticker only burned
 --! CPU iterating the whole group 4x/sec while always reporting 0.
 --! Only the no-op entry points remain - they are still called from

@@ -378,9 +378,10 @@ function F.Revise()
             end
         end
 
-        if not F.TContains(CellDB["debuffBlacklist"], 160029) then
-            tinsert(CellDB["debuffBlacklist"], 2, 160029)
-        end
+        --! WotLK fix: миграция добавления 160029 в debuffBlacklist убрана — это
+        --! заклинание ("Resurrecting") не существует на 3.3.5a, GetSpellInfo(160029)
+        --! возвращает nil, и FilterInvalidSpells вычистит его при первой же
+        --! фильтрации. Добавлять в базу мёртвый id смысла нет.
 
         -- glow options for raidDebuffs
         for instance, iTable in pairs(CellDB["raidDebuffs"]) do
@@ -2532,9 +2533,14 @@ function F.Revise()
             for _, i in pairs(layout["indicators"]) do
                 if i.type == "text" then
                     if not i.stack then
+                        --! WotLK fix: сама миграция нужна - она создаёт i.stack, без
+                        --! неё индикатор упадёт на nil. Не переносится только
+                        --! circledStackNums: опция удалена (шрифты 3.3.5a не знают
+                        --! символов ①..㊿, см. Indicators/Base.lua, Text_SetStack).
+                        --! Старый ключ по-прежнему затирается, чтобы не оставлять
+                        --! мусор в сохранениях.
                         i.stack = {
                             true,
-                            i.circledStackNums,
                         }
                         i.circledStackNums = nil
                     end
@@ -2846,12 +2852,25 @@ function F.Revise()
     --! an older payload leaves them nil and the appearance tab errors indexing them.
     RepairAgainstDefaults(CellDB["appearance"], Cell.defaults.appearance)
 
+    --! WotLK fix: buffTracker[6] - подсветка (PixelGlow) иконки, когда баффа нет на
+    --! мне самом. Ключ новый, в существующих базах его нет. Ставим true, чтобы
+    --! обновление не меняло поведение молча - кому мигание мешает, снимет галку в
+    --! Рейдовых инструментах. Заполнить надо ИМЕННО ДО RepairAgainstDefaults ниже:
+    --! тот сравнивает длину массива с дефолтом и при расхождении берёт дефолт целиком,
+    --! то есть база с пятью элементами против шестиэлементного дефолта потеряла бы и
+    --! размер иконок, и список отслеживаемых баффов. Идемпотентно, работает каждый вход.
+    if type(CellDB["tools"]) == "table" and type(CellDB["tools"]["buffTracker"]) == "table"
+        and type(CellDB["tools"]["buffTracker"][6]) ~= "boolean" then
+        CellDB["tools"]["buffTracker"][6] = true
+    end
+
     --! tools has no Cell.defaults entry, so mirror the table Core_Wrath seeds it with.
-    --! A payload without battleResTimer errors as soon as the utilities pane is opened.
+    --! battleResTimer is intentionally absent: its two checkboxes left the Raid Tools pane
+    --! on 2026-08-19, nothing reads the key any more, and old saved payloads may keep it -
+    --! RepairAgainstDefaults only fills what is missing, it never deletes.
     if type(CellDB["tools"]) == "table" then
         RepairAgainstDefaults(CellDB["tools"], {
-            ["battleResTimer"] = {true, false, {}},
-            ["buffTracker"] = {false, "left-to-right", 27, {}, {}},
+            ["buffTracker"] = {false, "left-to-right", 27, {}, {}, true},
             ["deathReport"] = {false, 10},
             ["readyAndPull"] = {false, "text_button", {"default", 7}, {}},
             ["marks"] = {false, false, "target_h", {}},

@@ -33,7 +33,16 @@ local tinsert, tconcat = table.insert, table.concat
 local error, assert = error, assert
 
 -- WoW APIs
-local Ambiguate = Ambiguate
+--! WotLK fix: Ambiguate is not native on 3.3.5. AceComm only requests the
+--! "none" context for senders, so keep the realm-strip adapter library-private
+--! instead of requiring Cell to publish a partial global retail contract.
+local Ambiguate = Ambiguate or function(fullName, context)
+	if type(fullName) ~= "string" then return fullName end
+	if context == "none" or context == "short" or context == "guild" then
+		return match(fullName, "^([^-]+)") or fullName
+	end
+	return fullName
+end
 
 AceComm.embeds = AceComm.embeds or {}
 
@@ -63,9 +72,15 @@ local MSG_ESCAPE = "\004"
 -- 3.3.5 backport: pre-4.1 clients have no separate prefix field. SendAddonMessage
 -- transmits "prefix\ttext" with a combined limit of 254 bytes, and the AceComm
 -- wire format of that era puts the multipart marker at the END of the PREFIX,
--- not at the start of the text. Cell's polyfills define RegisterAddonMessagePrefix
--- and C_ChatInfo, so capability detection lies here - detect by client build.
+-- not at the start of the text. Capability detection therefore uses the build,
+-- not modern registration globals that may be supplied by another addon.
 local IS_PRE_PREFIX_CLIENT = (select(4, GetBuildInfo()) or 0) < 40100
+
+--! WotLK fix: prefix registration is implicit on 3.3.5. Preserve a real modern
+--! or foreign owner when present, but keep the pre-prefix success path private.
+local RegisterAddonMessagePrefix = C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix
+	or RegisterAddonMessagePrefix
+	or function() return true end
 
 -- remove old structures (pre WoW 4.0)
 AceComm.multipart_origprefixes = nil
@@ -83,11 +98,7 @@ function AceComm:RegisterComm(prefix, method)
 	end
 
 	prefix = NormalizePrefix(prefix)
-	if C_ChatInfo then
-		C_ChatInfo.RegisterAddonMessagePrefix(prefix)
-	else
-		RegisterAddonMessagePrefix(prefix)
-	end
+	RegisterAddonMessagePrefix(prefix)
 
 	return AceComm._RegisterComm(self, prefix, method)	-- created by CallbackHandler
 end

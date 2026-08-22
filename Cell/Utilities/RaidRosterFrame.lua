@@ -1,4 +1,6 @@
 local _, Cell = ...
+--! WotLK fix: bind Cell timers privately so standalone !!!ClassicAPI cannot change semantics.
+local C_Timer = Cell.C_Timer
 local L = Cell.L
 local F = Cell.funcs
 local P = Cell.pixelPerfectFuncs
@@ -11,7 +13,7 @@ local SwapRaidSubgroup = SwapRaidSubgroup
 local SetRaidSubgroup = SetRaidSubgroup
 
 local LoadRoster, UpdateRoster
-local UpdateMode
+local UpdateMode, CheckPermission, UpdateAssistantState
 local PremadeSwap, PremadeSet, PremadeApply, ProcessNext
 
 local groups = {} -- contains girds
@@ -80,7 +82,8 @@ local function CreateWidgets()
 
     -- SetEveryoneIsAssistant
     assistantCB = Cell.CreateCheckButton(raidRosterFrame, "|TInterface\\GroupFrame\\UI-Group-AssistantIcon:16:16|t", function(checked)
-        SetEveryoneIsAssistant(checked)
+        --! WotLK fix: keep assistant batching private to Cell.
+        Cell.SetEveryoneIsAssistant(checked)
     end)
     assistantCB:SetPoint("BOTTOMRIGHT", -25, 5)
 
@@ -103,15 +106,44 @@ local function UpdateModeBtnPosition()
     end
 end
 
+local function UpdateInstantRoster()
+    if raidRosterFrame:IsShown() and isInstantMode then
+        LoadRoster()
+        CheckPermission()
+        UpdateAssistantState()
+    end
+end
+
+local function ProcessRosterChange()
+    if processingFrame and processingFrame:IsShown() then
+        ProcessNext()
+    end
+end
+
 UpdateMode = function()
+    --! WotLK fix: the backport receives roster changes through Cell's private
+    --! callback bus, which does not stop dispatching merely because this frame
+    --! is hidden. Reset() runs from OnHide, so registration must be gated here
+    --! or OnHide immediately re-adds the listener it just removed.
+    if isInstantMode and raidRosterFrame:IsShown() then
+        Cell.RegisterCallback(
+            "GroupRosterUpdate",
+            "RaidRosterFrame_InstantRosterUpdate",
+            UpdateInstantRoster
+        )
+    else
+        Cell.UnregisterCallback(
+            "GroupRosterUpdate",
+            "RaidRosterFrame_InstantRosterUpdate"
+        )
+    end
+
     -- update button
     if isInstantMode then
-        raidRosterFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
         modeBtn:SetText(L["Instant Mode"])
         modeBtn.tex:SetTexture("Interface\\AddOns\\Cell\\Media\\Icons\\instant")
         LCG.PixelGlow_Stop(modeBtn)
     else
-        raidRosterFrame:UnregisterEvent("GROUP_ROSTER_UPDATE")
         modeBtn:SetText(L["Premade Mode"])
         modeBtn.tex:SetTexture("Interface\\AddOns\\Cell\\Media\\Icons\\premade")
         LCG.PixelGlow_Start(modeBtn, Cell.GetAccentColorTable(1), 12, 0.25, 10, 1)
@@ -129,13 +161,23 @@ local function CreateProcessingFrame()
     processingFrame:Hide()
 
     processingFrame:SetScript("OnShow", function()
-        processingFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
+        --! WotLK fix: processing advances from Cell's normalized roster
+        --! callback instead of the non-native GROUP_ROSTER_UPDATE event.
+        Cell.RegisterCallback(
+            "GroupRosterUpdate",
+            "RaidRosterFrame_ProcessRosterChange",
+            ProcessRosterChange
+        )
         ProcessNext()
     end)
 
     processingFrame:SetScript("OnHide", function()
         processingFrame:Hide()
         processingFrame:UnregisterAllEvents()
+        Cell.UnregisterCallback(
+            "GroupRosterUpdate",
+            "RaidRosterFrame_ProcessRosterChange"
+        )
         Reset(true)
     end)
 
@@ -299,6 +341,68 @@ end
 -- roster
 -------------------------------------------------
 local movingGrid
+
+--! WotLK fix: the drop target used to be resolved in an OnEvent handler driven by
+--! GLOBAL_MOUSE_UP - an event that does not exist on 3.3.5 (added in 8.1.5, codex:
+--! "НЕТ GLOBAL_MOUSE_UP"). Its two registrations were commented out during the
+--! backport and nothing else ever fired the handler, so dragging a player in the
+--! raid roster window did nothing whatsoever - the tile snapped back and no
+--! subgroup changed. That is the only function this window has. The comment that
+--! used to sit here claimed "drag-swap still ends via the buttons' own mouse
+--! handlers"; there are no OnMouseUp/OnMouseDown/OnReceiveDrag handlers anywhere
+--! in this file, so the claim was false.
+--!
+--! Blizzard's own raid UI on this very client does the same job with no event at
+--! all: Blizzard_RaidUI.lua:626-651 resolves the target inside OnDragStop by
+--! geometry, and :566-583 highlights it from an OnUpdate while the drag runs. Cell
+--! already highlights the hovered tile from its own per-grid OnUpdate below, so
+--! only the resolution needs a home; putting it in OnDragStop costs one 40-tile
+--! walk per drop instead of 1600 IsMouseOver calls per frame. OnDragStop is a
+--! native Button script on 3.3.5 (codex) and it does fire.
+--!
+--! IsMouseOver is a Region method and purely geometric - it does not care whether
+--! the frame accepts mouse input. That matters here: an empty tile switches its
+--! mouse off (grid:Reset -> EnableMouse(false) below) yet still has to accept a
+--! drop, because dropping onto an empty slot is how a player is moved into an
+--! unfilled group. GetMouseFocus would have refused those tiles.
+local function FindDropTarget(source)
+    for i = 1, 8 do
+        local group = groups[i]
+        if group then
+            for j = 1, 5 do
+                local grid = group[j]
+                --! Tiles are 17 high on a 16 step, so neighbours overlap by 1px and
+                --! two can match at once; the first hit wins, which is the upper one.
+                if grid and grid ~= source and grid:IsVisible() and grid:IsMouseOver() then
+                    return grid
+                end
+            end
+        end
+    end
+end
+
+--! WotLK fix: the body below is what used to live in the unreachable OnEvent
+--! handler. Nothing about it is retail-only, it simply had no trigger.
+local function PerformDrop(source, target)
+    if isInstantMode then
+        --! SwapRaidSubgroup/SetRaidSubgroup are protected on this client
+        --! (codex: both are API functions, and FrameXML guards them the same way),
+        --! so a drop that lands during combat is dropped rather than erroring.
+        if InCombatLockdown() then return end
+        if target.hasUnit then
+            SwapRaidSubgroup(source.raidIndex, target.raidIndex)
+        else
+            SetRaidSubgroup(source.raidIndex, target.subgroup)
+        end
+    else
+        if target.hasUnit then
+            PremadeSwap(source, target)
+        else
+            PremadeSet(source, target)
+        end
+    end
+end
+
 local function CreateRaidRosterGrid(parent, index)
     local grid = CreateFrame("Button", parent:GetName().."Unit"..index, parent, nil)
     P.Size(grid, 100, 17)
@@ -310,7 +414,9 @@ local function CreateRaidRosterGrid(parent, index)
     local roleIconBg = grid:CreateTexture(nil, "BORDER")
     roleIconBg:SetPoint("TOPLEFT", 2, -2)
     roleIconBg:SetSize(13, 13)
-    roleIconBg:SetColorTexture(0, 0, 0, 1)
+    --! WotLK fix: SetColorTexture на 3.3.5 нет - это нативная числовая форма
+    --! SetTexture(r, g, b[, a]); шим TextureBase в WidgetAPI удалён.
+    roleIconBg:SetTexture(0, 0, 0, 1)
 
     local roleIcon = grid:CreateTexture(nil, "ARTWORK")
     roleIcon:SetPoint("TOPLEFT", roleIconBg, P.Scale(1), P.Scale(-1))
@@ -329,11 +435,11 @@ local function CreateRaidRosterGrid(parent, index)
         if IsAltKeyDown() then
             UninviteUnit(grid.name)
         else
-            if not UnitIsGroupLeader("player") then return end
+            if not Cell.UnitIsGroupLeader("player") then return end
 
-            if UnitIsGroupLeader(grid.unit) then return end
+            if Cell.UnitIsGroupLeader(grid.unit) then return end
 
-            if UnitIsGroupAssistant(grid.unit) then
+            if Cell.UnitIsGroupAssistant(grid.unit) then
                 DemoteAssistant(grid.unit)
             else
                 PromoteToAssistant(grid.unit)
@@ -353,7 +459,15 @@ local function CreateRaidRosterGrid(parent, index)
         grid.isMoving = true
         movingGrid = grid
     end)
-    grid:SetScript("OnDragStop", function()
+    --! WotLK fix: the drop is resolved and performed here now, not in the OnEvent
+    --! handler that used to sit below and never ran. Blizzard's own raid window does
+    --! exactly this on this client: RaidGroupButton_OnDragStop calls
+    --! SwapRaidSubgroup / SetRaidSubgroup itself (Blizzard_RaidUI.lua:626-651).
+    --! The second argument is Cell's own invention - 3.3.5 passes only self to
+    --! OnDragStop, so the slot is free, and LoadRoster uses it to cancel an
+    --! in-flight drag without moving anybody (the roster it was dragging against
+    --! has just been rebuilt, so a drop there would land on stale tiles).
+    grid:SetScript("OnDragStop", function(self, noDrop)
         grid:SetFrameLevel(7)
         grid:StopMovingOrSizing()
         grid:ClearAllPoints()
@@ -367,37 +481,16 @@ local function CreateRaidRosterGrid(parent, index)
         grid:SetBackdropBorderColor(0, 0, 0, 1)
         grid:SetBackdropColor(0.1, 0.1, 0.1, 0.5)
         grid.isMoving = nil
-    end)
+        --! cleared unconditionally: the old code only cleared it inside the swap
+        --! branch, so a cancelled drag left movingGrid pointing at a live tile
+        --! forever.
+        movingGrid = nil
 
-    -- swap
-    --! WotLK: GLOBAL_MOUSE_UP does not exist on 3.3.5 (added 8.1.5) - these
-    --! registrations were silently inert (drag-swap still ends via the buttons'
-    --! own mouse handlers). Kept as documentation of intent.
-    -- grid:SetScript("OnShow", function()
-    --     grid:RegisterEvent("GLOBAL_MOUSE_UP")
-    -- end)
-    -- grid:SetScript("OnHide", function()
-    --     grid:UnregisterEvent("GLOBAL_MOUSE_UP")
-    -- end)
-    grid:SetScript("OnEvent", function(self, event)
-        if movingGrid and movingGrid ~= self and self:IsMouseOver() then
-            if isInstantMode then
-                if not InCombatLockdown() then
-                    if self.hasUnit then
-                        -- print("SWAP "..self:GetName().." WITH "..movingGrid:GetName())
-                        SwapRaidSubgroup(movingGrid.raidIndex, self.raidIndex)
-                    else
-                        SetRaidSubgroup(movingGrid.raidIndex, self.subgroup)
-                    end
-                end
-            else
-                if self.hasUnit then
-                    PremadeSwap(movingGrid, self)
-                else
-                    PremadeSet(movingGrid, self)
-                end
+        if not noDrop and grid.hasUnit then
+            local target = FindDropTarget(grid)
+            if target then
+                PerformDrop(grid, target)
             end
-            movingGrid = nil
         end
     end)
 
@@ -427,11 +520,11 @@ local function CreateRaidRosterGrid(parent, index)
         end
 
         if grid.isLeader then
-            roleIconBg:SetColorTexture(1, 0.84, 0, 1)
+            roleIconBg:SetTexture(1, 0.84, 0, 1)
         elseif grid.isAssistant then
-            roleIconBg:SetColorTexture(0.7, 0.7, 0.7, 1)
+            roleIconBg:SetTexture(0.7, 0.7, 0.7, 1)
         else
-            roleIconBg:SetColorTexture(0, 0, 0, 1)
+            roleIconBg:SetTexture(0, 0, 0, 1)
         end
     end
 
@@ -444,7 +537,7 @@ local function CreateRaidRosterGrid(parent, index)
 
         nameText:SetText("")
         nameText:SetTextColor(1, 1, 1)
-        roleIconBg:SetColorTexture(0, 0, 0, 1)
+        roleIconBg:SetTexture(0, 0, 0, 1)
         roleIconBg:Hide()
         roleIcon:Hide()
 
@@ -457,7 +550,7 @@ local function CreateRaidRosterGrid(parent, index)
 
     function grid:Set(raidIndex)
         -- NOTE: on 3.3.5a GetRaidRosterInfo has only 11 returns (combatRole was added in 4.x),
-        -- resolve the role via the Cell_UnitGroupRolesAssigned polyfill instead
+        -- resolve the role via Cell's private UnitGroupRolesAssigned adapter instead
         local name, _, subgroup, _, _, classFileName = GetRaidRosterInfo(raidIndex)
 
         if not name then
@@ -485,10 +578,10 @@ local function CreateRaidRosterGrid(parent, index)
         grid.raidIndex = raidIndex
         grid.unit = "raid"..raidIndex
         grid.name = name
-        grid.role = Cell_UnitGroupRolesAssigned("raid"..raidIndex) --! WotLK fix: Cell-private role polyfill (global stays native)
+        grid.role = Cell.UnitGroupRolesAssigned("raid"..raidIndex) --! WotLK fix: Cell-private role adapter (global stays native).
         grid.color[1], grid.color[2], grid.color[3] = F.GetClassColor(classFileName)
-        grid.isLeader = UnitIsGroupLeader(grid.unit)
-        grid.isAssistant = UnitIsGroupAssistant(grid.unit)
+        grid.isLeader = Cell.UnitIsGroupLeader(grid.unit)
+        grid.isAssistant = Cell.UnitIsGroupAssistant(grid.unit)
 
         -- update
         grid:Update()
@@ -555,7 +648,12 @@ end
 -------------------------------------------------
 LoadRoster = function()
     if movingGrid then
-        movingGrid:GetScript("OnDragStop")()
+        --! WotLK fix: pass self, and ask for a cancel rather than a drop - the
+        --! roster is about to be rebuilt from scratch, so whatever tile the cursor
+        --! happens to hover is stale. The old call passed no arguments at all;
+        --! that was harmless only because the handler ignored its parameters, and
+        --! it left movingGrid set, which is now cleared inside the handler.
+        movingGrid:GetScript("OnDragStop")(movingGrid, true)
     end
 
     -- reset
@@ -565,7 +663,7 @@ LoadRoster = function()
     end
 
     -- insert
-    for i = 1, GetNumGroupMembers() do
+    for i = 1, Cell.GetNumGroupMembers() do
         local subgroup = select(3, GetRaidRosterInfo(i))
         groups[subgroup]:Insert(i)
         -- premadeGroups[subgroup] = premadeGroups[subgroup] + 1
@@ -579,29 +677,49 @@ end
 -------------------------------------------------
 -- scripts
 -------------------------------------------------
-local function CheckPermission()
-    if UnitIsGroupLeader("player") or UnitIsGroupAssistant("player") then
+CheckPermission = function()
+    if Cell.UnitIsGroupLeader("player") or Cell.UnitIsGroupAssistant("player") then
         if raidRosterFrame.mask then raidRosterFrame.mask:Hide() end
     else
         Cell.CreateMask(raidRosterFrame, L["You don't have permission to do this"], {1, -1, -1, 1})
     end
 end
 
+UpdateAssistantState = function()
+    if assistantCB then
+        assistantCB:SetChecked(Cell.IsEveryoneAssistant())
+    end
+end
+
 raidRosterFrame:SetScript("OnEvent", function()
     LoadRoster()
     CheckPermission()
-    assistantCB:SetChecked(IsEveryoneAssistant())
+    UpdateAssistantState()
 end)
 
 raidRosterFrame:SetScript("OnShow", function()
-    raidRosterFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
+    --! WotLK fix: UpdateMode owns the private roster callback according to
+    --! instant/premade mode; no synthetic frame event is registered here.
+    UpdateMode()
     LoadRoster()
     CheckPermission()
-    assistantCB:SetChecked(IsEveryoneAssistant())
+    UpdateAssistantState()
 end)
 
 raidRosterFrame:SetScript("OnHide", function()
-    raidRosterFrame:UnregisterEvent("GROUP_ROSTER_UPDATE")
+    --! WotLK fix: hiding a frame does not stop an in-progress StartMoving/
+    --! StopMovingOrSizing drag on 3.3.5 - Blizzard's own raid window has the exact
+    --! same guard for the exact same reason (Blizzard_RaidUI.lua:158-162,
+    --! RaidGroupFrame_OnHide -> RaidGroupButton_OnDragStop). Without it, closing
+    --! this window mid-drag (Escape, clicking elsewhere) left the tile silently
+    --! tracking the cursor forever and movingGrid stuck non-nil.
+    if movingGrid then
+        movingGrid:GetScript("OnDragStop")(movingGrid, true)
+    end
+    Cell.UnregisterCallback(
+        "GroupRosterUpdate",
+        "RaidRosterFrame_InstantRosterUpdate"
+    )
     Reset()
 end)
 

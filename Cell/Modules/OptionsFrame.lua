@@ -1,11 +1,7 @@
 local _, Cell = ...
-
---! WotLK fix (coexistence): our PixelUtil (Cell.PixelUtil, built in Polyfills.lua)
---! is the one whose GetNearestPixelSize/SetPoint use the real gxResolution based
---! screen size. The global may belong to the standalone !!!ClassicAPI, so read ours
---! first and fall back to the global only if Polyfills has not run yet.
-local PixelUtil = (Cell and Cell.PixelUtil) or _G.PixelUtil
-
+--! WotLK fix: bind Cell timers privately so standalone !!!ClassicAPI cannot change semantics.
+local C_Timer = Cell.C_Timer
+local PixelUtil = Cell.PixelUtil
 local L = Cell.L
 local F = Cell.funcs
 local P = Cell.pixelPerfectFuncs
@@ -173,14 +169,9 @@ optionsFrame:SetScript("OnShow", function()
     end
 end)
 
-optionsFrame:SetScript("OnHide", function()
-    -- stolen from dbm
-    if not InCombatLockdown() and not UnitAffectingCombat("player") and not IsFalling() then
-        F.Debug("|cffbbbbbbCellOptionsFrame_OnHide: |cffff7777collectgarbage")
-        collectgarbage("collect")
-        -- UpdateAddOnMemoryUsage() -- stuck like hell
-    end
-end)
+--! WotLK fix: do not force a synchronous full-heap collection when the
+--! options window closes. The normal incremental collector reclaims temporary
+--! option data without turning one UI action into a frame stall.
 
 -- optionsFrame:SetScript("OnShow", function()
 --     P.PixelPerfectPoint(optionsFrame)

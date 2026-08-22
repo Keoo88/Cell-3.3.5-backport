@@ -35,7 +35,16 @@ select(2, ...).L = setmetatable({
     ["enableHighlight"] = "Highlight unit button",
     ["hideIfEmptyOrFull"] = "Hide if empty/full",
     ["onlyShowTopGlow"] = "Only show glow for the first debuff",
-    ["circledStackNums"] = "Circled stack numbers",
+    --! WotLK fix: собственные настройки бэкпорта. Без строки здесь метатаблица
+    --! enUS вернула бы сам ключ, и в панели стояло бы "showGlow"/"hideForTanks".
+    ["showGlow"] = "Blinking glow",
+    ["hideForTanks"] = "Do not show for tanks",
+    --! WotLK fix: showJump раньше дописывался врезкой в Modules/Indicators/Indicators.lua
+    --! по GetLocale(). Врезка знала локаль КЛИЕНТА и ничего не знала про собственный
+    --! переключатель языка Cell (CellDB.general.locale -> LoadUserLocale), поэтому при
+    --! несовпадении этих двух значений подпись оставалась на языке клиента, а вся панель
+    --! вокруг - на выбранном. Ключ живёт в файлах локалей, как showGlow и hideForTanks.
+    ["showJump"] = "Show refresh (jump) animation",
     ["hideDamager"] = "Hide Damager",
     ["hideInCombat"] = "Hide in combat",
     ["stackFont"] = "Stack Font",
@@ -1713,6 +1722,12 @@ function ns.LoadUserLocale()
     if locale ~= "enUS" and ns.localeLoaders[locale] then
         ns.localeLoaders[locale]()
     end
+
+    --! WotLK fix: changing locale already requires /reload, so keeping every
+    --! non-selected locale chunk reachable for the whole session only retains
+    --! compiled closures and their constants without a valid later caller.
+    ns.localeLoaders = nil
+    ns.RegisterLocale = nil
 end
 
 -- Available locales with display names

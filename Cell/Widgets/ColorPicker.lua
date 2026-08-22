@@ -37,7 +37,10 @@ local function UpdateColor_HSBA(h, s, b, a, updateBrightness, updatePickers)
 
     if updateBrightness then
         local _r, _g, _b = F.ConvertHSBToRGB(h, s, 1)
-        brightness.tex:SetGradient("VERTICAL", CreateColor(0, 0, 0, 1), CreateColor(_r, _g, _b, 1))
+        --! WotLK fix: Texture:SetGradientAlpha(orientation, r,g,b,a, r,g,b,a) is the
+        --! native 3.3.5 form and is called directly; the retail color-object form
+        --! SetGradient(orientation, color, color) does not exist on this client.
+        brightness.tex:SetGradientAlpha("VERTICAL", 0, 0, 0, 1, _r, _g, _b, 1)
     end
 
     if updatePickers then
@@ -166,8 +169,10 @@ local function CreateColorPicker()
     current.alpha:SetPoint("BOTTOMRIGHT", P.Scale(-1), P.Scale(1))
 
     function current:SetColor(r, g, b, a)
-        current.solid:SetColorTexture(r, g, b)
-        current.alpha:SetColorTexture(r, g, b, a)
+        --! WotLK fix: SetColorTexture на 3.3.5 нет - это нативная числовая форма
+        --! SetTexture(r, g, b[, a]); шим TextureBase в WidgetAPI удалён.
+        current.solid:SetTexture(r, g, b)
+        current.alpha:SetTexture(r, g, b, a)
     end
 
     --------------------------------------------------
@@ -187,8 +192,8 @@ local function CreateColorPicker()
     original.alpha:SetPoint("BOTTOMRIGHT", P.Scale(-1), P.Scale(1))
 
     function original:SetColor(r, g, b, a)
-        original.solid:SetColorTexture(r, g, b)
-        original.alpha:SetColorTexture(r, g, b, a)
+        original.solid:SetTexture(r, g, b)
+        original.alpha:SetTexture(r, g, b, a)
     end
 
     --------------------------------------------------
@@ -217,9 +222,14 @@ local function CreateColorPicker()
     for i = 1, 6 do
         hueSaturation[i] = hueSaturation:CreateTexture(name.."HS_Gradient"..i, "ARTWORK", nil, 0)
         hueSaturation[i]:SetTexture(Cell.vars.whiteTexture)
-        -- hueSaturation[i]:SetColorTexture(1, 1, 1, 1)
+        -- hueSaturation[i]:SetTexture(1, 1, 1, 1)
         -- hueSaturation[i]:SetVertexColor(1, 1, 1, 1)
-        hueSaturation[i]:SetGradient("HORIZONTAL", CreateColor(color[i].r, color[i].g, color[i].b, 1), CreateColor(color[i+1].r, color[i+1].g, color[i+1].b, 1))
+        --! WotLK fix: native SetGradientAlpha, same contract as above.
+        hueSaturation[i]:SetGradientAlpha(
+            "HORIZONTAL",
+            color[i].r, color[i].g, color[i].b, 1,
+            color[i+1].r, color[i+1].g, color[i+1].b, 1
+        )
 
         -- width
         hueSaturation[i]:SetWidth(sectionSize)
@@ -237,13 +247,22 @@ local function CreateColorPicker()
     local saturation = hueSaturation:CreateTexture(name.."HS_Saturation", "ARTWORK", nil, 1)
     saturation:SetBlendMode("BLEND")
     saturation:SetTexture(Cell.vars.whiteTexture)
-    saturation:SetGradient("VERTICAL", CreateColor(1, 1, 1, 1), CreateColor(1, 1, 1, 0))
+    --! WotLK fix: native SetGradientAlpha, same contract as above.
+    saturation:SetGradientAlpha("VERTICAL", 1, 1, 1, 1, 1, 1, 1, 0)
     saturation:SetAllPoints(hueSaturation)
 
     --------------------------------------------------
     -- brightness
     --------------------------------------------------
     brightness = CreateFrame("Slider", nil, colorPicker)
+    --! WotLK fix: keep retail-style userChanged tracking private to Cell's
+    --! color picker instead of replacing native Slider methods client-wide.
+    local brightnessSetValue = brightness.SetValue
+    function brightness:SetValue(value)
+        self._cellProgrammaticChange = true
+        brightnessSetValue(self, value)
+        self._cellProgrammaticChange = nil
+    end
     Cell.StylizeFrame(brightness)
     brightness:SetValueStep(0.01)
     brightness:SetMinMaxValues(0, 1)
@@ -255,6 +274,10 @@ local function CreateColorPicker()
     brightness:SetPoint("TOPLEFT", hueSaturation, "TOPRIGHT", 15, 0)
 
     brightness:SetScript("OnValueChanged", function(self, value, userChanged)
+        --! WotLK fix: callbacks outside the private SetValue wrapper are user input.
+        if userChanged == nil then
+            userChanged = not self._cellProgrammaticChange
+        end
         if not userChanged then return end
         B = 1 - value
 
@@ -271,7 +294,7 @@ local function CreateColorPicker()
     brightness.tex:SetTexture(Cell.vars.whiteTexture)
 
     brightness.thumb1 = brightness:CreateTexture(nil, "ARTWORK")
-    -- brightness.thumb1:SetColorTexture(0, 1, 0, 1)
+    -- brightness.thumb1:SetTexture(0, 1, 0, 1)
     P.Size(brightness.thumb1, 17, 1)
     brightness:SetThumbTexture(brightness.thumb1)
 
@@ -284,6 +307,13 @@ local function CreateColorPicker()
     -- alpha
     --------------------------------------------------
     alpha = CreateFrame("Slider", nil, colorPicker)
+    --! WotLK fix: mirror brightness' private programmatic-change tracking.
+    local alphaSetValue = alpha.SetValue
+    function alpha:SetValue(value)
+        self._cellProgrammaticChange = true
+        alphaSetValue(self, value)
+        self._cellProgrammaticChange = nil
+    end
     Cell.StylizeFrame(alpha)
     alpha:SetValueStep(0.01)
     alpha:SetMinMaxValues(0, 1)
@@ -303,6 +333,10 @@ local function CreateColorPicker()
         alpha.thumb2:SetVertexColor(0.2, 0.2, 0.2, 1)
     end)
     alpha:SetScript("OnValueChanged", function(self, value, userChanged)
+        --! WotLK fix: callbacks outside the private SetValue wrapper are user input.
+        if userChanged == nil then
+            userChanged = not self._cellProgrammaticChange
+        end
         if not userChanged then return end
         A = 1 - value
 
@@ -317,7 +351,8 @@ local function CreateColorPicker()
     alpha.tex:SetPoint("TOPLEFT", P.Scale(1), P.Scale(-1))
     alpha.tex:SetPoint("BOTTOMRIGHT", P.Scale(-1), P.Scale(1))
     alpha.tex:SetTexture(Cell.vars.whiteTexture)
-    alpha.tex:SetGradient("VERTICAL", CreateColor(0, 0, 0, 1), CreateColor(1, 1, 1, 1))
+    --! WotLK fix: native SetGradientAlpha, same contract as above.
+    alpha.tex:SetGradientAlpha("VERTICAL", 0, 0, 0, 1, 1, 1, 1, 1)
 
     alpha.thumb1 = alpha:CreateTexture(nil, "ARTWORK")
     P.Size(alpha.thumb1, 17, 1)
@@ -348,6 +383,14 @@ local function CreateColorPicker()
 
         local lastX, lastY
         self:SetScript("OnUpdate", function(self)
+            --! WotLK fix: OnMouseUp is not guaranteed when the cursor leaves
+            --! this frame. Use the native 3.3.5 watchdog idiom to stop polling
+            --! as soon as the hardware button is released elsewhere.
+            if not IsMouseButtonDown("LeftButton") then
+                self:SetScript("OnUpdate", nil)
+                return
+            end
+
             local newMouseX, newMouseY = GetCursorPosition()
             if newMouseX == lastX and newMouseY == lastY then return end
             lastX, lastY = newMouseX, newMouseY
@@ -387,6 +430,11 @@ local function CreateColorPicker()
     end)
 
     picker:SetScript("OnMouseUp", function(self)
+        self:SetScript("OnUpdate", nil)
+    end)
+    --! WotLK fix: hiding the picker must also release its temporary drag
+    --! driver when no mouse-up event reaches the child frame.
+    picker:SetScript("OnHide", function(self)
         self:SetScript("OnUpdate", nil)
     end)
 

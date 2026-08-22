@@ -1,11 +1,7 @@
 local _, Cell = ...
-
---! WotLK fix (coexistence): our PixelUtil (Cell.PixelUtil, built in Polyfills.lua)
---! is the one whose GetNearestPixelSize/SetPoint use the real gxResolution based
---! screen size. The global may belong to the standalone !!!ClassicAPI, so read ours
---! first and fall back to the global only if Polyfills has not run yet.
-local PixelUtil = (Cell and Cell.PixelUtil) or _G.PixelUtil
-
+--! WotLK fix: bind Cell timers privately so standalone !!!ClassicAPI cannot change semantics.
+local C_Timer = Cell.C_Timer
+local PixelUtil = Cell.PixelUtil
 local L = Cell.L
 local F = Cell.funcs
 local I = Cell.iFuncs
@@ -21,11 +17,18 @@ local UnitIsUnit = UnitIsUnit
 local UnitIsPlayer = UnitIsPlayer
 local UnitGUID = UnitGUID
 local UnitClass = UnitClass
+--! WotLK fix: use Cell's private class-token normalizer; keep native UnitClassBase untouched.
+local UnitClassBase = Cell.GetUnitClassToken
 local UnitLevel = UnitLevel
-local IsInGroup = IsInGroup
-local IsInRaid = IsInRaid
+--! WotLK fix: consume Cell-private group adapters.
+local IsInGroup = Cell.IsInGroup
+local IsInRaid = Cell.IsInRaid
 
 local sort, tinsert, tconcat = table.sort, table.insert, table.concat
+--! WotLK perf: strfind локально - UNIT_AURA дёргает его на каждое обновление аур
+--! каждого юнита группы, а форма unit:find() платит поиском метода в метатаблице
+--! строкового типа на каждый вызов.
+local strfind = string.find
 
 ---------------------------------------------------------------------
 -- data
@@ -215,7 +218,9 @@ end)
 ---------------------------------------------------------------------
 buffTrackerFrame.moverText = buffTrackerFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
 buffTrackerFrame.moverText:SetPoint("TOP", 0, -3)
-buffTrackerFrame.moverText:SetText(L["Mover"])
+--! WotLK fix: label set in ShowMover - at load time L still returns the English key
+--! (ns.LoadUserLocale runs on ADDON_LOADED, after every file), and a FontString keeps
+--! whatever string it was handed.
 buffTrackerFrame.moverText:Hide()
 
 local fakeIconsFrame = CreateFrame("Frame", nil, buffTrackerFrame)
@@ -223,12 +228,28 @@ P.Point(fakeIconsFrame, "BOTTOMRIGHT", buffTrackerFrame)
 P.Point(fakeIconsFrame, "TOPLEFT", buffTrackerFrame, "TOPLEFT", 0, -18)
 fakeIconsFrame:EnableMouse(true)
 fakeIconsFrame:SetFrameLevel(buffTrackerFrame:GetFrameLevel() + 10)
+--! WotLK fix: fakeIconsFrame перехватывал мышь, чтобы в режиме мувера не кастовать
+--! бафы по кнопкам, но сам не тащил - на 3.3.5 нет SetPropagateMouseClicks, поэтому
+--! drag до buffTrackerFrame не доходил и зоной хвата оставалась полоса 18 юнитов
+--! под moverText (~13 экранных пикселей). Тащим тем же фреймом, который и так
+--! накрывает иконки; кнопки не трогаем, они secure.
+fakeIconsFrame:RegisterForDrag("LeftButton")
+fakeIconsFrame:SetScript("OnDragStart", function()
+    buffTrackerFrame:StartMoving()
+    buffTrackerFrame:SetUserPlaced(false)
+end)
+fakeIconsFrame:SetScript("OnDragStop", function()
+    buffTrackerFrame:StopMovingOrSizing()
+    P.SavePosition(buffTrackerFrame, CellDB["tools"]["buffTracker"][4])
+end)
 fakeIconsFrame:Hide()
 
 local fakeIcons = {}
 local function CreateFakeIcon(spellIcon)
     local bg = fakeIconsFrame:CreateTexture(nil, "BORDER")
-    bg:SetColorTexture(0, 0, 0, 1)
+    --! WotLK fix: SetColorTexture на 3.3.5 нет - это нативная числовая форма
+    --! SetTexture(r, g, b[, a]); шим TextureBase в WidgetAPI удалён.
+    bg:SetTexture(0, 0, 0, 1)
     P.Size(bg, 32, 32)
 
     local icon = fakeIconsFrame:CreateTexture(nil, "ARTWORK")
@@ -256,6 +277,7 @@ local function ShowMover(show)
     if show then
         if not CellDB["tools"]["buffTracker"][1] then return end
         buffTrackerFrame:EnableMouse(true)
+        buffTrackerFrame.moverText:SetText(L["Mover"]) --! WotLK fix: см. выше
         buffTrackerFrame.moverText:Show()
         Cell.StylizeFrame(buffTrackerFrame, {0, 1, 0, 0.4}, {0, 0, 0, 0})
         fakeIconsFrame:Show()
@@ -416,7 +438,11 @@ local function UpdateButtons()
                     buffTrackerFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
                 end
 
-                if unaffected[buff][myUnit] then
+                --! WotLK fix: подсветка иконки стала опцией - CellDB.tools.buffTracker[6].
+                --! Раньше глоу включался жёстко, когда у меня самого нет баффа, и убрать
+                --! его можно было только выключив Buff Tracker целиком. Иконка, счётчик и
+                --! альфа остаются на месте, уходит только мигающая рамка.
+                if unaffected[buff][myUnit] and CellDB["tools"]["buffTracker"][6] then
                     -- color, N, frequency, length, thickness
                     buttons[buff]:StartGlow("Pixel", {1, 0.19, 0.19, 1}, 8, 0.25, P.Scale(8), P.Scale(2))
                 else
@@ -515,22 +541,23 @@ end, unpack(fadeOuts))
 ---------------------------------------------------------------------
 -- find aura
 ---------------------------------------------------------------------
-local GetAuraDataBySpellName = C_UnitAuras.GetAuraDataBySpellName
+local UnitBuff = UnitBuff
 
 local function UnitBuffExists(unit, buff)
+    --! WotLK fix: native 3.3.5 UnitBuff accepts a spell name directly. Using
+    --! C_UnitAuras.GetAuraDataBySpellName invoked a Lua scan of up to 40 aura
+    --! slots and allocated a result table for every buff checked on UNIT_AURA.
     local name = buffs[buff]["buff1"]["name"]
-    local aura
-
-    aura = GetAuraDataBySpellName(unit, name, "HELPFUL")
-    if aura then
-        return true, aura.sourceUnit == "player"
+    local found, _, _, _, _, _, _, caster = UnitBuff(unit, name)
+    if found then
+        return true, caster == "player"
     end
 
     if buffs[buff]["buff2"] then
         name = buffs[buff]["buff2"]["name"]
-        aura = GetAuraDataBySpellName(unit, name, "HELPFUL")
-        if aura then
-            return true, aura.sourceUnit == "player"
+        found, _, _, _, _, _, _, caster = UnitBuff(unit, name)
+        if found then
+            return true, caster == "player"
         end
     end
 end
@@ -661,11 +688,11 @@ end
 ---------------------------------------------------------------------
 function buffTrackerFrame:PLAYER_ENTERING_WORLD()
     buffTrackerFrame:UnregisterEvent("PLAYER_ENTERING_WORLD")
-    buffTrackerFrame:GROUP_ROSTER_UPDATE()
+    buffTrackerFrame:GroupRosterUpdate()
 end
 
 local timer
-function buffTrackerFrame:GROUP_ROSTER_UPDATE(immediate)
+function buffTrackerFrame:GroupRosterUpdate(immediate)
     if timer then timer:Cancel() end
     -- if IsInGroup() then
         buffTrackerFrame:RegisterEvent("READY_CHECK")
@@ -695,32 +722,33 @@ function buffTrackerFrame:GROUP_ROSTER_UPDATE(immediate)
 end
 
 function buffTrackerFrame:READY_CHECK()
-    buffTrackerFrame:GROUP_ROSTER_UPDATE(true)
+    buffTrackerFrame:GroupRosterUpdate(true)
 end
 
 function buffTrackerFrame:UNIT_FLAGS()
-    buffTrackerFrame:GROUP_ROSTER_UPDATE()
+    buffTrackerFrame:GroupRosterUpdate()
 end
 
 function buffTrackerFrame:PLAYER_UNGHOST()
-    buffTrackerFrame:GROUP_ROSTER_UPDATE()
+    buffTrackerFrame:GroupRosterUpdate()
 end
 
 -- function buffTrackerFrame:PARTY_MEMBER_ENABLE()
---     buffTrackerFrame:GROUP_ROSTER_UPDATE()
+--     buffTrackerFrame:GroupRosterUpdate()
 -- end
 
 -- function buffTrackerFrame:PARTY_MEMBER_DISABLE()
---     buffTrackerFrame:GROUP_ROSTER_UPDATE()
+--     buffTrackerFrame:GroupRosterUpdate()
 -- end
 
 function buffTrackerFrame:UNIT_AURA(unit)
+    --! WotLK perf: локальный strfind вместо unit:find - см. объявление наверху.
     if IsInRaid() then
-        if unit:find("^raid%d+$") then
+        if strfind(unit, "^raid%d+$") then
             CheckUnit(unit, true)
         end
     else
-        if unit:find("^party%d$") or unit == "player" then
+        if strfind(unit, "^party%d$") or unit == "player" then
             CheckUnit(unit, true)
         end
     end
@@ -733,8 +761,14 @@ function buffTrackerFrame:PLAYER_REGEN_ENABLED()
     UpdateButtons()
 end
 
-buffTrackerFrame:SetScript("OnEvent", function(self, event, ...)
-    self[event](self, ...)
+--! WotLK perf: диспетчер объявлен именованным параметром - в Lua 5.1
+--! vararg-функция стоит adjust_varargs на входе и опкод VARARG на распаковку,
+--! а UNIT_AURA в рейде идёт потоком. Больше одного слота ни одно из
+--! зарегистрированных событий не передаёт (кодекс: UNIT_AURA - unitTarget,
+--! READY_CHECK - name, UNIT_FLAGS - unit, остальные с пустым payload),
+--! так что одного параметра хватает всем.
+buffTrackerFrame:SetScript("OnEvent", function(self, event, arg1)
+    self[event](self, arg1)
 end)
 
 ---------------------------------------------------------------------
@@ -744,16 +778,26 @@ local function UpdateTools(which)
     if not which or which == "buffTracker" then
         if CellDB["tools"]["buffTracker"][1] then
             buffTrackerFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
-            buffTrackerFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
+            --! WotLK fix: use Cell's private normalized roster callback instead
+            --! of registering the non-native GROUP_ROSTER_UPDATE event.
+            Cell.RegisterCallback(
+                "GroupRosterUpdate",
+                "BuffTracker_GroupRosterUpdate",
+                buffTrackerFrame.GroupRosterUpdate
+            )
 
             if which == "buffTracker" then -- already in world, manually enabled
-                buffTrackerFrame:GROUP_ROSTER_UPDATE(true)
+                buffTrackerFrame:GroupRosterUpdate(true)
             end
             if Cell.vars.showMover then
                 ShowMover(true)
             end
         else
             buffTrackerFrame:UnregisterAllEvents()
+            Cell.UnregisterCallback(
+                "GroupRosterUpdate",
+                "BuffTracker_GroupRosterUpdate"
+            )
 
             Reset()
             myUnit = ""

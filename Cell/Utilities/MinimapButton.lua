@@ -73,11 +73,9 @@ button:SetScript("OnDragStop", function(self)
     self:SetScript("OnUpdate", nil)
 end)
 
---! WotLK fix: a bare mainFrame:Hide() only blinked - MainFrame.lua registers
---! RegisterStateDriver(cellMainFrame, "visibility", "show"), and on 3.3.5 the
---! visibility state driver re-applies Show() UNCONDITIONALLY every 0.2s (FrameXML
---! SecureStateDriver.lua:91-96 - unlike other state attributes it has no
---! "value changed" guard). So toggle the DRIVER itself instead of the frame.
+--! WotLK fix: MainFrame.lua no longer installs a permanent constant state
+--! driver. Toggle the protected Cell root directly, outside combat, through its
+--! private owner instead of leaving SecureStateDriver polling forever.
 local framesHidden = false
 local function ToggleCellFrames()
     if InCombatLockdown() then --! protected frames cannot be shown/hidden in combat
@@ -85,7 +83,13 @@ local function ToggleCellFrames()
         return
     end
     framesHidden = not framesHidden
-    RegisterStateDriver(Cell.frames.mainFrame, "visibility", framesHidden and "hide" or "show")
+    if Cell.SetMainFrameVisibility then
+        Cell.SetMainFrameVisibility(not framesHidden)
+    elseif framesHidden then
+        Cell.frames.mainFrame:Hide()
+    else
+        Cell.frames.mainFrame:Show()
+    end
 end
 
 button:SetScript("OnClick", function(self, b)

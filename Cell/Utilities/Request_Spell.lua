@@ -1,4 +1,6 @@
 local _, Cell = ...
+--! WotLK fix: bind Cell timers privately so standalone !!!ClassicAPI cannot change semantics.
+local C_Timer = Cell.C_Timer
 local L = Cell.L
 local F = Cell.funcs
 local U = Cell.uFuncs
@@ -27,10 +29,13 @@ local function ShowSpellOptions(index)
 
     if responseType == "all" then
         srMacroText:SetText(L["Macro"])
-        macroText = "/run C_ChatInfo.SendAddonMessage(\"CELL_REQ_S\",\""..spellId.."\",\"RAID\")"
+        --! WotLK fix: SendAddonMessage is native on 3.3.5; generated macros must
+        --! not require Cell to publish the later C_ChatInfo namespace.
+        macroText = "/run SendAddonMessage(\"CELL_REQ_S\",\""..spellId.."\",\"RAID\")"
     elseif responseType == "me" then
         srMacroText:SetText(L["Macro"])
-        macroText = "/run C_ChatInfo.SendAddonMessage(\"CELL_REQ_S\",\""..spellId..":"..GetUnitName("player").."\",\"RAID\")"
+        --! WotLK fix: keep the generated request macro on the native 3.3.5 API.
+        macroText = "/run SendAddonMessage(\"CELL_REQ_S\",\""..spellId..":"..GetUnitName("player").."\",\"RAID\")"
     else -- whisper
         srMacroText:SetText(L["Contains"])
         keywords = CellDB["spellRequest"]["spells"][index]["keywords"]
@@ -88,7 +93,7 @@ local function HideSpellOptions()
     srSpellsDD:ClearSelected()
     srDeleteBtn:SetEnabled(false)
     srTypeOptionsBtn:Hide()
-    CellDropdownList:Hide()
+    Cell.HideDropdownList()
     srMacroText:Hide()
     srMacroEB:Hide()
     srTypeDD:Hide()
@@ -300,8 +305,14 @@ local function CreateSRPane()
     ---------------------------------------------------------------------------------
 
     -- create -----------------------------------------------------------------------
+    --! WotLK fix: ключ подсказки разошёлся с локалями — во всех 10 файлах Locales
+    --! переведён "[Alt+Left-Click] to edit" (с дефисом), а код спрашивал
+    --! "[Alt+LeftClick] to edit", которого нет ни в одной локали. Из-за fallback
+    --! __index в enUS.lua ошибки не было: строка молча показывалась по-английски
+    --! на всех неанглийских клиентах. Выравниваем ключ по локалям — перевод
+    --! оживает сразу в 10 языках. Апстрим-баг (Cell-retail/Utilities/Request_Spell.lua:304).
     srAddBtn = Cell.CreateButton(srPane, L["Add"], "green-hover", {65, 20}, nil, nil, nil, nil, nil,
-        L["Add new spell"], L["[Alt+LeftClick] to edit"], L["The spell is required to apply a buff on the target"], L["SpellId and BuffId are the same in most cases"])
+        L["Add new spell"], L["[Alt+Left-Click] to edit"], L["The spell is required to apply a buff on the target"], L["SpellId and BuffId are the same in most cases"])
     srAddBtn:SetPoint("TOPLEFT", srSpellsDD, "TOPRIGHT", 7, 0)
     srAddBtn:SetScript("OnUpdate", function(self, elapsed)
         srAddBtn.elapsed = (srAddBtn.elapsed or 0) + elapsed
@@ -668,7 +679,7 @@ end
 function U.CreateSpellRequestIcon(parent)
     local srIcon = CreateFrame("Frame", parent:GetName().."SpellRequestIcon", parent.widgets.indicatorFrame)
     parent.widgets.srIcon = srIcon
-    srIcon:SetIgnoreParentAlpha(true)
+    --! WotLK fix: parent-alpha isolation is unavailable on 3.3.5.
     srIcon:SetFrameLevel(parent.widgets.indicatorFrame:GetFrameLevel()+30) -- 3.3.5: was +110, level cap is 128
     srIcon:Hide()
 

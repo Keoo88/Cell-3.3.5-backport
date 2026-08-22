@@ -1,4 +1,6 @@
 local _, Cell = ...
+--! WotLK fix: bind Cell timers privately so standalone !!!ClassicAPI cannot change semantics.
+local C_Timer = Cell.C_Timer
 local L = Cell.L
 ---@type CellFuncs
 local F = Cell.funcs
@@ -26,14 +28,28 @@ local function SetBarTextureDrawLayer(bar, layer, subLayer)
 end
 
 local UnitGUID = UnitGUID
+--! WotLK fix: min IS a real global on 3.3.5 (codex: API function, alias of
+--! math.min; FrameXML calls it bare in 71 places), so the bare min() on the
+--! health path was not a crash. But rule 3 forbids trusting a global Cell does
+--! not own, and the alias used to sit at :2704 - below the health code that
+--! reads it, which compiles to a global lookup on every health update for every
+--! unit. One file-scope alias at the top covers both call sites.
+local min = math.min
+--! WotLK perf: same reasoning as `min` above. `abs` is also a real global on 3.3.5
+--! (codex: API function, alias of math.abs), and UnitButton_UpdateHealth already
+--! called it bare on the flash path - one file-scope alias covers both that call and
+--! the smoothing driver's per-bar-per-frame use, without trusting a foreign global.
+local abs = math.abs
+--! WotLK perf: floor нужен в UnitButton_UpdateHealPrediction, который зовётся из
+--! шести колбэков LibHealComm; math.floor там был единственным местом с чтением
+--! глобала math на горячем пути.
+local floor = math.floor
 local UnitName = UnitName
 local GetUnitName = GetUnitName
-local UnitClassBase = UnitClassBase or function(unit)
-    return select(2, UnitClass(unit))
-end
+--! WotLK fix: use Cell's private class-token normalizer; keep native UnitClassBase untouched.
+local UnitClassBase = Cell.GetUnitClassToken
 local UnitHealth = UnitHealth
 local UnitHealthMax = UnitHealthMax
--- local UnitGetIncomingHeals = UnitGetIncomingHeals
 local UnitIsFriend = UnitIsFriend
 local UnitIsUnit = UnitIsUnit
 local UnitIsPlayer = UnitIsPlayer
@@ -44,6 +60,12 @@ local UnitIsDeadOrGhost = UnitIsDeadOrGhost
 local UnitIsGhost = UnitIsGhost
 local UnitPowerType = UnitPowerType
 local UnitPowerMax = UnitPowerMax
+--! WotLK perf: UnitPower звался голым глобалом в UnitButton_UpdatePowerStates,
+--! рядом со своим уже локализованным близнецом UnitPowerMax. Функция идёт на
+--! каждое UNIT_POWER/UNIT_MANA, а на 3.3.5 нет RegisterUnitEvent - событие
+--! доходит до каждой кнопки. Регистр под алиас взят с освободившегося
+--! дубликата UnitIsPlayer (был объявлен дважды, :55 и :73).
+local UnitPower = UnitPower
 -- local UnitInRange = UnitInRange
 -- local UnitIsVisible = UnitIsVisible
 local SetRaidTargetIconTexture = SetRaidTargetIconTexture
@@ -54,23 +76,26 @@ local UnitHasVehicleUI = UnitHasVehicleUI
 -- local UnitInVehicle = UnitInVehicle
 -- local UnitUsingVehicle = UnitUsingVehicle
 local UnitIsCharmed = UnitIsCharmed
-local UnitIsPlayer = UnitIsPlayer
-local UnitGroupRolesAssigned = Cell_UnitGroupRolesAssigned --! WotLK fix: Cell-private retail-contract polyfill (the global stays native, see Polyfills.lua)
+--! WotLK perf: здесь стоял второй `local UnitIsPlayer = UnitIsPlayer` - точный
+--! дубликат объявления выше. Он занимал ещё один регистр главного чанка, а
+--! чанк стоит вплотную к пределу Lua 5.1 в 200 живых локалов.
+local UnitGroupRolesAssigned = Cell.UnitGroupRolesAssigned --! WotLK fix: Cell-private retail-contract adapter; the global stays native.
 local UnitThreatSituation = UnitThreatSituation
 local GetThreatStatusColor = GetThreatStatusColor
 local UnitExists = UnitExists
-local UnitIsGroupLeader = UnitIsGroupLeader
-local UnitIsGroupAssistant = UnitIsGroupAssistant
+local UnitIsGroupLeader = Cell.UnitIsGroupLeader
+local UnitIsGroupAssistant = Cell.UnitIsGroupAssistant
 local InCombatLockdown = InCombatLockdown
 local UnitAffectingCombat = UnitAffectingCombat
-local UnitInPhase = UnitInPhase
+--! WotLK fix: локал UnitInPhase убран. Имени на 3.3.5 нет (кодекс: НЕТ), так
+--! что захватывался nil, и ни одного вызова в файле не было - греп по
+--! UnitInPhase давал ровно эту строку. Фазовый статус читается через приватный
+--! Cell.UnitInPhase (см. Indicators/StatusIcon.lua).
 local UnitBuff = UnitBuff
 local UnitDebuff = UnitDebuff
-local IsInRaid = IsInRaid
+local IsInRaid = Cell.IsInRaid
+local IsInGroup = Cell.IsInGroup
 local UnitDetailedThreatSituation = UnitDetailedThreatSituation
---! WotLK fix (coexistence): our translator, never the possibly foreign global
---! published by the standalone !!!ClassicAPI (different semantics).
-local CombatLogGetCurrentEventInfo = (_G.CellClassicAPI and _G.CellClassicAPI.CombatLogGetCurrentEventInfo) or CombatLogGetCurrentEventInfo
 local GetSpellInfo = GetSpellInfo
 
 
@@ -78,37 +103,165 @@ local barAnimationType, highlightEnabled, predictionEnabled
 local absorbEnabled, absorbInvertColor
 local shieldEnabled, overshieldEnabled, overshieldReverseFillEnabled
 
+--! WotLK fix: Cell's health/power smoothing must not depend on the global
+--! SmoothStatusBarMixin. Standalone !!!ClassicAPI may load first and own that
+--! global, while without it Polyfills.lua previously supplied only snap-to-value
+--! stubs. Keep a private two-phase driver and attach its methods directly to
+--! Cell bars so both load modes have identical behavior.
+local smoothBars = {}
+local smoothDriver = CreateFrame("Frame")
+local ProcessCellSmoothBars
+--! WotLK perf: the snapshot buffer is a file-local reused every frame instead of a
+--! fresh `{}` inside the OnUpdate. This handler runs at full framerate while any bar
+--! is animating, and at 40 units it grew an 80-slot table 60 times a second - pure
+--! garbage for a Lua 5.1 collector with no generational step. Reuse is safe because
+--! the handler is only ever installed as an OnUpdate script: OnUpdate cannot fire
+--! re-entrantly, and the OnValueChanged work that bar:SetValue triggers can only
+--! write to `smoothBars`, never call back into here.
+local smoothPending = {}
+local function ClampBarValue(bar, value)
+    local minValue, maxValue = bar:GetMinMaxValues()
+    if value < minValue then return minValue end
+    if value > maxValue then return maxValue end
+    return value
+end
+
+ProcessCellSmoothBars = function(self, elapsed)
+    local pending = smoothPending
+    local n = 0
+    for bar, target in pairs(smoothBars) do
+        pending[n + 1] = bar
+        pending[n + 2] = target
+        n = n + 2
+    end
+
+    local active
+    --! WotLK perf: доля интерполяции зависит только от elapsed, а он один на кадр -
+    --! считать её внутри цикла значило звать min по разу на каждую полосу.
+    local amount = min(elapsed * 15, 1)
+    for i = 1, n, 2 do
+        local bar = pending[i]
+        local queuedTarget = pending[i + 1]
+        --! WotLK fix: callbacks triggered by SetValue may retarget a bar while
+        --! this snapshot is being processed. Only consume the entry when it is
+        --! still the same target; a newer target is left for the next frame.
+        if smoothBars[bar] == queuedTarget then
+            --! WotLK perf: GetMinMaxValues спрашивался у клиента дважды на каждую
+            --! полосу в кадре - внутри ClampBarValue и ещё раз ниже, под range.
+            --! Это C-вызов, между двумя чтениями нет ни одного SetValue, ответ
+            --! гарантированно тот же. При 40 юнитах и двух полосах на кнопку это
+            --! 80 лишних переходов Lua->C в кадре, ~4800 в секунду на анимации.
+            --! Тело ClampBarValue вставлено сюда как есть; сама функция остаётся,
+            --! её зовёт ResetSmoothedValue (холодный путь).
+            local minValue, maxValue = bar:GetMinMaxValues()
+            local target = queuedTarget
+            if target < minValue then
+                target = minValue
+            elseif target > maxValue then
+                target = maxValue
+            end
+            local current = bar:GetValue() or target
+            local value = current + (target - current) * amount
+            local range = maxValue - minValue
+            if range <= 0 or abs(value - target) <= range * 0.00001 then
+                smoothBars[bar] = nil
+                bar:SetValue(target)
+            else
+                active = true
+                bar:SetValue(value)
+            end
+        elseif smoothBars[bar] ~= nil then
+            active = true
+        end
+    end
+
+    --! Drop the borrowed references so a bar that stopped animating is not pinned
+    --! by the scratch buffer until the next frame overwrites its slot.
+    for i = 1, n do
+        pending[i] = nil
+    end
+
+    if not active and not next(smoothBars) then
+        self:SetScript("OnUpdate", nil)
+    end
+end
+
+local function AttachCellSmoothing(bar)
+    function bar:SetSmoothedValue(value)
+        smoothBars[self] = value
+        smoothDriver:SetScript("OnUpdate", ProcessCellSmoothBars)
+    end
+
+    function bar:SetMinMaxSmoothedValue(minValue, maxValue)
+        local oldMin, oldMax = self:GetMinMaxValues()
+        local target = smoothBars[self]
+        self:SetMinMaxValues(minValue, maxValue)
+        if target and oldMax ~= oldMin then
+            local ratio = (target - oldMin) / (oldMax - oldMin)
+            smoothBars[self] = minValue + ratio * (maxValue - minValue)
+        end
+    end
+
+    function bar:ResetSmoothedValue(value)
+        local target = smoothBars[self]
+        smoothBars[self] = nil
+        if value ~= nil then
+            self:SetValue(value)
+        elseif target ~= nil then
+            self:SetValue(ClampBarValue(self, target))
+        end
+    end
+end
+
 local POWER_WORD_SHIELD_NAME = GetSpellInfo(17) or "Power Word: Shield"
 local WEAKENED_SOUL_NAME = GetSpellInfo(6788) or "Weakened Soul"
 
-local function IsPowerWordShield(spellId, spellName)
-    if spellName and spellName == POWER_WORD_SHIELD_NAME then
-        return true
+--! WotLK fix: главный чанк этого файла стоит вплотную к пределу Lua 5.1 -
+--! 200 одновременно живых локалов на функцию. Кэш и его хелпер объявлены
+--! внутри do...end: на выходе из блока их регистры освобождаются, поэтому
+--! в главном чанке по-прежнему занято ровно два имени, как и до правки.
+local IsPowerWordShield, IsWeakenedSoul
+do
+    --! WotLK perf: мемо spellId -> имя. Обе проверки зовутся из aura-цикла, то
+    --! есть до 40 юнитов * N аур на обновление, и на каждой ауре, чьё имя не
+    --! совпало, платился C-вызов GetSpellInfo. Для конкретного spellId ответ
+    --! клиента за сессию не меняется, поэтому кэш сохраняет семантику ровно и
+    --! снимает повторный вызов. false - отрицательный ответ (nil означало бы
+    --! "ещё не спрашивали"), чтобы промах не спрашивал клиент снова.
+    local spellNameById = {}
+
+    local function GetCachedSpellName(spellId)
+        local name = spellNameById[spellId]
+        if name == nil then
+            name = GetSpellInfo(spellId) or false
+            spellNameById[spellId] = name
+        end
+        return name
     end
 
-    if spellId then
-        local fetched = GetSpellInfo(spellId)
-        if fetched and fetched == POWER_WORD_SHIELD_NAME then
+    function IsPowerWordShield(spellId, spellName)
+        if spellName and spellName == POWER_WORD_SHIELD_NAME then
             return true
         end
+
+        if spellId then
+            return GetCachedSpellName(spellId) == POWER_WORD_SHIELD_NAME
+        end
+
+        return false
     end
 
-    return false
-end
-
-local function IsWeakenedSoul(spellId, spellName)
-    if spellName and spellName == WEAKENED_SOUL_NAME then
-        return true
-    end
-
-    if spellId then
-        local fetched = GetSpellInfo(spellId)
-        if fetched and fetched == WEAKENED_SOUL_NAME then
+    function IsWeakenedSoul(spellId, spellName)
+        if spellName and spellName == WEAKENED_SOUL_NAME then
             return true
         end
-    end
 
-    return false
+        if spellId then
+            return GetCachedSpellName(spellId) == WEAKENED_SOUL_NAME
+        end
+
+        return false
+    end
 end
 
 --! WotLK fix: restore upstream's Weakened Soul filter, lost in the backport.
@@ -122,6 +275,13 @@ end
 -------------------------------------------------
 -- unit button func declarations
 -------------------------------------------------
+--! WotLK NOTE: в главном чанке этого файла сейчас 199 локалов из 200,
+--! разрешённых Lua 5.1 (LUAI_MAXVARS). Свободен ровно один слот: 201-й
+--! `local` на верхнем уровне - это не рантайм-ошибка, а отказ компиляции всего
+--! файла при загрузке ("main function has more than 200 local variables"), то
+--! есть Cell просто не поднимется. Новые помощники держать анонимными,
+--! складывать в существующие таблицы или заводить в do...end блоке (локалы
+--! блока освобождают регистры на выходе). Проверка - audit/raw/tmp/luacheck.py.
 local UnitButton_UpdateAll
 local UnitButton_UpdateAuras, UnitButton_UpdateRole, UnitButton_UpdateLeader, UnitButton_UpdateStatusText
 local UnitButton_UpdateHealthColor, UnitButton_UpdateNameTextColor, UnitButton_UpdateHealthTextColor
@@ -137,7 +297,8 @@ local indicatorNums, indicatorBooleans, indicatorColors, indicatorCustoms = {}, 
 
 local function UpdateIndicatorParentVisibility(b, indicatorName, enabled)
     if not (indicatorName == "debuffs" or
-            indicatorName == "privateAuras" or
+            --! WotLK fix: "privateAuras" из списка убран — такого индикатора в
+            --! бэкпорте нет (приватные ауры появились только в ретейле).
             indicatorName == "defensiveCooldowns" or
             indicatorName == "externalCooldowns" or
             indicatorName == "allCooldowns" or
@@ -193,6 +354,10 @@ local function ResetIndicators()
 
         -- update missingBuffs
         elseif t["indicatorName"] == "missingBuffs" then
+            --! WotLK fix: showGlow до Enable - иначе первый же проход баффов
+            --! (EnableMissingBuffs дёргает GroupRosterUpdate) нарисует иконки
+            --! по старому флагу и подсветка мигнёт вопреки настройке.
+            I.SetMissingBuffsGlow(t["showGlow"] ~= false)
             I.EnableMissingBuffs(t["enabled"])
 
         -- update healthThresholds
@@ -227,6 +392,17 @@ local function ResetIndicators()
         end
         if t["onlyShowOvershields"] ~= nil then
             indicatorBooleans[t["indicatorName"]] = t["onlyShowOvershields"]
+        end
+        --! WotLK fix: настройки аггро (порог и "не показывать танков") кладём в уже
+        --! существующие indicatorNums/indicatorBooleans, а не в новые локалы файла:
+        --! в главном чанке занято 199 слотов из 200, разрешённых Lua 5.1 (см. заметку
+        --! у объявлений выше). Коллизии нет - у aggroBlink и aggroBorder своего "num"
+        --! не бывает, и других булевых настроек у них тоже нет.
+        if t["threatThreshold"] then
+            indicatorNums[t["indicatorName"]] = t["threatThreshold"]
+        end
+        if t["hideForTanks"] ~= nil then
+            indicatorBooleans[t["indicatorName"]] = t["hideForTanks"]
         end
     end
 end
@@ -413,10 +589,8 @@ local function HandleIndicators(b)
         if type(t["fadeOut"]) == "boolean" and indicator.SetFadeOut then
             indicator:SetFadeOut(t["fadeOut"])
         end
-        -- update shape
-        if t["shape"] and indicator.SetShape then
-            indicator:SetShape(t["shape"])
-        end
+        --! WotLK fix: чтения t["shape"] здесь больше нет: настройка мертва в этом
+        --! бэкпорте (Power Word: Shield стал полосой, виджет формы вырезан).
         -- update glow
         if t["glowOptions"] and indicator.SetupGlow then
             indicator:SetupGlow(t["glowOptions"])
@@ -562,10 +736,31 @@ local activeLayouts = {
 local function UpdateIndicators(layout, indicatorName, setting, value, value2)
     F.Debug("|cffff7777UpdateIndicators:|r ", layout, indicatorName, setting, value, value2)
 
+    --! WotLK fix: Cell.Fire dispatches listeners with pairs(), so the Lua 5.1
+    --! callback order cannot guarantee that custom-indicator cache mutation
+    --! finishes before this redraw handler. Update that private cache directly
+    --! before any layout/visibility early return or indicator refresh.
+    I.UpdateCustomIndicatorSettings(layout, indicatorName, setting, value, value2)
+
     -- FlushQueue()
 
     local currentLayout = Cell.vars.currentLayout
     local INDEX = Cell.vars.groupType
+
+    --! WotLK fix: PLAYER_ENTERING_WORLD can request a layout before the deferred
+    --! 3.3.5 roster route has initialized groupType. Lua table keys cannot be nil;
+    --! derive the live group type here and persist it so the first UpdateIndicators
+    --! fired by F.UpdateLayout cannot crash during login/reload.
+    if INDEX ~= "solo" and INDEX ~= "party" and INDEX ~= "raid" then
+        if IsInRaid() then
+            INDEX = "raid"
+        elseif IsInGroup() then
+            INDEX = "party"
+        else
+            INDEX = "solo"
+        end
+        Cell.vars.groupType = INDEX
+    end
 
     if layout then
         -- Cell.Fire("UpdateIndicators", layout): indicators copy/import
@@ -617,7 +812,17 @@ local function UpdateIndicators(layout, indicatorName, setting, value, value2)
         if setting == "enabled" then
             enabledIndicators[indicatorName] = value
 
-            if indicatorName == "combatIcon" then
+            if indicatorName == "statusIcon" then
+                --! WotLK fix: incremental statusIcon changes must mirror the
+                --! full-layout lifecycle, including event registration and an
+                --! immediate redraw of already-created buttons.
+                I.EnableStatusIcon(value)
+                if value then
+                    F.IterateAllUnitButtons(function(b)
+                        I.UpdateStatusIcon(b)
+                    end, true)
+                end
+            elseif indicatorName == "combatIcon" then
                 F.IterateAllUnitButtons(function(b)
                     if not value then
                         b.indicators[indicatorName]:Hide()
@@ -851,6 +1056,13 @@ local function UpdateIndicators(layout, indicatorName, setting, value, value2)
                     UnitButton_UpdateAuras(b)
                 end, true)
             end
+        elseif setting == "threatThreshold" then
+            --! WotLK fix: порог аггро хранится в indicatorNums - в главном чанке файла
+            --! свободен один local из 200 (см. заметку у объявлений), а своего "num" у
+            --! aggroBlink/aggroBorder не бывает. Перерисовываем сразу: threat-события
+            --! в мирное время не приходят, иначе ползунок выглядел бы мёртвым.
+            indicatorNums[indicatorName] = value
+            F.IterateAllUnitButtons(B.UpdateThreat, true)
         elseif setting == "numPerLine" then
             F.IterateAllUnitButtons(function(b)
                 local indicator = b.indicators[indicatorName]
@@ -950,12 +1162,37 @@ local function UpdateIndicators(layout, indicatorName, setting, value, value2)
                     b.indicators[indicatorName]:Hide()
                 end, true)
             elseif value == "shieldByMe" then
+                --! WotLK fix: писался только булев. Флаг читается в проходе
+                --! баффов как pwsMineOnly (indicatorBooleans["powerWordShield"],
+                --! UnitButton_UpdateBuffs), поэтому уже нарисованный PW:S висел
+                --! по старому правилу до следующего события аур. Сосед
+                --! onlyShowOvershields ниже перерисовывает сразу - здесь то же,
+                --! но через аура-проход, а не через щиты: булев гейтит икону
+                --! баффа, CLEU-ветка (:3245) отработает сама на следующем щите.
                 indicatorBooleans[indicatorName] = value2
+                F.IterateAllUnitButtons(function(b)
+                    UnitButton_UpdateAuras(b)
+                end, true)
             elseif value == "onlyShowOvershields" then
                 indicatorBooleans[indicatorName] = value2
                 F.IterateAllUnitButtons(function(b)
                     UnitButton_UpdateShieldAbsorbs(b)
                 end, true)
+            elseif value == "showGlow" then
+                --! WotLK fix: тумблер мигающей подсветки индикатора Missing Buffs.
+                --! Гасит/запускает уже нарисованные иконки сам, обходить кнопки
+                --! здесь не нужно - см. I.SetMissingBuffsGlow.
+                if indicatorName == "missingBuffs" then
+                    I.SetMissingBuffsGlow(value2)
+                end
+            elseif value == "hideForTanks" then
+                --! WotLK fix: "не показывать танков" для аггро-индикаторов. Танк
+                --! держит моба по должности, его status/процент всегда наверху - на
+                --! 25ппл это половина мигающих рамок, которые ни о чём не сообщают.
+                --! Флаг ложится в indicatorBooleans (других булевых настроек у этих
+                --! двух индикаторов нет), перерисовка - сразу, см. B.UpdateThreat.
+                indicatorBooleans[indicatorName] = value2
+                F.IterateAllUnitButtons(B.UpdateThreat, true)
             elseif value == "showStack" then
                 F.IterateAllUnitButtons(function(b)
                     b.indicators[indicatorName]:ShowStack(value2)
@@ -1004,6 +1241,16 @@ local function UpdateIndicators(layout, indicatorName, setting, value, value2)
             elseif value == "smooth" then
                 F.IterateAllUnitButtons(function(b)
                     b.indicators[indicatorName]:EnableSmooth(value2)
+                end, true)
+            elseif value == "onlyShowTopGlow" then
+                --! WotLK fix: попадало в общий else, то есть менялся только
+                --! булев. Флаг читается в аура-проходе как raidDebuffsFirstOnly
+                --! (indicatorBooleans["raidDebuffs"]), поэтому свечение на уже
+                --! висящих рейд-дебаффах не пересчитывалось до нового UNIT_AURA:
+                --! галка стояла в новом положении, экран - в старом.
+                indicatorBooleans[indicatorName] = value2
+                F.IterateAllUnitButtons(function(b)
+                    UnitButton_UpdateAuras(b)
                 end, true)
             elseif value == "showAllSpells" then
                 I.ShowAllTargetedSpells(value2)
@@ -1107,13 +1354,25 @@ local function UpdateIndicators(layout, indicatorName, setting, value, value2)
             F.IterateAllUnitButtons(function(b)
                 I.RemoveIndicator(b, indicatorName, value)
             end, true)
+        elseif setting == "castBy" then
+            --! WotLK fix: the custom cache is updated above, but castBy has no
+            --! generic redraw path. Re-scan current buttons so old matches do
+            --! not remain visible after the caster filter changes.
+            F.IterateAllUnitButtons(function(b)
+                UnitButton_UpdateAuras(b)
+            end, true)
         elseif setting == "auras" then
             -- indicator auras changed, hide them all, then recheck whether to show
             F.IterateAllUnitButtons(function(b)
                 b.indicators[indicatorName]:Hide()
                 UnitButton_UpdateAuras(b)
             end, true)
-        elseif setting == "debuffBlacklist" or setting == "dispelBlacklist" or setting == "defensives" or setting == "externals" or setting == "bigDebuffs" or setting == "debuffTypeColor" then
+        --! WotLK fix: "crowdControls" в списке не было. I.UpdateCrowdControls
+        --! (Indicator_DefaultSpells_Wrath.lua:653) только перестраивает две
+        --! таблицы-словаря и ничего не рисует - ровно как I.UpdateExternals,
+        --! который здесь уже перечислен. Без этого включение/выключение CC
+        --! в списке не убирало и не добавляло уже висящие иконки.
+        elseif setting == "debuffBlacklist" or setting == "dispelBlacklist" or setting == "defensives" or setting == "externals" or setting == "crowdControls" or setting == "bigDebuffs" or setting == "debuffTypeColor" then
             F.IterateAllUnitButtons(function(b)
                 UnitButton_UpdateAuras(b)
             end, true)
@@ -1159,6 +1418,18 @@ end
 -------------------------------------------------
 -- debuffs
 -------------------------------------------------
+--! WotLK fix: table.sort calls this only synchronously, so one short-lived
+--! owner reference avoids allocating a new closure for every UNIT_AURA while
+--! preserving each button's private order table.
+--! WotLK perf: держим саму таблицу порядков, а не кнопку - компаратор зовётся
+--! O(n log n) раз за сортировку, и каждый вызов делал два лишних хеш-лукапа
+--! ._debuffs_raid_orders. Таблица создаётся один раз в InitAuraTables и дальше
+--! только wipe'ается, так что ссылка на неё живёт столько же, сколько кнопка.
+local raidDebuffSortOrders
+local function SortRaidDebuffsByOrder(a, b)
+    return raidDebuffSortOrders[a] < raidDebuffSortOrders[b]
+end
+
 local function UnitButton_UpdateDebuffs(self)
     local unit = self.states.displayedUnit
 
@@ -1171,6 +1442,48 @@ local function UnitButton_UpdateDebuffs(self)
     local ccFound = 1
     local glowType, glowOptions
     local refreshing = false
+
+    --! WotLK perf: всё, что не меняется за время цикла, поднято перед ним.
+    --! Цикл крутится сорок раз на каждое UNIT_AURA каждой кнопки - это самое
+    --! горячее место аддона, и внутри него на каждой итерации шли: чтение глобала
+    --! Cell плюс хеш-лукап .vars (до шести раз), повторные лукапы enabledIndicators
+    --! и indicatorBooleans, повторные чтения self._debuffs_* и self.indicators.
+    --! Ни одна из этих величин не может измениться внутри цикла: таблицы
+    --! Cell.vars.* переписываются только колбэками настроек (Core_Wrath.lua:569-582,
+    --! Indicators.lua), enabledIndicators - только из UpdateIndicators (:292, :761),
+    --! а сами таблицы self._debuffs_* создаются один раз в InitAuraTables и дальше
+    --! только wipe'аются, не подменяются.
+    local vars = Cell.vars
+    local iconAnimation = vars.iconAnimation
+    local debuffBlacklist = vars.debuffBlacklist
+    local bigDebuffs = vars.bigDebuffs
+    local bigDebuffNames = vars.bigDebuffNames
+    local dispelBlacklist = vars.dispelBlacklist
+
+    local indicators = self.indicators
+    local debuffsCache = self._debuffs_cache
+    local debuffsCountCache = self._debuffs_count_cache
+    local debuffsCurrent = self._debuffs_current
+    local debuffsBig = self._debuffs_big
+    local debuffsNormal = self._debuffs_normal
+    local debuffsRaid = self._debuffs_raid
+    local debuffsRaidRefreshing = self._debuffs_raid_refreshing
+    local debuffsRaidOrders = self._debuffs_raid_orders
+    local debuffsGlowCurrent = self._debuffs_glow_current
+    local debuffsGlowCache = self._debuffs_glow_cache
+    local debuffsDispel = self._debuffs_dispel
+
+    local debuffsOn = enabledIndicators["debuffs"]
+    local debuffsOnlyDispellable = indicatorBooleans["debuffs"]
+    local raidDebuffsOn = enabledIndicators["raidDebuffs"]
+    local raidDebuffsFirstOnly = indicatorBooleans["raidDebuffs"]
+    local dispelsOn = enabledIndicators["dispels"]
+    --! WotLK perf: таблица фильтров тоже неизменна за вызов - её переписывает только
+    --! колбэк настроек (:339). Читалась на каждый дебафф с типом.
+    local dispelFilters = indicatorBooleans["dispels"]
+    local pwsOn = enabledIndicators["powerWordShield"]
+    local ccOn = enabledIndicators["crowdControls"]
+    local ccNum = indicatorNums["crowdControls"]
 
     for i = 1, 40 do
         --! WotLK perf: direct native UnitDebuff (3.3.5 signature: name,
@@ -1189,27 +1502,33 @@ local function UnitButton_UpdateDebuffs(self)
         debuffType = I.CheckDebuffType(debuffType, spellId)
 
         if duration then
-            if Cell.vars.iconAnimation == "duration" then
-                local timeIncreased = self._debuffs_cache[auraInstanceID] and (expirationTime - self._debuffs_cache[auraInstanceID] >= 0.5) or false
-                local countIncreased = self._debuffs_count_cache[auraInstanceID] and (count > self._debuffs_count_cache[auraInstanceID]) or false
+            --! WotLK perf: start считается один раз - ниже он нужен до трёх раз.
+            local start = expirationTime - duration
+            --! WotLK perf: кэши читались по два-три раза на итерацию.
+            local cachedExpiration = debuffsCache[auraInstanceID]
+            local cachedCount = debuffsCountCache[auraInstanceID]
+
+            if iconAnimation == "duration" then
+                local timeIncreased = cachedExpiration and (expirationTime - cachedExpiration >= 0.5) or false
+                local countIncreased = cachedCount and (count > cachedCount) or false
                 refreshing = timeIncreased or countIncreased
-            elseif Cell.vars.iconAnimation == "stack" then
-                refreshing = self._debuffs_count_cache[auraInstanceID] and (count > self._debuffs_count_cache[auraInstanceID]) or false
+            elseif iconAnimation == "stack" then
+                refreshing = cachedCount and (count > cachedCount) or false
             else
                 refreshing = false
             end
 
-            if enabledIndicators["debuffs"] and not Cell.vars.debuffBlacklist[spellId] and FilterWeakenedSoul(spellId) then
-                local isBigDebuff = Cell.vars.bigDebuffs[spellId]
+            if debuffsOn and not debuffBlacklist[spellId] and FilterWeakenedSoul(spellId) then
+                local isBigDebuff = bigDebuffs[spellId]
                 if not isBigDebuff and name then
-                    isBigDebuff = Cell.vars.bigDebuffNames[name]
+                    isBigDebuff = bigDebuffNames[name]
                 end
 
-                if isBigDebuff or (not indicatorBooleans["debuffs"] or I.CanDispel(debuffType)) then
+                if isBigDebuff or (not debuffsOnlyDispellable or I.CanDispel(debuffType)) then
                     if isBigDebuff then  -- isBigDebuff
-                        self._debuffs_big[i] = refreshing
+                        debuffsBig[i] = refreshing
                     else
-                        self._debuffs_normal[i] = refreshing
+                        debuffsNormal[i] = refreshing
                     end
                 end
             end
@@ -1220,56 +1539,63 @@ local function UnitButton_UpdateDebuffs(self)
             --! showed and "Cast By: Others" matched everything. The debuff
             --! loop already has `source` - derive castByMe the same way the
             --! buff path does (upstream computes it for both aura types).
-            I.UpdateCustomIndicators(self, "debuff", spellId, name, expirationTime - duration, duration, debuffType or "", icon, count, refreshing, source == "player" or source == "pet")
+            I.UpdateCustomIndicators(self, "debuff", spellId, name, start, duration, debuffType or "", icon, count, refreshing, source == "player" or source == "pet")
 
             -- prepare raidDebuffs
-            if enabledIndicators["raidDebuffs"] and I.GetDebuffOrder(name, spellId, count) then
+            --! WotLK perf: I.GetDebuffOrder was called twice per matching debuff -
+            --! once as the condition, once for the stored order - and it is not a
+            --! plain lookup: it re-evaluates the aura's stack condition every call.
+            --! One call, one local.
+            local debuffOrder
+            if raidDebuffsOn then
+                debuffOrder = I.GetDebuffOrder(name, spellId, count)
+            end
+            if debuffOrder then
                 raidDebuffsFound = true
-                tinsert(self._debuffs_raid, i)
-                self._debuffs_raid_refreshing[i] = refreshing -- store all raidDebuffs
-                self._debuffs_raid_orders[i] = I.GetDebuffOrder(name, spellId, count)
+                tinsert(debuffsRaid, i)
+                debuffsRaidRefreshing[i] = refreshing -- store all raidDebuffs
+                debuffsRaidOrders[i] = debuffOrder
 
-                if not indicatorBooleans["raidDebuffs"] then -- glow all matching debuffs
+                if not raidDebuffsFirstOnly then -- glow all matching debuffs
                     glowType, glowOptions = I.GetDebuffGlow(name, spellId, count)
                     if glowType and glowType ~= "None" then
-                        self._debuffs_glow_current[glowType] = glowOptions
-                        self._debuffs_glow_cache[glowType] = true
+                        debuffsGlowCurrent[glowType] = glowOptions
+                        debuffsGlowCache[glowType] = true
                     end
                 end
             end
 
-            self._debuffs_cache[auraInstanceID] = expirationTime
-            self._debuffs_count_cache[auraInstanceID] = count
-            self._debuffs_current[auraInstanceID] = i
+            debuffsCache[auraInstanceID] = expirationTime
+            debuffsCountCache[auraInstanceID] = count
+            debuffsCurrent[auraInstanceID] = i
 
-            if enabledIndicators["dispels"] and debuffType and debuffType ~= "" then
-                local filters = indicatorBooleans["dispels"]
-                if filters and filters[debuffType] then
+            if dispelsOn and debuffType and debuffType ~= "" then
+                if dispelFilters and dispelFilters[debuffType] then
                     local canDispel = I.CanDispel(debuffType)
                     -- when "only show dispellable by me" is checked, require a positive match
                     -- NOTE: Bleeds are never dispellable by any class, so I.CanDispel("Bleed")
                     -- is always nil. Without this exception, the default "dispellableByMe"
                     -- filter would permanently hide Bleed highlights even though the Bleed
                     -- filter is enabled. Bleeds bypass the dispellable-by-me gate.
-                    if not filters["dispellableByMe"] or canDispel or debuffType == "Bleed" then
-                        if Cell.vars.dispelBlacklist[spellId] then
-                            self._debuffs_dispel[debuffType] = false
+                    if not dispelFilters["dispellableByMe"] or canDispel or debuffType == "Bleed" then
+                        if dispelBlacklist[spellId] then
+                            debuffsDispel[debuffType] = false
                         else
-                            self._debuffs_dispel[debuffType] = true
+                            debuffsDispel[debuffType] = true
                         end
                     end
                 end
             end
 
-            if enabledIndicators["powerWordShield"] and IsWeakenedSoul(spellId, name) then
+            if pwsOn and IsWeakenedSoul(spellId, name) then
                 wsFound = true
-                self.indicators.powerWordShield:SetWeakenedSoulCooldown(expirationTime - duration, duration, source == "player")
+                indicators.powerWordShield:SetWeakenedSoulCooldown(start, duration, source == "player")
             end
 
             -- crowdControls
-            if enabledIndicators["crowdControls"] and I.IsCrowdControls(name, spellId) and ccFound <= indicatorNums["crowdControls"] then
+            if ccOn and I.IsCrowdControls(name, spellId) and ccFound <= ccNum then
                 -- start, duration, debuffType, texture, count, refreshing
-                self.indicators.crowdControls[ccFound]:SetCooldown(expirationTime - duration, duration, debuffType, icon, count, refreshing)
+                indicators.crowdControls[ccFound]:SetCooldown(start, duration, debuffType, icon, count, refreshing)
                 ccFound = ccFound + 1
             end
 
@@ -1290,43 +1616,48 @@ local function UnitButton_UpdateDebuffs(self)
     end
 
     -- update crowdControls
-    self.indicators.crowdControls:UpdateSize(ccFound - 1)
+    indicators.crowdControls:UpdateSize(ccFound - 1)
 
     -- update raid debuffs
     if raidDebuffsFound then
         startIndex = 1
-        self.indicators.raidDebuffs:Show()
+        --! WotLK perf: indicators.raidDebuffs читался в этом блоке одиннадцать раз.
+        local raidDebuffs = indicators.raidDebuffs
+        raidDebuffs:Show()
 
         -- sort indices
         -- NOTE: self._debuffs_raid_orders = { [index] = debuffOrder } used for sorting
-        table.sort(self._debuffs_raid, function(a, b)
-            return self._debuffs_raid_orders[a] < self._debuffs_raid_orders[b]
-        end)
+        raidDebuffSortOrders = debuffsRaidOrders
+        table.sort(debuffsRaid, SortRaidDebuffsByOrder)
+        raidDebuffSortOrders = nil
 
         -- show
         local topGlowType, topGlowOptions
         for i = 1, indicatorNums["raidDebuffs"] do
-            local index = self._debuffs_raid[i]
+            local index = debuffsRaid[i]
             if index then
                 --! WotLK perf: native UnitDebuff signature (see main scan loop)
-                local name, _, icon, count, debuffType, duration, expirationTime, source, isStealable, _, spellId = UnitDebuff(unit, self._debuffs_raid[i])
+                --! WotLK perf: было UnitDebuff(unit, self._debuffs_raid[i]) - тот же
+                --! элемент читался повторно, хотя уже лежит в index.
+                local name, _, icon, count, debuffType, duration, expirationTime, source, isStealable, _, spellId = UnitDebuff(unit, index)
                 if name then
-                    self.indicators.raidDebuffs[i]:SetCooldown(
+                    local ind = raidDebuffs[i]
+                    ind:SetCooldown(
                         expirationTime - duration,
                         duration,
                         debuffType or "",
                         icon,
                         count,
-                        self._debuffs_raid_refreshing[index],
+                        debuffsRaidRefreshing[index],
                         I.IsDebuffUseElapsedTime(name, spellId)
                     )
-                    self.indicators.raidDebuffs[i].index = index -- NOTE: for tooltip
+                    ind.index = index -- NOTE: for tooltip
                     startIndex = startIndex + 1
                     -- store debuffs indices shown by raidDebuffs indicator
                     -- self._debuffs_raid_shown[index] = true
                     -- remove from debuffs
-                    self._debuffs_big[index] = nil
-                    self._debuffs_normal[index] = nil
+                    debuffsBig[index] = nil
+                    debuffsNormal[index] = nil
 
                     if i == 1 then -- top
                         topGlowType, topGlowOptions = I.GetDebuffGlow(name, spellId, count)
@@ -1336,101 +1667,114 @@ local function UnitButton_UpdateDebuffs(self)
         end
 
         -- update raidDebuffs
-        self.indicators.raidDebuffs:UpdateSize(startIndex - 1)
+        raidDebuffs:UpdateSize(startIndex - 1)
         for i = startIndex, 3 do
-            self.indicators.raidDebuffs[i].index = nil
+            raidDebuffs[i].index = nil
         end
 
         -- update glow
-        if not indicatorBooleans["raidDebuffs"] then
+        if not raidDebuffsFirstOnly then
             if topGlowType and topGlowType ~= "None" then
                 -- to make sure top glow has highest priority
-                self._debuffs_glow_current[topGlowType] = topGlowOptions
+                debuffsGlowCurrent[topGlowType] = topGlowOptions
             end
-            for t, o in pairs(self._debuffs_glow_current) do
-                self.indicators.raidDebuffs:ShowGlow(t, o, true)
+            for t, o in pairs(debuffsGlowCurrent) do
+                raidDebuffs:ShowGlow(t, o, true)
             end
-            for t, _ in pairs(self._debuffs_glow_cache) do
-                if not self._debuffs_glow_current[t] then
-                    self.indicators.raidDebuffs:HideGlow(t)
-                    self._debuffs_glow_cache[t] = nil
+            for t, _ in pairs(debuffsGlowCache) do
+                if not debuffsGlowCurrent[t] then
+                    raidDebuffs:HideGlow(t)
+                    debuffsGlowCache[t] = nil
                 end
             end
-            wipe(self._debuffs_glow_current)
+            wipe(debuffsGlowCurrent)
         else
-            self.indicators.raidDebuffs:ShowGlow(topGlowType, topGlowOptions)
+            raidDebuffs:ShowGlow(topGlowType, topGlowOptions)
         end
     else
-        self.indicators.raidDebuffs:Hide()
+        indicators.raidDebuffs:Hide()
     end
 
     -- update debuffs
     startIndex = 1
-    if enabledIndicators["debuffs"] then
+    if debuffsOn then
+        --! WotLK perf: indicators.debuffs и indicatorNums["debuffs"] читались по
+        --! четыре-пять раз на КАЖДЫЙ показанный дебафф в двух циклах ниже.
+        local debuffsInd = indicators.debuffs
+        local debuffsNum = indicatorNums["debuffs"]
         -- bigDebuffs first
-        for debuffIndex, refreshing in pairs(self._debuffs_big) do
+        for debuffIndex, refreshing in pairs(debuffsBig) do
             --! WotLK perf: native UnitDebuff signature (see main scan loop)
             local name, _, icon, count, debuffType, duration, expirationTime, _, _, _, spellId = UnitDebuff(unit, debuffIndex)
-            if name and startIndex <= indicatorNums["debuffs"] then
+            if name and startIndex <= debuffsNum then
+                local ind = debuffsInd[startIndex]
                 -- start, duration, debuffType, texture, count, refreshing
-                self.indicators.debuffs[startIndex]:SetCooldown(expirationTime - duration, duration, debuffType or "", icon, count, refreshing, true)
-                self.indicators.debuffs[startIndex].index = debuffIndex -- NOTE: for tooltip
-                self.indicators.debuffs[startIndex].spellId = spellId -- NOTE: for blacklist
+                ind:SetCooldown(expirationTime - duration, duration, debuffType or "", icon, count, refreshing, true)
+                ind.index = debuffIndex -- NOTE: for tooltip
+                ind.spellId = spellId -- NOTE: for blacklist
                 startIndex = startIndex + 1
             end
         end
         -- then normal debuffs
-        for debuffIndex, refreshing in pairs(self._debuffs_normal) do
+        for debuffIndex, refreshing in pairs(debuffsNormal) do
             --! WotLK perf: native UnitDebuff signature (see main scan loop)
             local name, _, icon, count, debuffType, duration, expirationTime, _, _, _, spellId = UnitDebuff(unit, debuffIndex)
-            if name and startIndex <= indicatorNums["debuffs"] then
+            if name and startIndex <= debuffsNum then
+                local ind = debuffsInd[startIndex]
                 -- start, duration, debuffType, texture, count, refreshing
-                self.indicators.debuffs[startIndex]:SetCooldown(expirationTime - duration, duration, debuffType or "", icon, count, refreshing)
-                self.indicators.debuffs[startIndex].index = debuffIndex -- NOTE: for tooltip
-                self.indicators.debuffs[startIndex].spellId = spellId -- NOTE: for blacklist
+                ind:SetCooldown(expirationTime - duration, duration, debuffType or "", icon, count, refreshing)
+                ind.index = debuffIndex -- NOTE: for tooltip
+                ind.spellId = spellId -- NOTE: for blacklist
                 startIndex = startIndex + 1
             end
         end
     end
 
     -- update debuffs
-    self.indicators.debuffs:UpdateSize(startIndex - 1)
+    --! WotLK perf: indicators.debuffs читался в этом хвосте одиннадцать раз (десять
+    --! итераций очистки плюс UpdateSize).
+    local debuffsIndicator = indicators.debuffs
+    debuffsIndicator:UpdateSize(startIndex - 1)
     for i = startIndex, 10 do
-        self.indicators.debuffs[i].index = nil
-        self.indicators.debuffs[i].spellId = nil
+        local ind = debuffsIndicator[i]
+        ind.index = nil
+        ind.spellId = nil
     end
 
     -- update dispels
     if F.UnitInGroup(unit) or UnitIsFriend("player", unit) then
-        self.indicators.dispels:SetDispels(self._debuffs_dispel)
+        indicators.dispels:SetDispels(debuffsDispel)
     end
 
     -- user created indicators
     I.ShowCustomIndicators(self, "debuff")
 
     -- hide ws
-    if enabledIndicators["powerWordShield"] then
+    if pwsOn then
         if not wsFound then
-            self.indicators.powerWordShield:SetWeakenedSoulCooldown()
+            indicators.powerWordShield:SetWeakenedSoulCooldown()
         end
     end
 
     -- update debuffs_cache
-    for auraInstanceID, expirationTime in pairs(self._debuffs_cache) do
+    --! WotLK perf: GetTime() is constant for the whole frame, so calling it once per
+    --! cached aura was one C call per entry per UNIT_AURA per unit for no new answer.
+    local now = GetTime()
+    for auraInstanceID, expirationTime in pairs(debuffsCache) do
         -- lost or expired
-        if not self._debuffs_current[auraInstanceID] or (expirationTime ~= 0 and GetTime() >= expirationTime) then -- expirationTime == 0: no duration
-            self._debuffs_cache[auraInstanceID] = nil
-            self._debuffs_count_cache[auraInstanceID] = nil
+        if not debuffsCurrent[auraInstanceID] or (expirationTime ~= 0 and now >= expirationTime) then -- expirationTime == 0: no duration
+            debuffsCache[auraInstanceID] = nil
+            debuffsCountCache[auraInstanceID] = nil
         end
     end
 
-    wipe(self._debuffs_current)
-    wipe(self._debuffs_normal)
-    wipe(self._debuffs_big)
-    wipe(self._debuffs_dispel)
-    wipe(self._debuffs_raid)
-    wipe(self._debuffs_raid_refreshing)
-    wipe(self._debuffs_raid_orders)
+    wipe(debuffsCurrent)
+    wipe(debuffsNormal)
+    wipe(debuffsBig)
+    wipe(debuffsDispel)
+    wipe(debuffsRaid)
+    wipe(debuffsRaidRefreshing)
+    wipe(debuffsRaidOrders)
     -- wipe(self._debuffs_raid_shown)
 end
 
@@ -1438,9 +1782,10 @@ end
 -- buffs
 -------------------------------------------------
 local function UnitButton_UpdateBuffs(self)
-    local unit = self.states.displayedUnit
+    local states = self.states
+    local unit = states.displayedUnit
 
-    self.states.BGFlag = nil
+    states.BGFlag = nil
 
     -- user created indicators
     I.ResetCustomIndicators(self, "buff")
@@ -1448,14 +1793,42 @@ local function UnitButton_UpdateBuffs(self)
     local refreshing = false
     local defensiveFound, externalFound, allFound, drinkingFound, pwsFound = 1, 1, 1, false, false
 
+    --! WotLK perf: то же, что в UnitButton_UpdateDebuffs - всё неизменное поднято
+    --! перед циклом на сорок итераций. Обоснование неизменности там же: таблицы
+    --! Cell.vars.* переписываются только колбэками настроек, enabledIndicators и
+    --! indicatorNums - только из UpdateIndicators, self._buffs_* создаются один раз
+    --! в InitAuraTables и дальше только wipe'аются.
+    local vars = Cell.vars
+    local iconAnimation = vars.iconAnimation
+
+    local indicators = self.indicators
+    local buffsCache = self._buffs_cache
+    local buffsCountCache = self._buffs_count_cache
+    local buffsCurrent = self._buffs_current
+
+    local defensiveOn = enabledIndicators["defensiveCooldowns"]
+    local externalOn = enabledIndicators["externalCooldowns"]
+    local allOn = enabledIndicators["allCooldowns"]
+    local statusTextOn = enabledIndicators["statusText"]
+    local pwsOn = enabledIndicators["powerWordShield"]
+    local pwsMineOnly = indicatorBooleans["powerWordShield"]
+    local defensiveNum = indicatorNums["defensiveCooldowns"]
+    local externalNum = indicatorNums["externalCooldowns"]
+    local allNum = indicatorNums["allCooldowns"]
+
     for i = 1, 40 do
         --! WotLK perf: direct native UnitBuff (3.3.5 signature: name, rank,
         --! icon, count, debuffType, duration, expirationTime, caster,
         --! isStealable, shouldConsolidate, spellId) instead of the
-        --! Cell.UnitBuff translation wrapper. arg16 (position 12+) does not
-        --! exist on 3.3.5 and stays nil - identical to the old wrapper,
-        --! which also always returned nil there.
-        local name, _, icon, count, debuffType, duration, expirationTime, source, _, _, spellId, arg16 = UnitBuff(unit, i)
+        --! Cell.UnitBuff translation wrapper.
+        --! WotLK fix: a 12th value was taken here and handed to
+        --! I.UpdateCustomIndicators. It was retail's UnitAura return #16 (the
+        --! aura's first effect value); 3.3.5 stops at spellId (кодекс: 11
+        --! returns), so it was always nil, and Custom_Classic.lua declares only
+        --! the 11 parameters up to castByMe with no vararg - the callee could
+        --! not read it even on retail. Dropped: one dead register plus one dead
+        --! stack push per buff per unit per aura update.
+        local name, _, icon, count, debuffType, duration, expirationTime, source, _, _, spellId = UnitBuff(unit, i)
         if not name then
             break
         end
@@ -1463,99 +1836,129 @@ local function UnitButton_UpdateBuffs(self)
         local auraInstanceID = GetAuraInstanceID(source, spellId) --! WotLK fix/perf: was '(source or "")..spellId' - collision-prone + string churn
 
         if duration then
-            if Cell.vars.iconAnimation == "duration" then
-                local timeIncreased = self._buffs_cache[auraInstanceID] and (expirationTime - self._buffs_cache[auraInstanceID] >= 0.5) or false
-                local countIncreased = self._buffs_count_cache[auraInstanceID] and (count > self._buffs_count_cache[auraInstanceID]) or false
+            --! WotLK perf: start считался до четырёх раз за итерацию; кэши читались
+            --! по два-три раза.
+            local start = expirationTime - duration
+            local cachedExpiration = buffsCache[auraInstanceID]
+            local cachedCount = buffsCountCache[auraInstanceID]
+
+            if iconAnimation == "duration" then
+                local timeIncreased = cachedExpiration and (expirationTime - cachedExpiration >= 0.5) or false
+                local countIncreased = cachedCount and (count > cachedCount) or false
                 refreshing = timeIncreased or countIncreased
-            elseif Cell.vars.iconAnimation == "stack" then
-                refreshing = self._buffs_count_cache[auraInstanceID] and (count > self._buffs_count_cache[auraInstanceID]) or false
+            elseif iconAnimation == "stack" then
+                refreshing = cachedCount and (count > cachedCount) or false
             else
                 refreshing = false
             end
 
+            --! WotLK perf: the three cooldown indicators used to ask the same two
+            --! questions up to four times per buff per unit - allCooldowns repeated
+            --! both lookups that defensiveCooldowns and externalCooldowns had just
+            --! made. Ask once. The order below reproduces the original call pattern
+            --! exactly when only allCooldowns is on (external first, defensive only
+            --! if external missed), so no configuration pays more than it used to.
+            local isDefensive, isExternal
+            if defensiveOn then
+                isDefensive = I.IsDefensiveCooldown(name, spellId)
+            end
+            if externalOn or allOn then
+                isExternal = I.IsExternalCooldown(name, spellId, source, unit)
+            end
+            if allOn and not isExternal and not defensiveOn then
+                isDefensive = I.IsDefensiveCooldown(name, spellId)
+            end
+
             -- defensiveCooldowns
-            if enabledIndicators["defensiveCooldowns"] and I.IsDefensiveCooldown(name, spellId) and defensiveFound <= indicatorNums["defensiveCooldowns"] then
+            if defensiveOn and isDefensive and defensiveFound <= defensiveNum then
                 -- start, duration, debuffType, texture, count, refreshing
-                self.indicators.defensiveCooldowns[defensiveFound]:SetCooldown(expirationTime - duration, duration, nil, icon, count, refreshing)
+                indicators.defensiveCooldowns[defensiveFound]:SetCooldown(start, duration, nil, icon, count, refreshing)
                 defensiveFound = defensiveFound + 1
             end
 
             -- externalCooldowns
-            if enabledIndicators["externalCooldowns"] and I.IsExternalCooldown(name, spellId, source, unit) and externalFound <= indicatorNums["externalCooldowns"] then
+            if externalOn and isExternal and externalFound <= externalNum then
                 -- start, duration, debuffType, texture, count, refreshing
-                self.indicators.externalCooldowns[externalFound]:SetCooldown(expirationTime - duration, duration, nil, icon, count, refreshing)
+                indicators.externalCooldowns[externalFound]:SetCooldown(start, duration, nil, icon, count, refreshing)
                 externalFound = externalFound + 1
             end
 
             -- allCooldowns
-            if enabledIndicators["allCooldowns"] and (I.IsExternalCooldown(name, spellId, source, unit) or I.IsDefensiveCooldown(name, spellId)) and allFound <= indicatorNums["allCooldowns"] then
+            if allOn and (isExternal or isDefensive) and allFound <= allNum then
                 -- start, duration, debuffType, texture, count, refreshing
-                self.indicators.allCooldowns[allFound]:SetCooldown(expirationTime - duration, duration, nil, icon, count, refreshing)
+                indicators.allCooldowns[allFound]:SetCooldown(start, duration, nil, icon, count, refreshing)
                 allFound = allFound + 1
             end
 
             -- drinking
-            if enabledIndicators["statusText"] and I.IsDrinking(name) then
-                if not self.indicators.statusText:GetStatus() then
-                    self.indicators.statusText:SetStatus("DRINKING")
-                    self.indicators.statusText:Show()
+            if statusTextOn and I.IsDrinking(name) then
+                local statusText = indicators.statusText
+                if not statusText:GetStatus() then
+                    statusText:SetStatus("DRINKING")
+                    statusText:Show()
                 end
                 drinkingFound = true
             end
 
             -- user created indicators
-            I.UpdateCustomIndicators(self, "buff", spellId, name, expirationTime - duration, duration, nil, icon, count, refreshing, source == "player" or source == "pet", arg16)
+            I.UpdateCustomIndicators(self, "buff", spellId, name, start, duration, nil, icon, count, refreshing, source == "player" or source == "pet")
 
             -- check BG flags for statusIcon
             if spellId == 301091 then
-                self.states.BGFlag = "alliance"
+                states.BGFlag = "alliance"
             end
             if spellId == 301089 then
-                self.states.BGFlag = "horde"
+                states.BGFlag = "horde"
             end
 
-            if enabledIndicators["powerWordShield"] and IsPowerWordShield(spellId, name) and (not indicatorBooleans["powerWordShield"] or source == "player") then
+            --! WotLK perf: дешёвый гейт вперёд. Оба операнда без побочных эффектов,
+            --! так что порядок эквивалентен, но табличный лукап и сравнение строки
+            --! отсеивают чужие щиты до вызова функции, а не после.
+            if pwsOn and (not pwsMineOnly or source == "player") and IsPowerWordShield(spellId, name) then
                 pwsFound = true
-                self.indicators.powerWordShield:SetShieldCooldown(expirationTime - duration, duration)
+                indicators.powerWordShield:SetShieldCooldown(start, duration)
             end
 
-            self._buffs_current[auraInstanceID] = i
-            self._buffs_cache[auraInstanceID] = expirationTime
-            self._buffs_count_cache[auraInstanceID] = count
+            buffsCurrent[auraInstanceID] = i
+            buffsCache[auraInstanceID] = expirationTime
+            buffsCountCache[auraInstanceID] = count
         end
     end
 
     -- update defensiveCooldowns
-    self.indicators.defensiveCooldowns:UpdateSize(defensiveFound - 1)
+    indicators.defensiveCooldowns:UpdateSize(defensiveFound - 1)
 
     -- update externalCooldowns
-    self.indicators.externalCooldowns:UpdateSize(externalFound - 1)
+    indicators.externalCooldowns:UpdateSize(externalFound - 1)
 
     -- update allCooldowns
-    self.indicators.allCooldowns:UpdateSize(allFound - 1)
+    indicators.allCooldowns:UpdateSize(allFound - 1)
 
     -- hide drinking
-    if not drinkingFound and self.indicators.statusText:GetStatus() == "DRINKING" then
+    if not drinkingFound and indicators.statusText:GetStatus() == "DRINKING" then
         -- self.indicators.statusText:Hide()
-        self.indicators.statusText:SetStatus()
+        indicators.statusText:SetStatus()
     end
 
     -- hide pws
-    if enabledIndicators["powerWordShield"] then
+    if pwsOn then
         if not pwsFound then
-            self.indicators.powerWordShield:SetShieldCooldown()
+            indicators.powerWordShield:SetShieldCooldown()
         end
     end
 
     -- update buffs_cache
-    for auraInstanceID, expirationTime in pairs(self._buffs_cache) do
+    --! WotLK perf: one GetTime() for the sweep instead of one per cached aura (see
+    --! the matching debuff sweep).
+    local now = GetTime()
+    for auraInstanceID, expirationTime in pairs(buffsCache) do
         -- lost or expired
-        if not self._buffs_current[auraInstanceID] or (expirationTime ~= 0 and GetTime() >= expirationTime) then
-            self._buffs_cache[auraInstanceID] = nil
-            self._buffs_count_cache[auraInstanceID] = nil
+        if not buffsCurrent[auraInstanceID] or (expirationTime ~= 0 and now >= expirationTime) then
+            buffsCache[auraInstanceID] = nil
+            buffsCountCache[auraInstanceID] = nil
         end
     end
-    wipe(self._buffs_current)
+    wipe(buffsCurrent)
 
     I.ShowCustomIndicators(self, "buff")
 end
@@ -1619,70 +2022,84 @@ local daInfo = {} -- Divine Aegis
 local absorbInfos = {}
 
 local function UnitButton_UpdateHealthStates(self, diff)
-    local unit = self.states.displayedUnit
-    local guid = self.states.guid
+    --! WotLK perf: `self.states` is resolved once. This function runs on every
+    --! UNIT_HEALTH and UNIT_MAXHEALTH - broadcast to every button, since 3.3.5 has
+    --! no RegisterUnitEvent - plus the 0.25s poll, and it used to re-resolve the
+    --! same two-level path twenty times per call. The table itself is only ever
+    --! created once, in CellUnitButton_OnLoad, so the reference cannot go stale
+    --! across the status-text and status-icon calls below.
+    local states = self.states
+    local unit = states.displayedUnit
+    local guid = states.guid
 
     local health = UnitHealth(unit) + (diff or 0)
     local healthMax = UnitHealthMax(unit)
     health = min(health, healthMax) --! diff
 
-    self.states.health = health
-    self.states.healthMax = healthMax
+    states.health = health
+    states.healthMax = healthMax
     if guid then
         local total = 0
-        if absorbInfos[guid] then
-             for spellName, amount in pairs(absorbInfos[guid]) do
+        local absorbs = absorbInfos[guid] --! WotLK perf: one lookup, not two
+        if absorbs then
+             for spellName, amount in pairs(absorbs) do
                  total = total + amount
              end
         end
-        self.states.totalAbsorbs = total
-        -- WotLK 3.3.5a: Heal absorbs don't exist in WotLK (added in Cataclysm+)
-        -- Only shield absorbs (like PW:S) exist, so healAbsorbs should always be 0
-        self.states.healAbsorbs = 0
+        states.totalAbsorbs = total
     else
-        self.states.totalAbsorbs = 0
-        self.states.healAbsorbs = 0
+        states.totalAbsorbs = 0
     end
+    -- WotLK 3.3.5a: Heal absorbs don't exist in WotLK (added in Cataclysm+)
+    -- Only shield absorbs (like PW:S) exist, so healAbsorbs should always be 0
+    --! WotLK perf: обе ветви писали в states.healAbsorbs один и тот же ноль -
+    --! запись вынесена за if. Значение и порядок относительно остальных записей
+    --! сохранены, между ветвями и этой строкой ничего не читает healAbsorbs.
+    states.healAbsorbs = 0
 
     if healthMax == 0 then
-        self.states.healthPercent = 0
+        states.healthPercent = 0
     else
-        self.states.healthPercent = health / healthMax
+        states.healthPercent = health / healthMax
     end
 
-    self.states.wasDead = self.states.isDead
-    self.states.isDead = health == 0
-    if self.states.wasDead ~= self.states.isDead then
+    states.wasDead = states.isDead
+    states.isDead = health == 0
+    if states.wasDead ~= states.isDead then
         UnitButton_UpdateStatusText(self)
         I.UpdateStatusIcon_Resurrection(self)
-        if not self.states.isDead then
-            self.states.hasSoulstone = nil
+        if not states.isDead then
+            states.hasSoulstone = nil
             I.UpdateStatusIcon(self)
         end
     end
 
-    self.states.wasDeadOrGhost = self.states.isDeadOrGhost
-    self.states.isDeadOrGhost = UnitIsDeadOrGhost(unit)
-    if self.states.wasDeadOrGhost ~= self.states.isDeadOrGhost then
+    states.wasDeadOrGhost = states.isDeadOrGhost
+    states.isDeadOrGhost = UnitIsDeadOrGhost(unit)
+    if states.wasDeadOrGhost ~= states.isDeadOrGhost then
         I.UpdateStatusIcon_Resurrection(self)
         UnitButton_UpdateHealthColor(self)
     end
 
+    --! WotLK perf: indicators.healthText - три чтения двухуровневого пути в трёх
+    --! ветвях; states.totalAbsorbs только что записан выше, берём локал.
+    local healthText = self.indicators.healthText
     if enabledIndicators["healthText"] then -- and not self.states.isDeadOrGhost then
-        self.indicators.healthText:SetValue(health, healthMax, self.states.totalAbsorbs, 0)
-        self.indicators.healthText:Show()
+        healthText:SetValue(health, healthMax, states.totalAbsorbs, 0)
+        healthText:Show()
     else
-        self.indicators.healthText:Hide()
+        healthText:Hide()
     end
 end
 
 local function UnitButton_UpdatePowerStates(self)
-    local unit = self.states.displayedUnit
+    local states = self.states --! WotLK perf: see UnitButton_UpdateHealthStates
+    local unit = states.displayedUnit
     if not unit then return end
 
-    self.states.power = UnitPower(unit)
-    self.states.powerMax = UnitPowerMax(unit)
-    if self.states.powerMax <= 0 then self.states.powerMax = 1 end
+    states.power = UnitPower(unit)
+    states.powerMax = UnitPowerMax(unit)
+    if states.powerMax <= 0 then states.powerMax = 1 end
 end
 
 -------------------------------------------------
@@ -1841,7 +2258,12 @@ end
 local function ShowPowerBar(b)
     b.widgets.powerBar:Show()
     b.widgets.powerBarLoss:Show()
-    b.widgets.gapTexture:SetShown(CELL_BORDER_SIZE ~= 0)
+    --! WotLK fix: SetShown нет на 3.3.5, шим WidgetAPI удалён — нативная пара.
+    if CELL_BORDER_SIZE ~= 0 then
+        b.widgets.gapTexture:Show()
+    else
+        b.widgets.gapTexture:Hide()
+    end
 
     P.ClearPoints(b.widgets.healthBar)
     P.ClearPoints(b.widgets.powerBar)
@@ -1935,6 +2357,40 @@ UnitButton_UpdateRole = function(self)
     end
 end
 
+--! WotLK fix: общее тело "роль юнита изменилась". Источников теперь два:
+--! асинхронный LibGroupInfo (конец файла - инспект дошёл, сменился дуал-спек) и
+--! новое PLAYER_ROLES_ASSIGNED из Core_Wrath.lua (роль выдал интерфейс
+--! подземелий). Тело было только в LGI-колбэке, поэтому второй путь пришлось бы
+--! копировать - вместо этого один локал на двоих. Невидимые кнопки не считаем:
+--! OnShow сам ставит _updateRequired/_powerUpdateRequired.
+local function UnitButton_RoleChanged(b)
+    UnitButton_UpdateRole(b)
+
+    if not (b:IsVisible() or b.isPreview) then
+        -- recompute power filters on next OnShow (same flag the
+        -- normal update path uses)
+        b._powerUpdateRequired = 1
+        return
+    end
+
+    b._shouldShowPowerText = ShouldShowPowerText(b)
+    b._shouldShowPowerBar = ShouldShowPowerBar(b)
+    CheckPowerEventRegistration(b)
+
+    if b._shouldShowPowerText then
+        UnitButton_UpdatePowerTextColor(b)
+        UnitButton_UpdatePowerText(b)
+    else
+        b.indicators.powerText:Hide()
+    end
+
+    if b._shouldShowPowerBar then
+        ShowPowerBar(b)
+    else
+        HidePowerBar(b)
+    end
+end
+
 UnitButton_UpdateLeader = function(self, event)
     local unit = self.states.unit
     if not unit then return end
@@ -1947,9 +2403,9 @@ UnitButton_UpdateLeader = function(self, event)
             return
         end
 
-        local isLeader = UnitIsGroupLeader(unit)
+        local isLeader = Cell.UnitIsGroupLeader(unit)
         self.states.isLeader = isLeader
-        local isAssistant = UnitIsGroupAssistant(unit) and IsInRaid()
+        local isAssistant = Cell.UnitIsGroupAssistant(unit) and IsInRaid()
         self.states.isAssistant = isAssistant
 
         leaderIcon:SetIcon(isLeader, isAssistant)
@@ -1964,15 +2420,19 @@ local function UnitButton_UpdatePlayerRaidIcon(self)
 
     local playerRaidIcon = self.indicators.playerRaidIcon
 
+    --! WotLK perf: то же, что в UnitButton_UpdateTargetRaidIcon следом - C-вызов
+    --! делался и при выключенном индикаторе, результат отбрасывался ветвью else.
+    --! Здесь нет конкатенации, поэтому экономия меньше, но событие то же самое.
+    if not enabledIndicators["playerRaidIcon"] then
+        playerRaidIcon:Hide()
+        return
+    end
+
     local index = GetRaidTargetIndex(unit)
 
-    if enabledIndicators["playerRaidIcon"] then
-        if index then
-            SetRaidTargetIconTexture(playerRaidIcon.tex, index)
-            playerRaidIcon:Show()
-        else
-            playerRaidIcon:Hide()
-        end
+    if index then
+        SetRaidTargetIconTexture(playerRaidIcon.tex, index)
+        playerRaidIcon:Show()
     else
         playerRaidIcon:Hide()
     end
@@ -1984,15 +2444,24 @@ local function UnitButton_UpdateTargetRaidIcon(self)
 
     local targetRaidIcon = self.indicators.targetRaidIcon
 
+    --! WotLK perf: проверка индикатора поднята выше конкатенации и C-вызова.
+    --! `unit.."target"` в Lua 5.1 - это не склейка буферов, а хеширование строки и
+    --! поиск в глобальной таблице интернированных строк; следом шёл GetRaidTargetIndex.
+    --! Обе операции делались и тогда, когда индикатор выключен, а весь результат
+    --! отбрасывался ветвью else. Функция идёт на каждое UNIT_TARGET (любой в группе
+    --! сменил цель) и на RAID_TARGET_UPDATE - на 3.3.5 нет RegisterUnitEvent, событие
+    --! доходит до каждой зарегистрированной кнопки. Ветвь Hide() сохранена: при
+    --! выключенном индикаторе поведение прежнее.
+    if not enabledIndicators["targetRaidIcon"] then
+        targetRaidIcon:Hide()
+        return
+    end
+
     local index = GetRaidTargetIndex(unit.."target")
 
-    if enabledIndicators["targetRaidIcon"] then
-        if index then
-            SetRaidTargetIconTexture(targetRaidIcon.tex, index)
-            targetRaidIcon:Show()
-        else
-            targetRaidIcon:Hide()
-        end
+    if index then
+        SetRaidTargetIconTexture(targetRaidIcon.tex, index)
+        targetRaidIcon:Show()
     else
         targetRaidIcon:Hide()
     end
@@ -2031,8 +2500,13 @@ end
 UnitButton_UpdatePowerText = function(self)
     if not self._shouldShowPowerText then return end
 
-    if self.states.powerMax and self.states.power and not self.states.isDeadOrGhost then
-        self.indicators.powerText:SetValue(self.states.power, self.states.powerMax)
+    --! WotLK perf: self.states индексировался четыре раза за проход, стало один.
+    --! Функция идёт на каждое UNIT_POWER/UNIT_MANA каждой кнопки: на 3.3.5 нет
+    --! RegisterUnitEvent, событие доходит до всех зарегистрированных фреймов.
+    local states = self.states
+    local power, powerMax = states.power, states.powerMax
+    if powerMax and power and not states.isDeadOrGhost then
+        self.indicators.powerText:SetValue(power, powerMax)
     else
         self.indicators.powerText:Hide()
     end
@@ -2044,29 +2518,42 @@ UnitButton_UpdatePowerTextColor = function(self)
     local unit = self.states.displayedUnit
     if not unit then return end
 
-    if indicatorColors["powerText"][1] == "power_color" then
-        self.indicators.powerText:SetColor(F.GetPowerColor(unit))
-    elseif indicatorColors["powerText"][1] == "class_color" then
-        self.indicators.powerText:SetColor(F.GetUnitClassColor(unit))
+    --! WotLK perf: indicatorColors["powerText"] - два лукапа в цепочке ветвей плюс
+    --! третий в else, стало один; self.indicators.powerText поднят заодно.
+    local colors = indicatorColors["powerText"]
+    local powerText = self.indicators.powerText
+    if colors[1] == "power_color" then
+        powerText:SetColor(F.GetPowerColor(unit))
+    elseif colors[1] == "class_color" then
+        powerText:SetColor(F.GetUnitClassColor(unit))
     else
-        self.indicators.powerText:SetColor(unpack(indicatorColors["powerText"][2]))
+        powerText:SetColor(unpack(colors[2]))
     end
 end
 
 UnitButton_UpdatePowerMax = function(self)
-    if not (self._shouldShowPowerBar and self.states.powerMax) then return end
+    --! WotLK perf: powerMax читался дважды (в guard'е и в теле). Проверка
+    --! _shouldShowPowerBar оставлена первой отдельным if'ом: при скрытой полосе
+    --! мощи это ноль индексаций таблиц, как и было со сцепкой через and.
+    if not self._shouldShowPowerBar then return end
+    local powerMax = self.states.powerMax
+    if not powerMax then return end
 
     if barAnimationType == "Smooth" then
-        self.widgets.powerBar:SetMinMaxSmoothedValue(0, self.states.powerMax)
+        self.widgets.powerBar:SetMinMaxSmoothedValue(0, powerMax)
     else
-        self.widgets.powerBar:SetMinMaxValues(0, self.states.powerMax)
+        self.widgets.powerBar:SetMinMaxValues(0, powerMax)
     end
 end
 
 UnitButton_UpdatePower = function(self)
-    if not (self._shouldShowPowerBar and self.states.power) then return end
+    --! WotLK perf: states.power читался дважды - это самый частый из power-путей.
+    --! Порядок проверок сохранён, см. UnitButton_UpdatePowerMax выше.
+    if not self._shouldShowPowerBar then return end
+    local power = self.states.power
+    if not power then return end
 
-    self.widgets.powerBar:SetBarValue(self.states.power)
+    self.widgets.powerBar:SetBarValue(power)
 end
 
 UnitButton_UpdatePowerType = function(self)
@@ -2089,11 +2576,16 @@ UnitButton_UpdatePowerType = function(self)
     self.widgets.powerBarLoss:SetVertexColor(lossR, lossG, lossB)
 end
 
-local function UnitButton_UpdateHealthMax(self)
+local function UnitButton_UpdateHealthMax(self, statesReady)
     local unit = self.states.displayedUnit
     if not unit then return end
 
-    UnitButton_UpdateHealthStates(self)
+    --! WotLK fix/perf: UNIT_MAXHEALTH/full-update callers immediately repaint
+    --! health too. Let them reuse one authoritative UnitHealth/UnitHealthMax/
+    --! absorb snapshot instead of rebuilding the same state twice in sequence.
+    if not statesReady then
+        UnitButton_UpdateHealthStates(self)
+    end
 
     if barAnimationType == "Smooth" then
         self.widgets.healthBar:SetMinMaxSmoothedValue(0, self.states.healthMax)
@@ -2101,44 +2593,54 @@ local function UnitButton_UpdateHealthMax(self)
         self.widgets.healthBar:SetMinMaxValues(0, self.states.healthMax)
     end
 
-    if Cell.vars.useThresholdColor or Cell.vars.useFullColor then
-        UnitButton_UpdateHealthColor(self)
-    end
 end
 
-local function UnitButton_UpdateHealth(self, diff)
-    local unit = self.states.displayedUnit
+local function UnitButton_UpdateHealth(self, diff, statesReady)
+    --! WotLK perf: one resolve each for the states table and the health bar; both
+    --! were walked three to seven times per call, and this runs on every UNIT_HEALTH
+    --! for every button (no RegisterUnitEvent on 3.3.5) plus the 0.25s poll.
+    local states = self.states
+    local unit = states.displayedUnit
     if not unit then return end
 
-    UnitButton_UpdateHealthStates(self, diff)
-    local healthPercent = self.states.healthPercent
+    if not statesReady then
+        UnitButton_UpdateHealthStates(self, diff)
+    end
+    local healthPercent = states.healthPercent
+    local healthBar = self.widgets.healthBar
 
     if barAnimationType == "Flash" then
-        self.widgets.healthBar:SetValue(self.states.health)
-        local diff = healthPercent - (self.states.healthPercentOld or healthPercent)
-        if diff >= 0 or self.states.healthMax == 0 then
+        healthBar:SetValue(states.health)
+        local diff = healthPercent - (states.healthPercentOld or healthPercent)
+        if diff >= 0 or states.healthMax == 0 then
             B.HideFlash(self)
         elseif diff <= -0.05 and diff >= -1 then --! player (just joined) UnitHealthMax(unit) may be 1 ====> diff == -maxHealth
             B.ShowFlash(self, abs(diff))
         end
     else
-        self.widgets.healthBar:SetBarValue(self.states.health)
+        healthBar:SetBarValue(states.health)
     end
 
-    if Cell.vars.useThresholdColor or Cell.vars.useFullColor then
+    --! WotLK perf: Cell.vars читался дважды подряд (чтение глобала Cell плюс
+    --! хеш-лукап .vars каждый раз), а indicators.healthThresholds - в обеих ветвях
+    --! следующего if. Обе величины за время вызова не меняются: Cell.vars создаётся
+    --! один раз (Core_Wrath.lua:25), таблица indicators - при создании кнопки.
+    local vars = Cell.vars
+    if vars.useThresholdColor or vars.useFullColor then
         UnitButton_UpdateHealthColor(self)
     end
 
-    self.states.healthPercentOld = healthPercent
+    states.healthPercentOld = healthPercent
 
+    local healthThresholds = self.indicators.healthThresholds
     if enabledIndicators["healthThresholds"] then
-        self.indicators.healthThresholds:CheckThreshold(healthPercent)
+        healthThresholds:CheckThreshold(healthPercent)
     else
-        self.indicators.healthThresholds:Hide()
+        healthThresholds:Hide()
     end
 
     if CELL_FADE_OUT_HEALTH_PERCENT then
-        if self.states.inRange and healthPercent < CELL_FADE_OUT_HEALTH_PERCENT then
+        if states.inRange and healthPercent < CELL_FADE_OUT_HEALTH_PERCENT then
             A.FrameFadeIn(self, 0.25, self:GetAlpha(), 1)
         else
             A.FrameFadeOut(self, 0.25, self:GetAlpha(), CellDB["appearance"]["outOfRangeAlpha"])
@@ -2146,26 +2648,82 @@ local function UnitButton_UpdateHealth(self, diff)
     end
 end
 
-local function UnitButton_UpdateHealPrediction(self)
-    if not predictionEnabled then
-        self.widgets.incomingHeal:Hide()
+--! WotLK fix: heal prediction is a Cell-private LibHealComm consumer. Stock
+--! 3.3.5 has neither UnitGetIncomingHeals nor UNIT_HEAL_PREDICTION, and routing
+--! through either the embedded or standalone !!!ClassicAPI made Cell inherit
+--! foreign callback and filtering semantics. Direct casts/channels are counted
+--! to completion; only HoT/bomb healing is limited to the next three seconds.
+local HealComm = LibStub and LibStub:GetLibrary("LibHealComm-4.0", true)
+local HEALCOMM_OVERTIME_AND_BOMBS = HealComm and bit.bor(HealComm.HOT_HEALS, HealComm.BOMB_HEALS)
+
+local function UnitButton_UpdateHealPrediction(self, statesReady)
+    --! WotLK perf: widgets.incomingHeal читался пять раз (четыре ранних выхода плюс
+    --! запись), states - трижды. Функция вызывается из шести колбэков LibHealComm,
+    --! то есть на каждом старте, обновлении, задержке и остановке лечения в рейде.
+    local incomingHeal = self.widgets.incomingHeal
+
+    if not predictionEnabled or not HealComm then
+        incomingHeal:Hide()
         return
     end
 
-    local unit = self.states.displayedUnit
-    if not unit then return end
-
-    local value = UnitGetIncomingHeals(unit) or 0
-    -- print("[Cell Debug] Native API:", unit, "Value:", value)
-
-    if value == 0 then
-        self.widgets.incomingHeal:Hide()
+    local states = self.states
+    local unit = states.displayedUnit
+    local guid = unit and UnitGUID(unit)
+    if not guid then
+        incomingHeal:Hide()
         return
     end
 
-    UnitButton_UpdateHealthStates(self)
+    local casted = HealComm:GetHealAmount(guid, HealComm.CASTED_HEALS) or 0
+    local overtime = HealComm:GetHealAmount(
+        guid,
+        HEALCOMM_OVERTIME_AND_BOMBS,
+        GetTime() + 3
+    ) or 0
+    local value = floor((casted + overtime) * (HealComm:GetHealModifier(guid) or 1))
 
-    self.widgets.incomingHeal:SetValue(value / self.states.healthMax, self.states.healthPercent)
+    if value <= 0 then
+        incomingHeal:Hide()
+        return
+    end
+
+    if not statesReady then
+        UnitButton_UpdateHealthStates(self)
+    end
+
+    local healthMax = states.healthMax
+    if healthMax <= 0 then
+        incomingHeal:Hide()
+        return
+    end
+
+    incomingHeal:SetValue(value / healthMax, states.healthPercent)
+end
+
+--! WotLK fix: LibHealComm callback payloads already carry every affected target
+--! GUID. Update normal and spotlight Cell buttons directly instead of synthesizing
+--! a retail Frame event or walking all possible unit tokens on every callback.
+if HealComm then
+    local callbackOwner = {}
+
+    local function HealComm_TargetsChanged(_, casterGUID, spellID, healType, endTime, ...)
+        for i = 1, select("#", ...) do
+            local guid = select(i, ...)
+            F.HandleUnitButton("guid", guid, UnitButton_UpdateHealPrediction)
+        end
+    end
+
+    local function HealComm_TargetChanged(_, guid)
+        F.HandleUnitButton("guid", guid, UnitButton_UpdateHealPrediction)
+    end
+
+    HealComm.RegisterCallback(callbackOwner, "HealComm_HealStarted", HealComm_TargetsChanged)
+    HealComm.RegisterCallback(callbackOwner, "HealComm_HealUpdated", HealComm_TargetsChanged)
+    HealComm.RegisterCallback(callbackOwner, "HealComm_HealDelayed", HealComm_TargetsChanged)
+    HealComm.RegisterCallback(callbackOwner, "HealComm_HealStopped", HealComm_TargetsChanged)
+    HealComm.RegisterCallback(callbackOwner, "HealComm_ModifierChanged", HealComm_TargetChanged)
+    HealComm.RegisterCallback(callbackOwner, "HealComm_GUIDDisappeared", HealComm_TargetChanged)
 end
 
 UnitButton_UpdateAuras = function(self)
@@ -2179,20 +2737,73 @@ UnitButton_UpdateAuras = function(self)
     I.UpdateStatusIcon(self)
 end
 
+--! WotLK fix: у рейдовой рамки нет "своего" моба, а UnitThreatSituation(unit) без
+--! второго аргумента возвращает МАКСИМУМ по всем NPC, на которых у юнита есть
+--! угроза (это прямо написано в описании функции на 3.3.5). На любом бою с адами
+--! каждый, кто держит хоть одного ада, получает status 3 - отсюда жалоба "мигает
+--! просто весь рейд". Поэтому ищем конкретного моба: цель игрока, если она враждебна
+--! и жива; иначе цель цели - хилер целится в рейд, значит targettarget это тот, по
+--! кому рейд работает. Если моба нет вообще (город, никого не выбрано), возвращаем
+--! nil, и UpdateThreat честно откатывается на старое глобальное правило.
+--! Функция живёт в B (Cell.bFuncs), а не в локале файла: свободен ровно один слот
+--! из 200 (см. заметку у объявлений), а решение нужно ещё и снаружи - /cell debug
+--! threat печатает вердикт по тем же данным, что и рамки.
+function B.GetThreatMobUnit()
+    if UnitExists("target") and not UnitIsDead("target") and UnitCanAttack("player", "target") then
+        return "target"
+    end
+    if UnitExists("targettarget") and not UnitIsDead("targettarget") and UnitCanAttack("player", "targettarget") then
+        return "targettarget"
+    end
+end
+
 local function UnitButton_UpdateThreat(self)
     local unit = self.states.displayedUnit
     if not unit or not UnitExists(unit) then return end
 
-    local status = UnitThreatSituation(unit)
-    if status and status >= 1 then
-        if enabledIndicators["aggroBlink"] then
-            self.indicators.aggroBlink:ShowAggro(GetThreatStatusColor(status))
-        end
-        if enabledIndicators["aggroBorder"] then
-            self.indicators.aggroBorder:ShowAggro(GetThreatStatusColor(status))
-        end
+    local blink = enabledIndicators["aggroBlink"]
+    local border = enabledIndicators["aggroBorder"]
+    if not blink and not border then
+        --! WotLK perf: оба индикатора выключены - ни одного C-вызова угрозы.
+        self.indicators.aggroBlink:Hide()
+        self.indicators.aggroBorder:Hide()
+        return
+    end
+
+    local mob = B.GetThreatMobUnit()
+    local status, percent
+
+    if mob then
+        -- isTanking, status, scaledPercentage, rawPercentage = UnitDetailedThreatSituation(unit, mobUnit)
+        --! rawPercentage - процент от угрозы того, кто моба держит: 100 = вровень с ним.
+        local _, st, _, rawPercentage = UnitDetailedThreatSituation(unit, mob)
+        status, percent = st, rawPercentage or 0
+        --! nil здесь означает "у этого юнита на этом мобе угрозы нет" - и это НЕ повод
+        --! падать в глобальную ветку: именно она и подсвечивала весь рейд.
+    else
+        status = UnitThreatSituation(unit)
+        --! В этой ветке процентов не существует, есть только категория. status >= 1 -
+        --! это ровно "набрал 100% угрозы того, кто моба держит", поэтому нормализуем
+        --! к 100 и дальше сравниваем одинаково. Порог в глобальной ветке не работает -
+        --! показываем как раньше, чтобы без цели индикатор не потерять совсем.
+        percent = (status and status >= 1) and 100 or 0
+    end
+
+    --! Порог и "не показывать танков" - свои у каждого из двух индикаторов;
+    --! данные угрозы при этом добываются один раз на кнопку.
+    local isTank = self.states.role == "TANK"
+
+    if blink and percent > 0 and percent >= (indicatorNums["aggroBlink"] or 100)
+        and not (isTank and indicatorBooleans["aggroBlink"]) then
+        self.indicators.aggroBlink:ShowAggro(GetThreatStatusColor(status or 0))
     else
         self.indicators.aggroBlink:Hide()
+    end
+
+    if border and percent > 0 and percent >= (indicatorNums["aggroBorder"] or 100)
+        and not (isTank and indicatorBooleans["aggroBorder"]) then
+        self.indicators.aggroBorder:ShowAggro(GetThreatStatusColor(status or 0))
+    else
         self.indicators.aggroBorder:Hide()
     end
 end
@@ -2206,8 +2817,17 @@ local function UnitButton_UpdateThreatBar(self)
     local unit = self.states.displayedUnit
     if not unit or not UnitExists(unit) then return end
 
+    --! WotLK fix: моба берём тем же правилом, что и мигание с рамкой (см.
+    --! B.GetThreatMobUnit). Жёсткий "target" означал, что у хилера - который
+    --! целится в рейд, а не в босса - полоска угрозы не показывала вообще ничего.
+    local mob = B.GetThreatMobUnit()
+    if not mob then
+        self.indicators.aggroBar:Hide()
+        return
+    end
+
     -- isTanking, status, scaledPercentage, rawPercentage, threatValue = UnitDetailedThreatSituation(unit, mobUnit)
-    local _, status, scaledPercentage, rawPercentage = UnitDetailedThreatSituation(unit, "target")
+    local _, status, scaledPercentage, rawPercentage = UnitDetailedThreatSituation(unit, mob)
     if status then
         self.indicators.aggroBar:Show()
         self.indicators.aggroBar:SetSmoothedValue(scaledPercentage)
@@ -2215,6 +2835,85 @@ local function UnitButton_UpdateThreatBar(self)
     else
         self.indicators.aggroBar:Hide()
     end
+end
+
+--! WotLK fix: панель опций живёт выше этих функций и по правилам Lua 5.1 их локалы
+--! не видит (upvalue связывается по месту компиляции). Публикуем в B, чтобы смена
+--! порога или галки "не показывать танков" перерисовывала уже нарисованные рамки
+--! сразу, а не ждала следующего threat-события.
+B.UpdateThreat = UnitButton_UpdateThreat
+B.UpdateThreatBar = UnitButton_UpdateThreatBar
+
+--! WotLK perf: раньше UNIT_THREAT_LIST_UPDATE был зарегистрирован на КАЖДОЙ кнопке.
+--! Но arg1 у этого события - NPC, чей список угрозы изменился, а не юнит рейда
+--! (кодекс: "The unit whose threat list changed" + threatDelta), поэтому фильтр по
+--! states.displayedUnit его никогда не пропускал, и событие уходило в ветку else -
+--! то есть все 25-40 кнопок пересчитывали полоску угрозы на каждое событие любого
+--! моба: UnitDetailedThreatSituation + SetSmoothedValue на кнопку. На боях с адами
+--! это десятки полных проходов в секунду впустую.
+--! Держим одну центральную рамку: событие слушается один раз, проход по кнопкам -
+--! не чаще 5 раз в секунду. Первое событие после тишины обрабатывается сразу (мигание
+--! аггро опаздывать не должно), дальше окно 0.2 с, и если внутри окна события
+--! приходили - в конце делается один догоняющий проход.
+--! Это же единственное место, откуда мигание обновляется по ПРОЦЕНТУ: событие
+--! UNIT_THREAT_SITUATION_UPDATE приходит только на смену категории (0-3), а порог из
+--! настроек меряется в процентах и меняется внутри категории.
+--! Всё завёрнуто в do...end: локалы блока освобождают регистры на выходе и не съедают
+--! последний свободный слот из 200 в главном чанке файла (см. заметку у объявлений).
+do
+    local ticker = CreateFrame("Frame")
+    local nextAllowed, pending = 0, false
+
+    local function UpdateButtonThreat(b)
+        UnitButton_UpdateThreat(b)
+        UnitButton_UpdateThreatBar(b)
+    end
+
+    local function Refresh()
+        if not Cell.loaded then return end
+        --! Все три индикатора выключены - ни одного C-вызова и ни одного прохода.
+        if not (enabledIndicators["aggroBlink"] or enabledIndicators["aggroBorder"]
+            or enabledIndicators["aggroBar"]) then return end
+        F.IterateAllUnitButtons(UpdateButtonThreat, true)
+    end
+
+    ticker:Hide()
+    ticker:SetScript("OnUpdate", function(self)
+        if GetTime() < nextAllowed then return end
+        self:Hide()
+        pending = false
+        nextAllowed = GetTime() + 0.2
+        Refresh()
+    end)
+
+    function B.RequestThreatUpdate()
+        local now = GetTime()
+        if now >= nextAllowed then
+            nextAllowed = now + 0.2
+            Refresh()
+        elseif not pending then
+            --! События внутри окна не теряем: досиживаем окно на OnUpdate и делаем
+            --! ровно один проход. OnEvent на скрытой рамке работает, OnUpdate - нет,
+            --! поэтому Show/Hide это и есть выключатель таймера.
+            pending = true
+            ticker:Show()
+        end
+    end
+
+    ticker:RegisterEvent("UNIT_THREAT_LIST_UPDATE")
+    ticker:RegisterEvent("PLAYER_TARGET_CHANGED")
+    ticker:RegisterEvent("UNIT_TARGET")
+    --! Выход из боя: угрозы больше нет ни у кого, и один общий проход гарантированно
+    --! гасит мигание и полоски. Без этого можно застрять с подсвеченной рамкой, если
+    --! моб умер и threat-события на его смерть уже не пришли.
+    ticker:RegisterEvent("PLAYER_REGEN_ENABLED")
+    ticker:SetScript("OnEvent", function(_, event, unit)
+        --! UNIT_TARGET важен только когда цель сменил тот, в кого целимся мы сами:
+        --! его targettarget и становится мобом (см. B.GetThreatMobUnit). Остальные
+        --! UNIT_TARGET рейда на выбор моба не влияют.
+        if event == "UNIT_TARGET" and not UnitIsUnit(unit, "target") then return end
+        B.RequestThreatUpdate()
+    end)
 end
 
 local function UnitButton_UpdateCombatIcon(self)
@@ -2232,17 +2931,22 @@ end
 
 local IsInRange = F.IsInRange
 local function UnitButton_UpdateInRange(self)
-    local unit = self.states.displayedUnit
+    --! WotLK perf: one resolve of the states table, and the value just stored is
+    --! compared directly instead of being read back out of it. This is called from
+    --! the 0.25s tick on every button, so it is one of the few functions in the file
+    --! that runs whether or not anything actually happened.
+    local states = self.states
+    local unit = states.displayedUnit
     if not unit then return end
 
     local inRange = IsInRange(unit)
 
-    self.states.inRange = inRange
+    states.inRange = inRange
     if Cell.loaded then
-        if self.states.inRange ~= self.states.wasInRange then
+        if inRange ~= states.wasInRange then
             if inRange then
                 if CELL_FADE_OUT_HEALTH_PERCENT then
-                    if not self.states.healthPercent or self.states.healthPercent < CELL_FADE_OUT_HEALTH_PERCENT then
+                    if not states.healthPercent or states.healthPercent < CELL_FADE_OUT_HEALTH_PERCENT then
                         A.FrameFadeIn(self, 0.25, self:GetAlpha(), 1)
                     else
                         A.FrameFadeOut(self, 0.25, self:GetAlpha(), CellDB["appearance"]["outOfRangeAlpha"])
@@ -2254,7 +2958,7 @@ local function UnitButton_UpdateInRange(self)
                 A.FrameFadeOut(self, 0.25, self:GetAlpha(), CellDB["appearance"]["outOfRangeAlpha"])
             end
         end
-        self.states.wasInRange = inRange
+        states.wasInRange = inRange
         -- self:SetAlpha(inRange and 1 or CellDB["appearance"]["outOfRangeAlpha"])
     end
 end
@@ -2412,67 +3116,86 @@ end
 -------------------------------------------------
 -- shields
 -------------------------------------------------
-UnitButton_UpdateShieldAbsorbs = function(self)
-    local unit = self.states.displayedUnit
+UnitButton_UpdateShieldAbsorbs = function(self, statesReady)
+    --! WotLK perf: self.states / self.indicators / self.widgets поднимаются один раз.
+    --! Функция зовётся из _UpdateShield на каждом CLEU-событии щита (SPELL_AURA_*,
+    --! SPELL_ABSORBED и диффы здоровья), то есть в рейде десятки раз в секунду, а
+    --! self.states читался здесь девять раз, self.widgets - пять, self.indicators - пять.
+    --! Каждое чтение - индексация таблицы; поля кнопки за время вызова не меняются.
+    local states = self.states
+    local unit = states.displayedUnit
     if not unit then return end
 
-    UnitButton_UpdateHealthStates(self)
+    if not statesReady then
+        UnitButton_UpdateHealthStates(self)
+    end
 
-    if self.states.totalAbsorbs > 0 then
-        local shieldPercent = self.states.totalAbsorbs / self.states.healthMax
+    local indicators = self.indicators
+    local widgets = self.widgets
+
+    local totalAbsorbs = states.totalAbsorbs
+    if totalAbsorbs > 0 then
+        local healthMax = states.healthMax
+        local shieldPercent = totalAbsorbs / healthMax
 
         if enabledIndicators["shieldBar"] then
             if indicatorBooleans["shieldBar"] then
                 -- onlyShowOvershields
-                local overshieldPercent = (self.states.totalAbsorbs + self.states.health - self.states.healthMax) / self.states.healthMax
+                local overshieldPercent = (totalAbsorbs + states.health - healthMax) / healthMax
                 if overshieldPercent > 0 then
-                    self.indicators.shieldBar:Show()
-                    self.indicators.shieldBar:SetValue(overshieldPercent)
+                    indicators.shieldBar:Show()
+                    indicators.shieldBar:SetValue(overshieldPercent)
                 else
-                    self.indicators.shieldBar:Hide()
+                    indicators.shieldBar:Hide()
                 end
             else
-                self.indicators.shieldBar:Show()
-                self.indicators.shieldBar:SetValue(shieldPercent)
+                indicators.shieldBar:Show()
+                indicators.shieldBar:SetValue(shieldPercent)
             end
         else
-            self.indicators.shieldBar:Hide()
+            indicators.shieldBar:Hide()
         end
 
-        self.widgets.shieldBar:SetValue(shieldPercent, self.states.healthPercent)
+        widgets.shieldBar:SetValue(shieldPercent, states.healthPercent)
         UnitButton_UpdateHealAbsorbs(self, true)
     else
-        self.indicators.shieldBar:Hide()
-        self.widgets.shieldBar:Hide()
-        self.widgets.overShieldGlow:Hide()
-        self.widgets.shieldBarR:Hide()
-        self.widgets.overShieldGlowR:Hide()
+        indicators.shieldBar:Hide()
+        widgets.shieldBar:Hide()
+        widgets.overShieldGlow:Hide()
+        widgets.shieldBarR:Hide()
+        widgets.overShieldGlowR:Hide()
         UnitButton_UpdateHealAbsorbs(self, true)
     end
 end
 
 UnitButton_UpdateHealAbsorbs = function(self, skipStateUpdates)
+    --! WotLK perf: тот же приём, что выше. Функция вызывается из обеих ветвей
+    --! UnitButton_UpdateShieldAbsorbs, то есть ровно так же часто.
+    local widgets = self.widgets
+
     if not absorbEnabled then
-        if self.widgets.absorbsBar then
-            self.widgets.absorbsBar:Hide()
-            self.widgets.overAbsorbGlow:Hide()
+        if widgets.absorbsBar then
+            widgets.absorbsBar:Hide()
+            widgets.overAbsorbGlow:Hide()
         end
         return
     end
 
-    local unit = self.states.displayedUnit
+    local states = self.states
+    local unit = states.displayedUnit
     if not unit then return end
 
     if not skipStateUpdates then
         UnitButton_UpdateHealthStates(self)
     end
 
-    if self.states.healAbsorbs > 0 then
-        local absorbsPercent = self.states.healAbsorbs / self.states.healthMax
-        self.widgets.absorbsBar:SetValue(absorbsPercent, self.states.healthPercent)
+    local healAbsorbs = states.healAbsorbs
+    if healAbsorbs > 0 then
+        local absorbsPercent = healAbsorbs / states.healthMax
+        widgets.absorbsBar:SetValue(absorbsPercent, states.healthPercent)
     else
-        self.widgets.absorbsBar:Hide()
-        self.widgets.overAbsorbGlow:Hide()
+        widgets.absorbsBar:Hide()
+        widgets.overAbsorbGlow:Hide()
     end
 end
 
@@ -2498,7 +3221,12 @@ local DA_NAME = GetSpellInfo(47753) or "Divine Aegis"
 local PAK_NAME = GetSpellInfo(64413) or "Protection of Ancient Kings"
 
 local function UpdateShield(guid, max, resetMax)
-    local pws = absorbInfos[guid] and absorbInfos[guid][PWS_NAME] or 0
+    --! WotLK perf: absorbInfos[guid] спрашивался дважды подряд. Это самая
+    --! вызываемая функция пути абсорбов: её зовёт ConsumeAbsorb на каждое
+    --! событие урона по цели со щитом (в рейде - сотни в секунду), плюс все
+    --! ветви применения и снятия щита в обработчике CLEU.
+    local t = absorbInfos[guid]
+    local pws = t and t[PWS_NAME] or 0
     F.HandleUnitButton("guid", guid, _UpdateShield, pws, max, resetMax)
 end
 
@@ -2533,6 +3261,54 @@ local ABSORB_SPELLS = {
     [MANA_SHIELD_NAME] = true,
     [SACRIFICE_NAME] = true,
 }
+
+--! WotLK fix: pairs() order is undefined in Lua, so one and the same hit could eat
+--! Divine Aegis on one client and Power Word: Shield on another. That is visible to
+--! the player: the powerWordShield indicator reads absorbInfos[guid][PWS_NAME] by
+--! name (UpdateShield above), not the sum of the subtable, so the shield bar jumped
+--! around depending on hash order. Deduct in a fixed order DA -> PW:S -> the rest,
+--! the way the WotLK reference implementation that used to be embedded in Cell did
+--! it (AbsorbsMonitor-1.0.lua:1681, activeEffectsByPriority - folder deleted
+--! 2026-08-09 as never loaded; see git history for the original).
+--! This one function replaces five byte-identical copies of the same loop below
+--! (SWING_DAMAGE, SPELL_DAMAGE & friends, SWING_MISSED, SPELL_MISSED, ENVIRONMENTAL).
+--! min is aliased once at the top of the file (see the note there).
+local absorbConsumeOrder = {DA_NAME, PWS_NAME, PAK_NAME}
+
+local function ConsumeAbsorb(guid, absorbed)
+    local t = absorbInfos[guid]
+    if not t or type(absorbed) ~= "number" or absorbed <= 0 then return end
+
+    for i = 1, #absorbConsumeOrder do
+        local spellName = absorbConsumeOrder[i]
+        local amount = t[spellName]
+        if amount then
+            local deduct = min(amount, absorbed)
+            amount = amount - deduct
+            t[spellName] = amount > 0 and amount or nil
+            absorbed = absorbed - deduct
+            if absorbed <= 0 then break end
+        end
+    end
+
+    if absorbed > 0 then
+        for spellName, amount in pairs(t) do
+            local deduct = min(amount, absorbed)
+            amount = amount - deduct
+            t[spellName] = amount > 0 and amount or nil
+            absorbed = absorbed - deduct
+            if absorbed <= 0 then break end
+        end
+    end
+
+    --! WotLK fix: drop the subtable once it is empty. Otherwise absorbInfos holds an
+    --! empty table for every GUID that was ever shielded during the session - the only
+    --! cleanup sites are tied to Cell's own buttons (UnitButton_OnAttributeChanged and
+    --! UnitButton_OnHide), so a player Cell never shows is never collected.
+    if next(t) == nil then absorbInfos[guid] = nil end
+
+    UpdateShield(guid)
+end
 
 -------------------------------------------------
 -- WotLK Absorb Scanner
@@ -2589,6 +3365,39 @@ local function AbsorbScanWithRetry(unit, spellName, destGUID)
     C_Timer.After(0.1, retry)
 end
 
+--! WotLK fix: отложенная проверка Divine Aegis - см. ветку SPELL_AURA_REMOVED ниже.
+--! Одна общая очередь и один таймер в полёте, а не C_Timer.After на каждое событие:
+--! DA переприменяется на каждом крите лечения, у дисциплин-жреца в 25-ке это несколько
+--! событий в секунду, и замыкание на каждое из них - тот самый GC-мусор, от которого
+--! в этом файле уже избавились выше. Пока таймер не сработал, новые GUID просто
+--! копятся в pendingDA.
+local pendingDA = {}
+local daCheckScheduled
+
+local function CheckPendingDA()
+    daCheckScheduled = nil
+    for guid in pairs(pendingDA) do
+        local unit = Cell.vars.guids[guid]
+        --! Юнита нет в группе - записи о нём всё равно быть не должно, чистим.
+        --! Есть и бафф на месте - значит это было переприменение, а не снятие.
+        if not (unit and UnitBuff(unit, DA_NAME)) then
+            local t = absorbInfos[guid]
+            if t then
+                t[DA_NAME] = nil
+                if next(t) == nil then absorbInfos[guid] = nil end
+                UpdateShield(guid)
+            end
+        end
+    end
+    wipe(pendingDA)
+end
+
+local function ScheduleDACheck()
+    if daCheckScheduled then return end
+    daCheckScheduled = true
+    C_Timer.After(0.1, CheckPendingDA)
+end
+
 --! WotLK fix/perf: the old GetCLEU wrapper called the ClassicAPI
 --! CombatLogGetCurrentEventInfo shim with NO arguments - but that shim is a
 --! pure argument TRANSLATOR (native varargs in, retail order out) and returns
@@ -2598,12 +3407,72 @@ end
 --! timestamp(1), subEvent(2), srcGUID(3), srcName(4), srcFlags(5), dstGUID(6),
 --! dstName(7), dstFlags(8), then the per-event payload from slot 9 (no
 --! hideCaster / raid-flag slots on 3.3.5).
-cleu:SetScript("OnEvent", function(_, _, ...)
-    local timestamp, subEvent, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, arg9, arg10, arg11, arg12, arg13, arg14, arg15, arg16, arg17, arg18, arg19, arg20 = ...
+--! WotLK perf: the set of sub-events this handler actually acts on. In a 25-man
+--! raid COMBAT_LOG_EVENT_UNFILTERED is the most frequent event in the game -
+--! hundreds a second - and the majority of what arrives (SPELL_CAST_SUCCESS,
+--! SPELL_ENERGIZE, SPELL_AURA_APPLIED_DOSE, UNIT_DIED, SPELL_SUMMON ...) is not
+--! handled below at all, yet it used to walk all twenty-five string comparisons of
+--! the chain before falling out of the bottom. One hash lookup answers that now.
+--! Keep this list in step with the branches below.
+local CLEU_ABSORB_EVENTS = {
+    ["SPELL_HEAL"] = true,
+    ["SPELL_PERIODIC_HEAL"] = true,
+    ["SPELL_AURA_APPLIED"] = true,
+    ["SPELL_AURA_REFRESH"] = true,
+    ["SPELL_AURA_REMOVED"] = true,
+    ["SWING_DAMAGE"] = true,
+    ["SPELL_DAMAGE"] = true,
+    ["RANGE_DAMAGE"] = true,
+    ["SPELL_PERIODIC_DAMAGE"] = true,
+    ["SPELL_BUILDING_DAMAGE"] = true,
+    ["DAMAGE_SHIELD"] = true,
+    ["DAMAGE_SPLIT"] = true,
+    ["SWING_MISSED"] = true,
+    ["SPELL_MISSED"] = true,
+    ["RANGE_MISSED"] = true,
+    ["SPELL_PERIODIC_MISSED"] = true,
+    ["DAMAGE_SHIELD_MISSED"] = true,
+    ["ENVIRONMENTAL_DAMAGE"] = true,
+}
+
+--! WotLK perf: the payload arrives as named parameters instead of `...` plus a
+--! twenty-slot vararg unpack. A Lua 5.1 function that declares `...` is a vararg
+--! function: every call goes through adjust_varargs, which relocates the fixed
+--! arguments and sets up a separate vararg area, and the VARARG opcode then copies
+--! the values back into registers. Named parameters are already sitting on the
+--! stack where the C caller left them, so both costs vanish - on the single most
+--! frequent event in the game. Extra arguments past arg20 are discarded exactly as
+--! the old unpack discarded them. The unused names are kept because they document
+--! the native 3.3.5 slot layout the branches below depend on, and an unfilled
+--! parameter slot costs nothing at runtime.
+cleu:SetScript("OnEvent", function(_, _,
+    timestamp, subEvent, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags,
+    arg9, arg10, arg11, arg12, arg13, arg14, arg15, arg16, arg17, arg18, arg19, arg20)
+
+    if not CLEU_ABSORB_EVENTS[subEvent] then return end
+
     local spellId, spellName, spellSchool = arg9, arg10, arg11
 
     if subEvent == "SPELL_HEAL" then
-        if spellId == 56160 then -- Glyph of Power Word: Shield
+        --! WotLK perf: Cell.vars читался в этой ветви восемь раз - каждый раз это
+        --! чтение глобала Cell плюс хеш-лукап .vars, - а playerGUID из него четыре
+        --! раза. Подъём стоит внутри ветви, а не сразу после гейта: ветви урона
+        --! (SWING_DAMAGE, SPELL_DAMAGE и родня) - самые частые из проходящих гейт,
+        --! и Cell.vars им не нужен вовсе, так что общий подъём был бы для них
+        --! чистым налогом. Ни один вызов внутри ветви таблицу vars не подменяет:
+        --! она создаётся один раз в Core_Wrath.lua:25, guids - один раз ниже в файле
+        --! (`Cell.vars.guids = {}`, единственное присвоение на весь аддон).
+        local vars = Cell.vars
+        local playerGUID = vars.playerGUID
+        local guids = vars.guids
+
+        --! WotLK fix: the glyph branch wrote to three tables (lastHealTimeStamp,
+        --! lastGlyphHeal, absorbInfos) keyed on ANY destGUID - no roster filter, no
+        --! source filter - and cleanup is tied to Cell's own buttons, so for an
+        --! outsider it never happens. Harness run 12: 3 of 4 glyph header samples carry
+        --! destFlags 1304 = OUTSIDER. Only process what Cell actually shows, or what
+        --! the player himself applied.
+        if spellId == 56160 and (guids[destGUID] or sourceGUID == playerGUID) then -- Glyph of Power Word: Shield
             lastHealTimeStamp[destGUID] = timestamp
 
             local amount
@@ -2616,11 +3485,12 @@ cleu:SetScript("OnEvent", function(_, _, ...)
                 amount = arg12 / 0.2
             end
             lastGlyphHeal[destGUID] = arg12
-            
-            if not absorbInfos[destGUID] then absorbInfos[destGUID] = {} end
-            absorbInfos[destGUID][PWS_NAME] = amount
 
-            if not indicatorBooleans["powerWordShield"] or sourceGUID == Cell.vars.playerGUID then
+            local t = absorbInfos[destGUID]
+            if not t then t = {}; absorbInfos[destGUID] = t end
+            t[PWS_NAME] = amount
+
+            if not indicatorBooleans["powerWordShield"] or sourceGUID == playerGUID then
                 UpdateShield(destGUID, amount)
             else
                 UpdateShield(destGUID, nil, true)
@@ -2632,38 +3502,45 @@ cleu:SetScript("OnEvent", function(_, _, ...)
         --! slot 15 and the heal amount is slot 12. The old arg18/arg15 pair
         --! (retail-ordered payload) is nil/crit-flag here, so my Divine Aegis
         --! was never accumulated from this path.
-        if sourceGUID == Cell.vars.playerGUID and Cell.vars.divineAegisMultiplier and arg15 then
-            local maxDA = Cell.vars.guids[destGUID] and 125 * UnitLevel(Cell.vars.guids[destGUID]) or 10000
-            if not absorbInfos[destGUID] then absorbInfos[destGUID] = {} end
+        if sourceGUID == playerGUID and vars.divineAegisMultiplier and arg15 then
+            --! WotLK perf: guids[destGUID] спрашивался дважды в одной строке.
+            local daUnit = guids[destGUID]
+            local maxDA = daUnit and 125 * UnitLevel(daUnit) or 10000
+            local t = absorbInfos[destGUID]
+            if not t then t = {}; absorbInfos[destGUID] = t end
 
-            local currentDA = absorbInfos[destGUID][DA_NAME] or 0
-            absorbInfos[destGUID][DA_NAME] = min(currentDA + arg12 * Cell.vars.divineAegisMultiplier, maxDA)
-            
+            local currentDA = t[DA_NAME] or 0
+            t[DA_NAME] = min(currentDA + arg12 * vars.divineAegisMultiplier, maxDA)
+
             UpdateShield(destGUID)
         end
 
         -- Val'anyr
-        if sourceGUID == Cell.vars.playerGUID then
+        if sourceGUID == playerGUID then
             lastHealAmount = arg12 --! WotLK fix: heal amount is slot 12 on native 3.3.5 (slot 15 is the 1/nil crit flag - a non-crit heal during an active Val'anyr proc crashed on nil arithmetic)
             lastHealGUID = destGUID
             if blessing then
-                if not absorbInfos[destGUID] then absorbInfos[destGUID] = {} end
-                local currentPAK = absorbInfos[destGUID][PAK_NAME] or 0
-                absorbInfos[destGUID][PAK_NAME] = min(currentPAK + arg12 * 0.15, 20000) --! WotLK fix: amount is slot 12 (slot 15 = 1/nil crit flag -> nil arithmetic crash on non-crit heals)
-                
+                local t = absorbInfos[destGUID]
+                if not t then t = {}; absorbInfos[destGUID] = t end
+                local currentPAK = t[PAK_NAME] or 0
+                t[PAK_NAME] = min(currentPAK + arg12 * 0.15, 20000) --! WotLK fix: amount is slot 12 (slot 15 = 1/nil crit flag -> nil arithmetic crash on non-crit heals)
+
                 UpdateShield(destGUID)
             end
         end
 
     elseif subEvent == "SPELL_PERIODIC_HEAL" then
         -- Val'anyr
+        --! Cell.vars здесь читается один раз - поднимать нечего.
         if sourceGUID == Cell.vars.playerGUID then
             lastHealAmount = arg12 --! WotLK fix: heal amount is slot 12 on native 3.3.5 (slot 15 is the 1/nil crit flag - a non-crit heal during an active Val'anyr proc crashed on nil arithmetic)
             lastHealGUID = destGUID
             if blessing then
-                if not absorbInfos[destGUID] then absorbInfos[destGUID] = {} end
-                local currentPAK = absorbInfos[destGUID][PAK_NAME] or 0
-                absorbInfos[destGUID][PAK_NAME] = min(currentPAK + arg12 * 0.15, 20000) --! WotLK fix: amount is slot 12 (slot 15 = 1/nil crit flag -> nil arithmetic crash on non-crit heals)
+                --! WotLK perf: absorbInfos[destGUID] спрашивался трижды.
+                local t = absorbInfos[destGUID]
+                if not t then t = {}; absorbInfos[destGUID] = t end
+                local currentPAK = t[PAK_NAME] or 0
+                t[PAK_NAME] = min(currentPAK + arg12 * 0.15, 20000) --! WotLK fix: amount is slot 12 (slot 15 = 1/nil crit flag -> nil arithmetic crash on non-crit heals)
                 
                 UpdateShield(destGUID)
             end
@@ -2698,7 +3575,20 @@ cleu:SetScript("OnEvent", function(_, _, ...)
         end
 
     elseif subEvent == "SPELL_AURA_REMOVED" then
-        if spellName and ABSORB_SPELLS[spellName] then
+        --! WotLK fix: Divine Aegis обнуляется с задержкой и с перепроверкой аурой.
+        --! DA складывается: каждый крит лечения добавляет щит к уже существующему, и
+        --! сервер при этом переприменяет ауру - в лог уходит SPELL_AURA_REMOVED, сразу
+        --! за ним SPELL_AURA_APPLIED. Обнуляя запись по первому же REMOVED, Cell сбивал
+        --! накопленный щит в ноль на каждом крите, хотя аура на цели никуда не
+        --! девалась. Так же это сделано в WeakAuras-аурах на DA под этот клиент:
+        --! отложить на 0.1 с и обнулять только если баффа действительно больше нет.
+        --! Остальные щиты (PW:S, Val'anyr, чужие абсорбы) не складываются и снимаются
+        --! однократно, поэтому для них зачистка остаётся немедленной - там задержка
+        --! только оставила бы на экране уже съеденный щит.
+        if spellName == DA_NAME then
+            pendingDA[destGUID] = true
+            ScheduleDACheck()
+        elseif spellName and ABSORB_SPELLS[spellName] then
             if absorbInfos[destGUID] then
                  absorbInfos[destGUID][spellName] = nil
             end
@@ -2706,9 +3596,9 @@ cleu:SetScript("OnEvent", function(_, _, ...)
                 lastGlyphHeal[destGUID] = nil
                  -- Only clear PW:S
             end
-            
+
             UpdateShield(destGUID)
-            
+
             if spellName == PWS_NAME then
                 -- drop absorb bar immediately ? No update handles it.
                 -- However legacy code forced hide if HealAbsorbs 0.
@@ -2724,20 +3614,7 @@ cleu:SetScript("OnEvent", function(_, _, ...)
     -- WotLK Consumption
     -- SWING_DAMAGE: amount(9), ..., absorbed(14)
     elseif subEvent == "SWING_DAMAGE" then
-        local absorbed = arg14
-        if absorbed and absorbed > 0 and absorbInfos[destGUID] then
-             -- Distribute consumption?
-             -- Usually deduct from ANY shield.
-             -- Iterate and reduce until absorbed is covered.
-             for spellName, amount in pairs(absorbInfos[destGUID]) do
-                 local deduct = math.min(amount, absorbed)
-                 absorbInfos[destGUID][spellName] = amount - deduct
-                 if absorbInfos[destGUID][spellName] <= 0 then absorbInfos[destGUID][spellName] = nil end
-                 absorbed = absorbed - deduct
-                 if absorbed <= 0 then break end
-             end
-             UpdateShield(destGUID)
-        end
+        ConsumeAbsorb(destGUID, arg14)
     -- SPELL_DAMAGE / RANGE_DAMAGE: amount(12), ..., absorbed(17)
     --! WotLK fix: SPELL_PERIODIC_DAMAGE, SPELL_BUILDING_DAMAGE, DAMAGE_SHIELD and
     --! DAMAGE_SPLIT carry the same SPELL prefix (spellId, spellName, spellSchool),
@@ -2747,75 +3624,70 @@ cleu:SetScript("OnEvent", function(_, _, ...)
     elseif subEvent == "SPELL_DAMAGE" or subEvent == "RANGE_DAMAGE"
         or subEvent == "SPELL_PERIODIC_DAMAGE" or subEvent == "SPELL_BUILDING_DAMAGE"
         or subEvent == "DAMAGE_SHIELD" or subEvent == "DAMAGE_SPLIT" then
-         local absorbed = arg17
-         if absorbed and absorbed > 0 and absorbInfos[destGUID] then
-             for spellName, amount in pairs(absorbInfos[destGUID]) do
-                 local deduct = math.min(amount, absorbed)
-                 absorbInfos[destGUID][spellName] = amount - deduct
-                 if absorbInfos[destGUID][spellName] <= 0 then absorbInfos[destGUID][spellName] = nil end
-                 absorbed = absorbed - deduct
-                 if absorbed <= 0 then break end
-             end
-             UpdateShield(destGUID)
-        end
+         ConsumeAbsorb(destGUID, arg17)
     -- SWING_MISSED / SPELL_MISSED
     elseif subEvent == "SWING_MISSED" then
-        if arg9 == "ABSORB" then 
-             local amount = arg10 --! WotLK fix: SWING_MISSED payload is missType(9), amountMissed(10) - arg11 was always nil, so fully-absorbed swings never consumed the shield estimate
-             if type(amount) == "number" and amount > 0 and absorbInfos[destGUID] then
-                  local absorbed = amount
-                  for spellName, amt in pairs(absorbInfos[destGUID]) do
-                      local deduct = math.min(amt, absorbed)
-                      absorbInfos[destGUID][spellName] = amt - deduct
-                      if absorbInfos[destGUID][spellName] <= 0 then absorbInfos[destGUID][spellName] = nil end
-                      absorbed = absorbed - deduct
-                      if absorbed <= 0 then break end
-                  end
-                  UpdateShield(destGUID)
-             end
+        --! WotLK fix: SWING_MISSED payload is missType(9), amountMissed(10).
+        if arg9 == "ABSORB" then
+            ConsumeAbsorb(destGUID, arg10)
         end
     --! WotLK fix: a tick absorbed in full arrives as SPELL_PERIODIC_MISSED with the
     --! same layout - missType(12), amountMissed(13). DAMAGE_SHIELD_MISSED too.
     elseif subEvent == "SPELL_MISSED" or subEvent == "RANGE_MISSED"
         or subEvent == "SPELL_PERIODIC_MISSED" or subEvent == "DAMAGE_SHIELD_MISSED" then
+         --! WotLK fix: SPELL/RANGE_MISSED payload is spellId(9), spellName(10),
+         --! school(11), missType(12), amountMissed(13).
          if arg12 == "ABSORB" then
-             local amount = arg13 --! WotLK fix: SPELL/RANGE_MISSED payload is spellId(9), spellName(10), school(11), missType(12), amountMissed(13) - arg14 was always nil
-             if type(amount) == "number" and amount > 0 and absorbInfos[destGUID] then
-                  local absorbed = amount
-                  for spellName, amt in pairs(absorbInfos[destGUID]) do
-                      local deduct = math.min(amt, absorbed)
-                      absorbInfos[destGUID][spellName] = amt - deduct
-                      if absorbInfos[destGUID][spellName] <= 0 then absorbInfos[destGUID][spellName] = nil end
-                      absorbed = absorbed - deduct
-                      if absorbed <= 0 then break end
-                  end
-                  UpdateShield(destGUID)
-             end
-        end
+             ConsumeAbsorb(destGUID, arg13)
+         end
 
     --! WotLK fix: ENVIRONMENTAL_DAMAGE has a single prefix arg (environmentalType),
     --! so the damage suffix starts one slot earlier and absorbed sits at arg15,
     --! not arg17. Fire, lava, falling and drowning eat the shield too.
     elseif subEvent == "ENVIRONMENTAL_DAMAGE" then
-         local absorbed = arg15
-         if absorbed and absorbed > 0 and absorbInfos[destGUID] then
-             for spellName, amount in pairs(absorbInfos[destGUID]) do
-                 local deduct = math.min(amount, absorbed)
-                 absorbInfos[destGUID][spellName] = amount - deduct
-                 if absorbInfos[destGUID][spellName] <= 0 then absorbInfos[destGUID][spellName] = nil end
-                 absorbed = absorbed - deduct
-                 if absorbed <= 0 then break end
-             end
-             UpdateShield(destGUID)
-        end
+         ConsumeAbsorb(destGUID, arg15)
     end
+end)
+
+--! WotLK fix: сброс поглощения при смене зоны. Записи в absorbInfos чистятся только
+--! там, где кнопка Cell меняет отображаемого юнита (:3420) - то есть лишь для тех, кто
+--! есть в группе. Но ветки DA, Val'anyr и глифа PW:S фильтруют только источник
+--! (sourceGUID == Cell.vars.playerGUID), а не цель: полечив в открытом мире случайного
+--! прохожего, жрец получает запись, которую уже ничто не удалит, и она висит до
+--! перезахода. За долгую сессию с рейдами, БГ и городом это утечка, а при совпадении
+--! GUID - ещё и чужой щит на новом юните. Отдельный фрейм, а не подписка на том же
+--! cleu: его обработчик игнорирует имя события (второй параметр - `_`) и разбирает
+--! аргументы как боевой лог, а добавлять туда сравнение события - это сотни лишних
+--! проверок в секунду в рейде. Смена зоны выбрана точкой сброса потому, что все данные
+--! здесь производные от боя, который к этому моменту уже кончился.
+local absorbReset = CreateFrame("Frame")
+absorbReset:RegisterEvent("PLAYER_ENTERING_WORLD")
+absorbReset:SetScript("OnEvent", function()
+    wipe(absorbInfos)
+    wipe(lastGlyphHeal)
+    wipe(lastHealTimeStamp)
+    wipe(pendingDA)
+    lastHealAmount = nil
+    lastHealGUID = nil
+    blessing = nil
 end)
 
 -------------------------------------------------
 -- cleu health updater
 -------------------------------------------------
 local cleuHealthUpdater = CreateFrame("Frame", "CellCleuHealthUpdater")
-cleuHealthUpdater:SetScript("OnEvent", function(self, event, ...)
+--! WotLK perf: named parameters instead of `...` + a nineteen-slot vararg unpack,
+--! and the friend test now comes before anything else. See the note on the main
+--! cleu handler above for why the vararg form costs more in Lua 5.1; this frame
+--! sees exactly the same event stream, so the saving is the same. destFlags is the
+--! cheapest possible rejection - one bit mask - and it throws away every line of
+--! the log that concerns a mob hitting another mob, which in a raid is most of it.
+cleuHealthUpdater:SetScript("OnEvent", function(self, event,
+    _, subEvent, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags,
+    arg9, arg10, arg11, arg12, arg13, arg14, arg15, arg16, arg17, arg18, arg19)
+
+    if not F.IsFriend(destFlags) then return end
+
     --! WotLK fix/perf: CombatLogGetCurrentEventInfo does not exist on 3.3.5 - the
     --! ClassicAPI version is a pure argument TRANSLATOR (20 params in, 23 returns
     --! out) whose Lua frame was paid on EVERY combat-log event, before subEvent or
@@ -2823,15 +3695,18 @@ cleuHealthUpdater:SetScript("OnEvent", function(self, event, ...)
     --! Parse the native payload directly, like the cleu handler above does: there
     --! is no hideCaster and there are no raid-flag slots here, so retail slot N is
     --! native slot N-3 (amount: 15 -> 12 for spell/range, 12 -> 9 for swing).
-    local _, subEvent, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, arg9, arg10, arg11, arg12, arg13, arg14, arg15, arg16, arg17, arg18, arg19 = ...
-
-    if not F.IsFriend(destFlags) then return end
-
     local diff
     if subEvent == "SPELL_HEAL" or subEvent == "SPELL_PERIODIC_HEAL" then
         -- spellId, spellName, spellSchool, amount, overhealing, absorbed, critical
         diff = arg12
-    elseif subEvent == "SPELL_DAMAGE" or subEvent == "SPELL_PERIODIC_DAMAGE" then
+    --! WotLK fix: DAMAGE_SHIELD (Thorns, Retribution Aura) and DAMAGE_SPLIT carry
+    --! the same SPELL prefix, so amount is arg12 here too (codex describes both as
+    --! "SPELL prefix args + DAMAGE suffix args"). The absorb branch of the main
+    --! cleu handler already lists them (:2904), this one did not - damage from
+    --! those two sources never moved the health bar between UNIT_HEALTH events.
+    --! Not a theoretical path: harness run 11 recorded DAMAGE_SPLIT 12 times.
+    elseif subEvent == "SPELL_DAMAGE" or subEvent == "SPELL_PERIODIC_DAMAGE"
+        or subEvent == "DAMAGE_SHIELD" or subEvent == "DAMAGE_SPLIT" then
         -- spellId, spellName, spellSchool, amount, overhealing, absorbed, critical
         diff = -arg12
     elseif subEvent == "SWING_DAMAGE" then
@@ -2883,16 +3758,18 @@ UnitButton_UpdateAll = function(self)
     UnitButton_UpdateName(self)
     UnitButton_UpdateNameTextColor(self)
     UnitButton_UpdateHealthTextColor(self)
-    UnitButton_UpdateHealthMax(self)
-    UnitButton_UpdateHealth(self)
-    UnitButton_UpdateHealPrediction(self)
+    UnitButton_UpdateHealthStates(self)
+    UnitButton_UpdateHealthMax(self, true)
+    UnitButton_UpdateHealth(self, nil, true)
+    UnitButton_UpdateHealPrediction(self, true)
     UnitButton_UpdateStatusText(self)
     UnitButton_UpdateHealthColor(self)
     UnitButton_UpdateTarget(self)
     UnitButton_UpdatePlayerRaidIcon(self)
     UnitButton_UpdateTargetRaidIcon(self)
-    UnitButton_UpdateShieldAbsorbs(self)
-    UnitButton_UpdateHealAbsorbs(self, true)
+    --! WotLK fix/perf: shield repaint already performs the paired heal-absorb
+    --! repaint; do not invoke the disabled WotLK path a second time.
+    UnitButton_UpdateShieldAbsorbs(self, true)
     UnitButton_UpdateInRange(self)
     UnitButton_UpdateRole(self)
     UnitButton_UpdateLeader(self)
@@ -2929,12 +3806,53 @@ UnitButton_UpdateAll = function(self)
     UnitButton_UpdateAuras(self)
 end
 
+--! WotLK fix: one private roster broadcast invalidates all current unit
+--! buttons. Native PARTY_MEMBERS_CHANGED / RAID_ROSTER_UPDATE are owned by
+--! Core_Wrath.lua, so every button no longer registers a non-native event.
+local function UnitButton_GroupRosterUpdate()
+    F.IterateAllUnitButtons(function(button)
+        if button:IsVisible() then
+            button._updateRequired = 1
+            button._powerUpdateRequired = 1
+        end
+    end, true)
+end
+Cell.RegisterCallback(
+    "GroupRosterUpdate",
+    "UnitButton_GroupRosterUpdate",
+    UnitButton_GroupRosterUpdate
+)
+
+--! WotLK fix: два узких широковещания того же вида. Апстрим держал
+--! PARTY_LEADER_CHANGED и PLAYER_ROLES_ASSIGNED закомментированными в
+--! UnitButton_RegisterEvents ниже с пометкой "GROUP_ROSTER_UPDATE" - на ретейле
+--! их покрывает роста. На 3.3.5 не покрывает (см. Core_Wrath.lua, где они
+--! теперь зарегистрированы один раз): повышение и выдача роли через LFD состав
+--! не меняют, поэтому корона, states.role, иконка роли и фильтры силы
+--! TANK/HEALER оставались в старом виде до постороннего полного обновления.
+--! Регистрация в Core, а не на кнопках, потому что 40 кнопок × 2 события - это
+--! 80 регистраций, и каждая рассылка будила бы все 40 обработчиков поштучно.
+--! Обработчики анонимные намеренно: главный чанк этого файла почти упёрся в
+--! лимит Lua 5.1 (200 локалов на функцию), а имена тут нужны только шине.
+Cell.RegisterCallback("LeaderChanged", "UnitButton_LeaderChanged", function()
+    F.IterateAllUnitButtons(function(button)
+        if button:IsVisible() then
+            UnitButton_UpdateLeader(button)
+        end
+    end, true)
+end)
+
+Cell.RegisterCallback("RolesAssigned", "UnitButton_RolesAssigned", function()
+    F.IterateAllUnitButtons(UnitButton_RoleChanged, true)
+end)
+
 -------------------------------------------------
 -- unit button events
 -------------------------------------------------
 local function UnitButton_RegisterEvents(self)
     -- self:RegisterEvent("PLAYER_ENTERING_WORLD")
-    self:RegisterEvent("GROUP_ROSTER_UPDATE")
+    --! WotLK fix: roster invalidation is delivered once through Cell's private
+    --! GroupRosterUpdate callback, not the non-native frame event.
 
     self:RegisterEvent("UNIT_HEALTH")
     --! WotLK: UNIT_HEALTH_FREQUENT does not exist on stock 3.3.5 - kept for custom
@@ -2964,17 +3882,15 @@ local function UnitButton_RegisterEvents(self)
 
     self:RegisterEvent("UNIT_AURA")
 
-    self:RegisterEvent("UNIT_HEAL_PREDICTION")
-
-    -- Fix: Register spellcast events for immediate update on player cast
-    self:RegisterEvent("UNIT_SPELLCAST_START")
-    self:RegisterEvent("UNIT_SPELLCAST_STOP")
-    self:RegisterEvent("UNIT_SPELLCAST_CHANNEL_START")
-    self:RegisterEvent("UNIT_SPELLCAST_CHANNEL_STOP")
-    self:RegisterEvent("UNIT_SPELLCAST_DELAYED")
+    --! WotLK fix: incoming-heal repainting is driven directly by the six
+    --! LibHealComm callbacks above. Do not register the non-native retail
+    --! UNIT_HEAL_PREDICTION event or redundant player spellcast events.
 
     self:RegisterEvent("UNIT_THREAT_SITUATION_UPDATE")
-    self:RegisterEvent("UNIT_THREAT_LIST_UPDATE")
+    --! WotLK perf: UNIT_THREAT_LIST_UPDATE на кнопках больше не регистрируется - arg1
+    --! у него NPC, а не юнит рейда, фильтр он не проходил и заставлял все кнопки
+    --! пересчитывать угрозу на каждое событие. Теперь его слушает одна центральная
+    --! рамка с окном 0.2 с (см. B.RequestThreatUpdate).
     self:RegisterEvent("UNIT_ENTERED_VEHICLE")
     self:RegisterEvent("UNIT_EXITED_VEHICLE")
 
@@ -2986,8 +3902,9 @@ local function UnitButton_RegisterEvents(self)
     self:RegisterEvent("UNIT_NAME_UPDATE") -- unknown target
     self:RegisterEvent("ZONE_CHANGED_NEW_AREA") --? update status text
 
-    -- self:RegisterEvent("PARTY_LEADER_CHANGED") -- GROUP_ROSTER_UPDATE
-    -- self:RegisterEvent("PLAYER_ROLES_ASSIGNED") -- GROUP_ROSTER_UPDATE
+    --! WotLK fix: PARTY_LEADER_CHANGED / PLAYER_ROLES_ASSIGNED зарегистрированы
+    --! один раз в Core_Wrath.lua и приходят сюда шиной ("LeaderChanged",
+    --! "RolesAssigned" выше) - на кнопках их держать незачем.
     self:RegisterEvent("PLAYER_REGEN_ENABLED")
     self:RegisterEvent("PLAYER_REGEN_DISABLED")
 
@@ -3016,7 +3933,8 @@ local function UnitButton_RegisterEvents(self)
     -- self:RegisterEvent("UNIT_PHASE") -- warmode, traditional sources of phasing such as progress through quest chains
     -- self:RegisterEvent("PARTY_MEMBER_DISABLE")
     -- self:RegisterEvent("PARTY_MEMBER_ENABLE")
-    -- self:RegisterEvent("INCOMING_RESURRECT_CHANGED")
+    --! WotLK fix: incoming resurrection updates are owned privately by
+    --! Indicators/StatusIcon.lua through LibResComm callbacks.
 
     -- self:RegisterEvent("VOICE_CHAT_CHANNEL_ACTIVATED")
     -- self:RegisterEvent("VOICE_CHAT_CHANNEL_DEACTIVATED")
@@ -3036,31 +3954,26 @@ end
 
 local function UnitButton_OnEvent(self, event, unit, ...)
     -- print(event, self:GetName(), unit, self.states.displayedUnit, self.states.unit)
-    -- if UnitExists(unit) and (UnitIsUnit(unit, self.states.displayedUnit) or UnitIsUnit(unit, self.states.unit)) then
-    if unit and type(unit) == "string" and (self.states.displayedUnit == unit or self.states.unit == unit or (self.states.displayedUnit and UnitIsUnit(unit, self.states.displayedUnit))) then
-        if  event == "UNIT_ENTERED_VEHICLE" or event == "UNIT_EXITED_VEHICLE" or event == "UNIT_CONNECTION" then
-            self._updateRequired = 1
-            self._powerUpdateRequired = 1
-
-        elseif event == "UNIT_NAME_UPDATE" then
-            UnitButton_UpdateName(self)
-            UnitButton_UpdateNameTextColor(self)
-            UnitButton_UpdateHealthColor(self)
-            UnitButton_UpdateHealthTextColor(self)
-            UnitButton_UpdatePowerTextColor(self)
-
-        elseif event == "UNIT_MAXHEALTH" then
-            UnitButton_UpdateHealthMax(self)
-            UnitButton_UpdateHealth(self)
-            UnitButton_UpdateHealPrediction(self)
-            UnitButton_UpdateShieldAbsorbs(self)
-            UnitButton_UpdateHealAbsorbs(self, true)
-
-        elseif event == "UNIT_HEALTH" or event == "UNIT_HEALTH_FREQUENT" then
-            UnitButton_UpdateHealth(self)
-            UnitButton_UpdateHealPrediction(self)
-            UnitButton_UpdateShieldAbsorbs(self)
-            UnitButton_UpdateHealAbsorbs(self, true)
+    --! WotLK fix: 3.3.5 has no RegisterUnitEvent, so every unit event reaches
+    --! every visible button. Do only string-token comparisons in this hot path.
+    --! states.unit and states.displayedUnit already cover the owner and its
+    --! active vehicle/pet alias; UnitIsUnit here multiplied a C call by every
+    --! mismatched button and every UNIT_* event.
+    if type(unit) == "string" and (self.states.displayedUnit == unit or self.states.unit == unit) then
+        --! WotLK perf: the branches below are ordered by how often 3.3.5 actually
+        --! fires them, not by topic. Because there is no RegisterUnitEvent here,
+        --! every UNIT_* event walks this chain once per registered button - and
+        --! UNIT_AURA used to sit behind twenty-two string comparisons, after both
+        --! power groups. Health, auras and power now come first; the conditions are
+        --! mutually exclusive equality tests on one upvalue, so the order carries no
+        --! meaning beyond cost.
+        if event == "UNIT_HEALTH" or event == "UNIT_HEALTH_FREQUENT" then
+            --! WotLK fix/perf: one snapshot feeds health, prediction and shield
+            --! outputs; 3.3.5 broadcasts this event to every registered button.
+            UnitButton_UpdateHealthStates(self)
+            UnitButton_UpdateHealth(self, nil, true)
+            UnitButton_UpdateHealPrediction(self, true)
+            UnitButton_UpdateShieldAbsorbs(self, true)
             -- UnitButton_UpdateStatusText(self)
             --! WotLK fix: UNIT_CONNECTION does not exist in 3.3.5 (added 4.0),
             --! so its registration above never fires and OFFLINE state was only
@@ -3077,18 +3990,30 @@ local function UnitButton_OnEvent(self, event, unit, ...)
                 self._powerUpdateRequired = 1
             end
 
-        elseif event == "UNIT_HEAL_PREDICTION" or event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_STOP" or event == "UNIT_SPELLCAST_CHANNEL_START" or event == "UNIT_SPELLCAST_CHANNEL_STOP" or event == "UNIT_SPELLCAST_DELAYED" then
-            UnitButton_UpdateHealPrediction(self)
+        elseif event == "UNIT_AURA" then
+            UnitButton_UpdateAuras(self)
+
+        elseif event == "UNIT_POWER" or event == "UNIT_MANA" or event == "UNIT_RAGE" or event == "UNIT_FOCUS" or event == "UNIT_ENERGY" or event == "UNIT_RUNIC_POWER" then
+            UnitButton_UpdatePowerStates(self)
+            UnitButton_UpdatePower(self)
+            UnitButton_UpdatePowerText(self)
+
+        elseif event == "UNIT_MAXHEALTH" then
+            --! WotLK fix/perf: this branch used to rebuild identical health and
+            --! absorb state four times before repainting the same button.
+            UnitButton_UpdateHealthStates(self)
+            UnitButton_UpdateHealthMax(self, true)
+            UnitButton_UpdateHealth(self, nil, true)
+            UnitButton_UpdateHealPrediction(self, true)
+            UnitButton_UpdateShieldAbsorbs(self, true)
+
+        --! WotLK fix: heal prediction is updated by direct LibHealComm
+        --! callbacks, plus the health/max-health branches above.
 
         --! WotLK fix: 3.3.5 fires per-power-type max events, not UNIT_MAXPOWER
         elseif event == "UNIT_MAXPOWER" or event == "UNIT_MAXMANA" or event == "UNIT_MAXRAGE" or event == "UNIT_MAXFOCUS" or event == "UNIT_MAXENERGY" or event == "UNIT_MAXRUNIC_POWER" or event == "UNIT_MAXHAPPINESS" then
             UnitButton_UpdatePowerStates(self)
             UnitButton_UpdatePowerMax(self)
-            UnitButton_UpdatePower(self)
-            UnitButton_UpdatePowerText(self)
-
-        elseif event == "UNIT_POWER" or event == "UNIT_MANA" or event == "UNIT_RAGE" or event == "UNIT_FOCUS" or event == "UNIT_ENERGY" or event == "UNIT_RUNIC_POWER" then
-            UnitButton_UpdatePowerStates(self)
             UnitButton_UpdatePower(self)
             UnitButton_UpdatePowerText(self)
 
@@ -3100,8 +4025,16 @@ local function UnitButton_OnEvent(self, event, unit, ...)
             UnitButton_UpdatePowerTextColor(self)
             UnitButton_UpdatePowerText(self)
 
-        elseif event == "UNIT_AURA" then
-            UnitButton_UpdateAuras(self)
+        elseif  event == "UNIT_ENTERED_VEHICLE" or event == "UNIT_EXITED_VEHICLE" or event == "UNIT_CONNECTION" then
+            self._updateRequired = 1
+            self._powerUpdateRequired = 1
+
+        elseif event == "UNIT_NAME_UPDATE" then
+            UnitButton_UpdateName(self)
+            UnitButton_UpdateNameTextColor(self)
+            UnitButton_UpdateHealthColor(self)
+            UnitButton_UpdateHealthTextColor(self)
+            UnitButton_UpdatePowerTextColor(self)
 
         elseif event == "UNIT_TARGET" then
             UnitButton_UpdateTargetRaidIcon(self)
@@ -3114,13 +4047,18 @@ local function UnitButton_OnEvent(self, event, unit, ...)
             UnitButton_UpdateHealthColor(self)
 
         elseif event == "UNIT_THREAT_SITUATION_UPDATE" then
+            --! Полоска аггро здесь НЕ перерисовывается, и это не забытая строка:
+            --! она видна только когда есть моб-юнит ("target"/"targettarget", см.
+            --! B.GetThreatMobUnit), а для такого юнита смена категории всегда идёт
+            --! вместе с UNIT_THREAT_LIST_UPDATE - его ловит общий тикер и красит
+            --! полоску всему рейду одним проходом. Добавить сюда UpdateThreatBar
+            --! значит удвоить работу на горячем пути ради уже сделанного. В upstream
+            --! ровно так же: полоску там ведут PLAYER_TARGET_CHANGED и
+            --! UNIT_THREAT_LIST_UPDATE на кнопках, а мы их свернули в тикер.
             UnitButton_UpdateThreat(self)
 
-        -- elseif event == "INCOMING_RESURRECT_CHANGED" or event == "UNIT_PHASE" or event == "PARTY_MEMBER_DISABLE" or event == "PARTY_MEMBER_ENABLE" then
+        -- elseif event == "UNIT_PHASE" or event == "PARTY_MEMBER_DISABLE" or event == "PARTY_MEMBER_ENABLE" then
         --     UnitButton_UpdateStatusIcon(self)
-
-        elseif event == "READY_CHECK_CONFIRM" then
-            UnitButton_UpdateReadyCheck(self)
 
         elseif event == "UNIT_PORTRAIT_UPDATE" then -- pet summoned far away
             if self.states.healthMax == 0 then
@@ -3130,19 +4068,21 @@ local function UnitButton_OnEvent(self, event, unit, ...)
         end
 
     else
-        if event == "GROUP_ROSTER_UPDATE" then
-            self._updateRequired = 1
-            self._powerUpdateRequired = 1
+        if event == "READY_CHECK_CONFIRM" then
+            --! WotLK fix: arg1 is a numeric party/raid index on 3.3.5, not a
+            --! unit token. It can never pass the unit-event string filter above.
+            --! Each visible button already receives the event and can query its
+            --! own authoritative status through GetReadyCheckStatus(states.unit).
+            UnitButton_UpdateReadyCheck(self)
 
         elseif event == "PLAYER_REGEN_ENABLED" or event == "PLAYER_REGEN_DISABLED" then
             UnitButton_UpdateLeader(self, event)
 
         elseif event == "PLAYER_TARGET_CHANGED" then
             UnitButton_UpdateTarget(self)
-            UnitButton_UpdateThreatBar(self)
-
-        elseif event == "UNIT_THREAT_LIST_UPDATE" then
-            UnitButton_UpdateThreatBar(self)
+            --! WotLK perf: угрозу здесь больше не считаем - смена цели меняет моба для
+            --! ВСЕХ кнопок сразу, и центральная рамка делает один общий проход вместо
+            --! 25-40 отдельных вызовов из 25-40 копий этого обработчика.
 
         elseif event == "RAID_TARGET_UPDATE" then
             UnitButton_UpdatePlayerRaidIcon(self)
@@ -3223,6 +4163,13 @@ local function UnitButton_OnAttributeChanged(self, name, value)
             local guid = UnitGUID(value)
             if guid then
                 absorbInfos[guid] = nil
+                --! WotLK fix: the two glyph-of-PW:S bookkeeping tables were never
+                --! cleaned up anywhere, so every GUID ever shielded stayed keyed
+                --! for the whole session. They are written next to absorbInfos
+                --! (:2818, :2829), so they get cleared next to it too - the entry
+                --! is worthless the moment the button stops showing that unit.
+                lastGlyphHeal[guid] = nil
+                lastHealTimeStamp[guid] = nil
             end
         end
     end
@@ -3235,13 +4182,24 @@ Cell.vars.guids = {} -- guid to unitid
 Cell.vars.names = {} -- name to unitid
 
 local function UnitButton_OnShow(self)
+    --! WotLK fix: seed the GUID map before an immediate LibHealComm callback
+    --! can target this newly shown button. The regular tick keeps the mapping
+    --! synchronized afterward and clears it in UnitButton_OnHide.
+    if self.states.unit and not self.isSpotlight then
+        local guid = UnitGUID(self.states.unit)
+        if guid then
+            Cell.vars.guids[guid] = self.states.unit
+            self.__unitGuid = guid
+        end
+    end
+
     --! WotLK 3.3.5a: some header update paths can leave raid buttons
     --! non-interactive (dead mouseover/clicks) until /reload. Force it on show.
     if not self:IsMouseEnabled() then
         self:EnableMouse(true)
     end
 
-    self._updateRequired = 1 -- prevent UnitButton_UpdateAll twice. when convert party <-> raid, GROUP_ROSTER_UPDATE fired.
+    self._updateRequired = 1 -- prevent duplicate full updates during party <-> raid conversion.
     self._powerUpdateRequired = 1
     UnitButton_RegisterEvents(self)
 
@@ -3269,11 +4227,19 @@ end
 local function UnitButton_OnHide(self)
     UnitButton_UnregisterEvents(self)
 
+    --! WotLK fix: private smoothing keeps bars as table keys; remove hidden
+    --! buttons immediately so the driver cannot retain recycled secure frames.
+    smoothBars[self.widgets.healthBar] = nil
+    smoothBars[self.widgets.powerBar] = nil
+
     ResetAuraTables(self)
 
     -- reset shields
     if self.__displayedGuid then
         absorbInfos[self.__displayedGuid] = nil
+        --! WotLK fix: clear the glyph bookkeeping with the shield, see :3415.
+        lastGlyphHeal[self.__displayedGuid] = nil
+        lastHealTimeStamp[self.__displayedGuid] = nil
     end
 
     -- NOTE: update Cell.vars.guids
@@ -3292,7 +4258,7 @@ local function UnitButton_OnHide(self)
 end
 
 local function UnitButton_OnEnter(self)
-    if not IsEncounterInProgress() then UnitButton_UpdateStatusText(self) end
+    if not Cell.IsEncounterInProgress() then UnitButton_UpdateStatusText(self) end
 
     if highlightEnabled then self.widgets.mouseoverHighlight:Show() end
 
@@ -3310,23 +4276,39 @@ end
 local UNKNOWN = _G.UNKNOWN
 local UNKNOWNOBJECT = _G.UNKNOWNOBJECT
 local function UnitButton_OnTick(self)
+    --! WotLK perf: one resolve of the states table for the whole tick. OnTick runs
+    --! four times a second on every button - 160 calls a second in a full raid -
+    --! and it walked self.states more than a dozen times per call. The table is
+    --! created once in CellUnitButton_OnLoad and is only ever cleared in place
+    --! (wipe / F.RemoveElementsExceptKeys), so the reference cannot go stale here.
+    local states = self.states
     local e = (self.__tickCount or 0) + 1
     if e >= 2 then -- every 0.5 second
         e = 0
 
-        if self.states.unit and self.states.displayedUnit then
+        if states.unit and states.displayedUnit then
+            local du = states.displayedUnit
+
             --! WotLK fix: 3.3.5 does NOT reliably fire UNIT_HEALTH /
             --! UNIT_MAXHEALTH for pet units (partypetN/raidpetN), so pet
             --! frames stayed at full HP forever. Blizzard's own 3.3.5
             --! PetFrame polls via frequentUpdates (UnitFrame.lua:48,199) -
             --! do the same here on the 0.5s tick, pets only.
-            if strfind(self.states.displayedUnit, "pet") then
-                local health = UnitHealth(self.states.displayedUnit)
-                local healthMax = UnitHealthMax(self.states.displayedUnit)
-                if healthMax ~= self.states.healthMax then
+            --! WotLK perf: the strfind answer is cached against the unit id that
+            --! produced it. Unit ids are interned strings, so the guard is a pointer
+            --! compare and the C call now happens only when the button starts showing
+            --! a different unit, instead of twice a second for the whole session.
+            if du ~= self.__tickUnit then
+                self.__tickUnit = du
+                self.__tickUnitIsPet = strfind(du, "pet") and true or false
+            end
+            if self.__tickUnitIsPet then
+                local health = UnitHealth(du)
+                local healthMax = UnitHealthMax(du)
+                if healthMax ~= states.healthMax then
                     UnitButton_UpdateHealthMax(self)
                     UnitButton_UpdateHealth(self)
-                elseif health ~= self.states.health then
+                elseif health ~= states.health then
                     UnitButton_UpdateHealth(self)
                 end
             end
@@ -3337,17 +4319,17 @@ local function UnitButton_OnTick(self)
             --! "GHOST"/"DEAD" status text only refreshed on the next full update
             --! (e.g. mouseover). Poll the dead/ghost state on the 0.5s tick and
             --! refresh the status text whenever it changes.
-            local u = self.states.unit
+            local u = states.unit
             local deadGhostState = (UnitIsGhost(u) and 2) or (UnitIsDeadOrGhost(u) and 1) or 0
             if deadGhostState ~= self.__deadGhostState then
                 self.__deadGhostState = deadGhostState
                 UnitButton_UpdateStatusText(self)
             end
 
-            local displayedGuid = UnitGUID(self.states.displayedUnit)
+            local displayedGuid = UnitGUID(du)
             if displayedGuid ~= self.__displayedGuid then
                 -- NOTE: displayed unit entity changed
-                F.RemoveElementsExceptKeys(self.states, "unit", "displayedUnit")
+                F.RemoveElementsExceptKeys(states, "unit", "displayedUnit")
                 self.__displayedGuid = displayedGuid
                 if displayedGuid then --? clearing unit may come before hiding
                     self._updateRequired = 1
@@ -3355,21 +4337,21 @@ local function UnitButton_OnTick(self)
                 end
             end
 
-            local guid = UnitGUID(self.states.unit)
+            local guid = UnitGUID(u)
             if guid and guid ~= self.__unitGuid then
                 -- print("guidChanged:", self:GetName(), self.states.unit, guid)
                 -- NOTE: unit entity changed
                 -- update Cell.vars.guids
                 self.__unitGuid = guid
-                if not self.isSpotlight then Cell.vars.guids[guid] = self.states.unit end
+                if not self.isSpotlight then Cell.vars.guids[guid] = u end
 
                 -- NOTE: only save players' names
-                if UnitIsPlayer(self.states.unit) then
+                if UnitIsPlayer(u) then
                     -- update Cell.vars.names
-                    local name = GetUnitName(self.states.unit, true)
+                    local name = GetUnitName(u, true)
                     if (name and self.__nameRetries and self.__nameRetries >= 4) or (name and name ~= UNKNOWN and name ~= UNKNOWNOBJECT) then
                         self.__unitName = name
-                        if not self.isSpotlight then Cell.vars.names[name] = self.states.unit end
+                        if not self.isSpotlight then Cell.vars.names[name] = u end
                         self.__nameRetries = nil
                     else
                         -- NOTE: update on next tick
@@ -3390,15 +4372,17 @@ local function UnitButton_OnTick(self)
     --! server-throttled (worse in big raids), so health bars can lag. Poll for
     --! changes here as a fallback. Change-detected, so an unchanged unit costs
     --! only a couple of API reads and triggers no redraw.
-    if self._indicatorsReady and not self._updateRequired and self.states.displayedUnit then
-        local u = self.states.displayedUnit
-        if UnitHealthMax(u) ~= self.states.healthMax then
-            UnitButton_UpdateHealthMax(self)
-            UnitButton_UpdateHealth(self)
-            UnitButton_UpdateHealPrediction(self)
-        elseif UnitHealth(u) ~= self.states.health then
-            UnitButton_UpdateHealth(self)
-            UnitButton_UpdateHealPrediction(self)
+    if self._indicatorsReady and not self._updateRequired and states.displayedUnit then
+        local u = states.displayedUnit
+        if UnitHealthMax(u) ~= states.healthMax then
+            UnitButton_UpdateHealthStates(self)
+            UnitButton_UpdateHealthMax(self, true)
+            UnitButton_UpdateHealth(self, nil, true)
+            UnitButton_UpdateHealPrediction(self, true)
+        elseif UnitHealth(u) ~= states.health then
+            UnitButton_UpdateHealthStates(self)
+            UnitButton_UpdateHealth(self, nil, true)
+            UnitButton_UpdateHealPrediction(self, true)
         end
     end
 
@@ -3408,11 +4392,17 @@ local function UnitButton_OnTick(self)
         self._loggedPendingUpdate = nil
     elseif self._updateRequired and not self._loggedPendingUpdate then
         self._loggedPendingUpdate = true
-        F.Debug("Pending update but indicators not ready:", self:GetName(), "unit", self.states.unit or "nil", "guid", self.states.guid or "nil")
+        F.Debug("Pending update but indicators not ready:", self:GetName(), "unit", states.unit or "nil", "guid", states.guid or "nil")
     end
 
     --! for Xtarget
-    if self:GetAttribute("refreshOnUpdate") then
+    --! WotLK perf: SpotlightFrame.lua is the only writer of "refreshOnUpdate" and
+    --! it only ever writes it to spotlight buttons, so on a party/raid button the
+    --! attribute is nil for the whole session and this C call could never answer
+    --! anything else. `isSpotlight` is a plain field set once at creation
+    --! (SpotlightFrame.lua:272), so the raid buttons now skip the call entirely
+    --! and only the spotlight buttons still pay for it.
+    if self.isSpotlight and self:GetAttribute("refreshOnUpdate") then
         UnitButton_UpdateAll(self)
     end
 end
@@ -3476,8 +4466,9 @@ function B.UpdateShields(button)
     end
 
     UnitButton_UpdateHealPrediction(button)
+    --! WotLK fix/perf: UpdateShieldAbsorbs includes the paired heal-absorb
+    --! cleanup; a second explicit call only repeated the disabled WotLK branch.
     UnitButton_UpdateShieldAbsorbs(button)
-    UnitButton_UpdateHealAbsorbs(button, true)
 end
 
 function B.SetTexture(button, tex)
@@ -3530,7 +4521,10 @@ local function ShieldBar_SetValue_Horizontal(self, shieldPercent, healthPercent)
         if p ~= 0 then
             if shieldEnabled then
                 -- Constrain shield width to available space
-                local shieldWidth = math.min(p * barWidth, maxAvailableWidth)
+                --! WotLK perf: math.min -> файловый локал min (шапка, :37). Полоса
+                --! щита перерисовывается из CLEU-потока абсорбов, а math.min - это
+                --! чтение глобала плюс хеш-лукап поля на каждый вызов.
+                local shieldWidth = min(p * barWidth, maxAvailableWidth)
                 self:SetWidth(shieldWidth)
                 self:Show()
             else
@@ -3563,7 +4557,7 @@ local function ShieldBar_SetValue_Horizontal(self, shieldPercent, healthPercent)
     else
         if shieldEnabled then
             -- Constrain shield width to available space
-            local shieldWidth = math.min(shieldPercent * barWidth, maxAvailableWidth)
+            local shieldWidth = min(shieldPercent * barWidth, maxAvailableWidth)
             self:SetWidth(shieldWidth)
             self:Show()
         else
@@ -3576,26 +4570,34 @@ local function ShieldBar_SetValue_Horizontal(self, shieldPercent, healthPercent)
 end
 
 local function AbsorbsBar_SetValue_Horizontal(self, absorbsPercent, healthPercent)
-    local barWidth = self.healthBar:GetWidth()
+    --! WotLK perf: self.healthBar поднят - читался трижды.
+    local healthBar = self.healthBar
+    local barWidth = healthBar:GetWidth()
     -- WotLK 3.3.5a: Calculate max available width to prevent overflow beyond health bar
     local maxAvailableWidth = barWidth * (1 - healthPercent)
 
     if absorbInvertColor then
-        self:SetVertexColor(F.InvertColor(self.healthBar:GetStatusBarColor()))
-        self.overAbsorbGlow:SetVertexColor(F.InvertColor(self.healthBar:GetStatusBarColor()))
+        --! WotLK perf: цвет полосы спрашивался у клиента дважды и дважды же
+        --! инвертировался. Теперь один C-вызов и одна инверсия на обе текстуры.
+        --! F.InvertColor объявляет три параметра, поэтому четвёртое возвращаемое
+        --! значение GetStatusBarColor (alpha) отбрасывалось и раньше - поведение то же.
+        local r, g, b = healthBar:GetStatusBarColor()
+        local ir, ig, ib = F.InvertColor(r, g, b)
+        self:SetVertexColor(ir, ig, ib)
+        self.overAbsorbGlow:SetVertexColor(ir, ig, ib)
     end
 
+    --! WotLK perf: обе ветви считали и ставили одну и ту же ширину - вынесено
+    --! наверх, различается только показ overAbsorbGlow. math.min заменён файловым
+    --! локалом min (объявлен в шапке файла, см. :37): функция зовётся на каждом
+    --! перерисовывании абсорбов, то есть из CLEU-потока щитов.
+    local absorbWidth = min(absorbsPercent * barWidth, maxAvailableWidth)
+    self:SetWidth(absorbWidth)
+    self:Show()
+
     if absorbsPercent > healthPercent then
-        -- Constrain absorb width to available space
-        local absorbWidth = math.min(absorbsPercent * barWidth, maxAvailableWidth)
-        self:SetWidth(absorbWidth)
-        self:Show()
         self.overAbsorbGlow:Show()
     else
-        -- Constrain absorb width to available space
-        local absorbWidth = math.min(absorbsPercent * barWidth, maxAvailableWidth)
-        self:SetWidth(absorbWidth)
-        self:Show()
         self.overAbsorbGlow:Hide()
     end
 end
@@ -3632,7 +4634,7 @@ local function ShieldBar_SetValue_Vertical(self, shieldPercent, healthPercent)
         if p ~= 0 then
             if shieldEnabled then
                 -- Constrain shield height to available space
-                local shieldHeight = math.min(p * barHeight, maxAvailableHeight)
+                local shieldHeight = min(p * barHeight, maxAvailableHeight)
                 self:SetHeight(shieldHeight)
                 self:Show()
             else
@@ -3665,7 +4667,7 @@ local function ShieldBar_SetValue_Vertical(self, shieldPercent, healthPercent)
     else
         if shieldEnabled then
             -- Constrain shield height to available space
-            local shieldHeight = math.min(shieldPercent * barHeight, maxAvailableHeight)
+            local shieldHeight = min(shieldPercent * barHeight, maxAvailableHeight)
             self:SetHeight(shieldHeight)
             self:Show()
         else
@@ -3678,26 +4680,26 @@ local function ShieldBar_SetValue_Vertical(self, shieldPercent, healthPercent)
 end
 
 local function AbsorbsBar_SetValue_Vertical(self, absorbsPercent, healthPercent)
-    local barHeight = self.healthBar:GetHeight()
+    --! WotLK perf: тот же набор приёмов, что в горизонтальной версии.
+    local healthBar = self.healthBar
+    local barHeight = healthBar:GetHeight()
     -- WotLK 3.3.5a: Calculate max available height to prevent overflow beyond health bar
     local maxAvailableHeight = barHeight * (1 - healthPercent)
 
     if absorbInvertColor then
-        self:SetVertexColor(F.InvertColor(self.healthBar:GetStatusBarColor()))
-        self.overAbsorbGlow:SetVertexColor(F.InvertColor(self.healthBar:GetStatusBarColor()))
+        local r, g, b = healthBar:GetStatusBarColor()
+        local ir, ig, ib = F.InvertColor(r, g, b)
+        self:SetVertexColor(ir, ig, ib)
+        self.overAbsorbGlow:SetVertexColor(ir, ig, ib)
     end
 
+    local absorbHeight = min(absorbsPercent * barHeight, maxAvailableHeight)
+    self:SetHeight(absorbHeight)
+    self:Show()
+
     if absorbsPercent > healthPercent then
-        -- Constrain absorb height to available space
-        local absorbHeight = math.min(absorbsPercent * barHeight, maxAvailableHeight)
-        self:SetHeight(absorbHeight)
-        self:Show()
         self.overAbsorbGlow:Show()
     else
-        -- Constrain absorb height to available space
-        local absorbHeight = math.min(absorbsPercent * barHeight, maxAvailableHeight)
-        self:SetHeight(absorbHeight)
-        self:Show()
         self.overAbsorbGlow:Hide()
     end
 end
@@ -3722,7 +4724,9 @@ function B.SetOrientation(button, orientation, rotateTexture)
     local absorbsBar = button.widgets.absorbsBar
     local overAbsorbGlow = button.widgets.overAbsorbGlow
 
-    gapTexture:SetColorTexture(unpack(CELL_BORDER_COLOR))
+    --! WotLK fix: SetColorTexture на 3.3.5 нет - это нативная числовая форма
+    --! SetTexture(r, g, b[, a]); шим TextureBase в WidgetAPI удалён.
+    gapTexture:SetTexture(unpack(CELL_BORDER_COLOR))
 
     button.orientation = orientation
     if orientation == "vertical_health" then
@@ -4202,12 +5206,17 @@ function CellUnitButton_OnLoad(button)
     SetBarTextureDrawLayer(powerBar, "ARTWORK", -7)
     powerBar:SetFrameLevel(button:GetFrameLevel()+2)
 
+    --! WotLK fix: install Cell-owned smoothing methods directly on these bars;
+    --! do not consume or replace a global SmoothStatusBarMixin.
+    AttachCellSmoothing(healthBar)
+    AttachCellSmoothing(powerBar)
+
     local gapTexture = button:CreateTexture(nil, "BORDER")
     button.widgets.gapTexture = gapTexture
     -- P.Point(gapTexture, "BOTTOMLEFT", powerBar, "TOPLEFT")
     -- P.Point(gapTexture, "BOTTOMRIGHT", powerBar, "TOPRIGHT")
     -- P.Height(gapTexture, 1)
-    gapTexture:SetColorTexture(unpack(CELL_BORDER_COLOR))
+    gapTexture:SetTexture(unpack(CELL_BORDER_COLOR))
 
     -- power loss
     local powerBarLoss = button:CreateTexture(name.."PowerBarLoss", "ARTWORK", nil , -7)
@@ -4434,36 +5443,12 @@ end
 --! affected button(s) as soon as fresh spec info arrives.
 do
     local LGI = LibStub and LibStub:GetLibrary("LibGroupInfo", true)
-    if LGI and not Cell.isRetail then
+    --! WotLK fix: `not Cell.isRetail` вырезано - флаг задан литералом false
+    --! в Utils.lua, ветка решалась статически.
+    if LGI then
         LGI.RegisterCallback("CellUnitButton_RoleUpdate", "GroupInfo_Update", function(_, guid)
             if not Cell.loaded then return end
-            F.HandleUnitButton("guid", guid, function(b)
-                UnitButton_UpdateRole(b)
-
-                if not (b:IsVisible() or b.isPreview) then
-                    -- recompute power filters on next OnShow (same flag the
-                    -- normal update path uses)
-                    b._powerUpdateRequired = 1
-                    return
-                end
-
-                b._shouldShowPowerText = ShouldShowPowerText(b)
-                b._shouldShowPowerBar = ShouldShowPowerBar(b)
-                CheckPowerEventRegistration(b)
-
-                if b._shouldShowPowerText then
-                    UnitButton_UpdatePowerTextColor(b)
-                    UnitButton_UpdatePowerText(b)
-                else
-                    b.indicators.powerText:Hide()
-                end
-
-                if b._shouldShowPowerBar then
-                    ShowPowerBar(b)
-                else
-                    HidePowerBar(b)
-                end
-            end)
+            F.HandleUnitButton("guid", guid, UnitButton_RoleChanged)
         end)
     end
 end

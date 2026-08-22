@@ -1,9 +1,24 @@
 local addonName = ...
 ---@class Cell
 local Cell = select(2, ...)
+--! WotLK fix: bind Cell timers privately so standalone !!!ClassicAPI cannot change semantics.
+local C_Timer = Cell.C_Timer
 local L = Cell.L
 ---@type CellFuncs
 local F = Cell.funcs
+local A = Cell.animations
+--! WotLK fix: copy Cell's private smoothing methods directly; do not depend on
+--! or publish shared Mixin/SmoothStatusBarMixin compatibility globals.
+local SmoothStatusBarMixin = Cell.SmoothStatusBarMixin
+local function ApplySmoothStatusBarMixin(bar)
+    for key, value in pairs(SmoothStatusBarMixin) do
+        bar[key] = value
+    end
+    return bar
+end
+--! WotLK fix: Meta/Command is unavailable on stock 3.3.5a. Keep the fallback
+--! private instead of publishing a fake IsMetaKeyDown global to every addon.
+local IsMetaKeyDown = IsMetaKeyDown or function() return false end
 ---@type PixelPerfectFuncs
 local P = Cell.pixelPerfectFuncs
 local LCG = LibStub("LibCustomGlow-1.0-Cell")
@@ -22,9 +37,17 @@ local colors = {
 
 local class = select(2, UnitClass("player"))
 local accentColor = {s="|cCCB2B2B2", t={0.7, 0.7, 0.7}}
-if class then
-    accentColor.t[1], accentColor.t[2], accentColor.t[3], accentColor.s = RAID_CLASS_COLORS[class].r, RAID_CLASS_COLORS[class].g, RAID_CLASS_COLORS[class].b, RAID_CLASS_COLORS[class].colorStr
-    accentColor.s = "|c"..accentColor.s
+--! WotLK fix: this was the single place in Cell that read RAID_CLASS_COLORS raw,
+--! ignoring CUSTOM_CLASS_COLORS - so with a class-recolour addon loaded first,
+--! Cell's option-window accent stayed on the Blizzard shade while the rest of the
+--! player's UI used the custom one. F.GetClassColor / F.GetClassColorStr already
+--! implement the fallback (Utils.lua:1164, :1188) and normalize the class token;
+--! Utils.lua is Cell.toc:30, this file is Cell.toc:33, so they exist by now.
+--! The RAID_CLASS_COLORS probe stays: F.GetClassColor returns white (1,1,1) for an
+--! unknown class rather than nil, and white is not the grey default above.
+if class and RAID_CLASS_COLORS[class] then
+    accentColor.t[1], accentColor.t[2], accentColor.t[3] = F.GetClassColor(class)
+    accentColor.s = F.GetClassColorStr(class)
 end
 
 -----------------------------------------
@@ -80,8 +103,11 @@ font_small:SetShadowColor(0, 0, 0)
 font_small:SetShadowOffset(1, -1)
 font_small:SetJustifyH("CENTER")
 
+--! WotLK fix: UNIT_NAME_FONT_CHINESE is not a stock 3.3.5 global. Keep the
+--! fallback private while preserving a custom-core/standalone owner if present.
+local unitNameFontChinese = UNIT_NAME_FONT_CHINESE or "Fonts\\FRIZQT__.TTF"
 local font_chinese = CreateFont(font_chinese_name)
-font_chinese:SetFont(UNIT_NAME_FONT_CHINESE, 14, "")
+font_chinese:SetFont(unitNameFontChinese, 14, "")
 font_chinese:SetTextColor(1, 1, 1, 1)
 font_chinese:SetShadowColor(0, 0, 0)
 font_chinese:SetShadowOffset(1, -1)
@@ -130,7 +156,7 @@ function Cell.UpdateOptionsFont(offset, useGameFont)
     font_title_disable:SetFont(defaultFont, 14+offset, "")
     font:SetFont(defaultFont, 13+offset, "")
     font_small:SetFont(defaultFont, 11+offset, "")
-    font_chinese:SetFont(UNIT_NAME_FONT_CHINESE, 14+offset, "")
+    font_chinese:SetFont(unitNameFontChinese, 14+offset, "")
     font_disable:SetFont(defaultFont, 13+offset, "")
     font_class_title:SetFont(defaultFont, 14+offset, "")
     font_class:SetFont(defaultFont, 13+offset, "")
@@ -171,7 +197,9 @@ function Cell.ColorFontStringWithAccentColor(fs)
 end
 
 function Cell.WrapTextInAccentColor(text)
-    return WrapTextInColorCode(text, accentColor.s) -- FIXME: ("|c%s%s|r"):format(colorHexString, text)
+    --! WotLK fix: accentColor.s already includes the |c prefix. Format this
+    --! Cell-owned string directly instead of requiring a global retail color API.
+    return accentColor.s..tostring(text).."|r"
 end
 
 -----------------------------------------
@@ -204,48 +232,81 @@ end
 -----------------------------------------
 -- rainbow text
 -----------------------------------------
-local colorSelect = CreateFrame("Colorselect")
-function Cell.StartRainbowText(fs, reverse)
-    -- save original
-    fs.text = fs:GetText()
+--! WotLK perf: радуга крутилась через CreateFrame("Colorselect") - две C-функции
+--! (SetColorHSV + GetColorRGB) плюс string.format на КАЖДЫЙ символ КАЖДЫЙ кадр.
+--! На Lua 5.1 без JIT это самый дорогой OnUpdate в панели настроек. Оттенков всего
+--! 360 штук, они не меняются - считаем префиксы |cffRRGGBB один раз через чисто
+--! луашный F.ConvertHSBToRGB и дальше только конкатенируем.
+--! WotLK fix: шаг брался как 360/(#fs.text-1), то есть по БАЙТАМ, тогда как gsub
+--! шёл по UTF-8 символам: на кириллице/китайском радуга не добирала до конца
+--! спектра, а на однобайтовой метке из одного символа было деление на ноль.
+--! WotLK fix: скорость зависела от fps (шаг на кадр), теперь градусы в секунду.
+do
+    local floor = math.floor
+    local format = string.format
+    local gsub = string.gsub
+    local gmatch = string.gmatch
 
-    -- updater
-    fs.rainbow = true
-    if not fs.updater then
-        fs.updater = CreateFrame("Frame", nil, fs:GetParent())
+    local UTF8_CHAR = "[%z\1-\127\194-\244][\128-\191]*"
+    local DEGREES_PER_SECOND = 60 -- полный круг за 6 секунд, как при 60 fps раньше
+
+    local prefixes
+
+    local function BuildPrefixes()
+        prefixes = {}
+        for hue = 0, 359 do
+            local r, g, b = F.ConvertHSBToRGB(hue, 1, 1)
+            prefixes[hue] = format("|cff%02x%02x%02x",
+                floor(r * 255 + 0.5), floor(g * 255 + 0.5), floor(b * 255 + 0.5))
+        end
     end
 
-    local pos = 0
-    local step = 360 / (#fs.text-1)
-    local col
-    local str
+    function Cell.StartRainbowText(fs, reverse)
+        if not prefixes then BuildPrefixes() end
 
-    fs.updater:SetScript("OnUpdate", function(self, elapsed)
-
-        local hue = pos
-        -- NOTE: lua 正则匹配中文，不知道会不会有问题
-        str = fs.text:gsub("[%z\1-\127\194-\244][\128-\191]*", function(char)
-            colorSelect:SetColorHSV(hue,1,1)
-            col = CreateColor(colorSelect:GetColorRGB())
-            hue = (hue+step) > 360 and (hue+step)-360 or hue+step
-            return col:WrapTextInColorCode(char)
-        end)
-
-        if reverse then
-            pos = (pos+1) > 360 and 0 or pos + 1
-        else
-            pos = (pos-1) < 0 and 360 or pos - 1
+        -- save original (повторный старт не должен запомнить уже раскрашенный текст)
+        if not fs.rainbow then
+            fs.text = fs:GetText()
         end
 
-        fs:SetText(str)
-    end)
-end
+        local text = fs.text
+        if not text or text == "" then return end
 
-function Cell.StopRainbowText(fs)
-    fs.rainbow = nil
-    if fs.updater then
-        fs.updater:SetScript("OnUpdate", nil)
-        fs:SetText(fs.text)
+        local count = 0
+        for _ in gmatch(text, UTF8_CHAR) do count = count + 1 end
+        local step = count > 1 and (360 / (count - 1)) or 0
+
+        -- updater
+        fs.rainbow = true
+        if not fs.updater then
+            fs.updater = CreateFrame("Frame", nil, fs:GetParent())
+        end
+
+        local hue = 0
+        local function Colorize(char)
+            local prefix = prefixes[floor(hue) % 360]
+            hue = hue + step
+            return prefix .. char .. "|r"
+        end
+
+        local pos = 0
+        local direction = reverse and 1 or -1
+
+        fs.updater:SetScript("OnUpdate", function(_, elapsed)
+            pos = (pos + direction * elapsed * DEGREES_PER_SECOND) % 360
+            hue = pos
+            fs:SetText((gsub(text, UTF8_CHAR, Colorize)))
+        end)
+    end
+
+    function Cell.StopRainbowText(fs)
+        fs.rainbow = nil
+        if fs.updater then
+            fs.updater:SetScript("OnUpdate", nil)
+            if fs.text then
+                fs:SetText(fs.text)
+            end
+        end
     end
 end
 
@@ -263,11 +324,13 @@ function Cell.CreateSeparator(text, parent, width, color)
 
     local line = parent:CreateTexture()
     P.Size(line, width, 1)
-    line:SetColorTexture(unpack(color.t))
+    --! WotLK fix: SetColorTexture на 3.3.5 нет - это нативная числовая форма
+    --! SetTexture(r, g, b[, a]); шим TextureBase в WidgetAPI удалён.
+    line:SetTexture(unpack(color.t))
     P.Point(line, "TOPLEFT", fs, "BOTTOMLEFT", 0, -2)
     local shadow = parent:CreateTexture()
     P.Size(shadow, width, 1)
-    shadow:SetColorTexture(0, 0, 0, 1)
+    shadow:SetTexture(0, 0, 0, 1)
     P.Point(shadow, "TOPLEFT", line, "TOPLEFT", 1, -1)
 
     return fs
@@ -284,13 +347,13 @@ function Cell.CreateTitledPane(parent, text, width, height, color)
     local line = pane:CreateTexture()
     pane.line = line
     P.Height(line, 1)
-    line:SetColorTexture(color.r, color.g, color.b, color.a)
+    line:SetTexture(color.r, color.g, color.b, color.a)
     line:SetPoint("TOPLEFT", pane, "TOPLEFT", 0, P.Scale(-17))
     line:SetPoint("TOPRIGHT", pane, "TOPRIGHT", 0, P.Scale(-17))
 
     local shadow = pane:CreateTexture()
     P.Height(shadow, 1)
-    shadow:SetColorTexture(0, 0, 0, 1)
+    shadow:SetTexture(0, 0, 0, 1)
     shadow:SetPoint("TOPLEFT", line, "TOPLEFT", P.Scale(1), P.Scale(-1))
     shadow:SetPoint("TOPRIGHT", line, "TOPRIGHT", P.Scale(1), P.Scale(-1))
 
@@ -595,7 +658,7 @@ function Cell.CreateButton(parent, text, buttonColor, size, noBorder, noBackgrou
             bg:SetDrawLayer("BACKGROUND", -8)
             b.bg = bg
             bg:SetAllPoints(b)
-            bg:SetColorTexture(0.115, 0.115, 0.115, 1)
+            bg:SetTexture(0.115, 0.115, 0.115, 1)
         end
 
         b:SetBackdropBorderColor(0, 0, 0, 1)
@@ -625,15 +688,15 @@ function Cell.CreateButton(parent, text, buttonColor, size, noBorder, noBackgrou
     Cell.SetTooltips(b, "ANCHOR_TOPLEFT", 0, 3, ...)
 
     -- texture
+    --! WotLK fix: аргумент isAtlas сохранён в сигнатуре (за ним позиционно идёт
+    --! noPushDownEffect, см. Modules/Layouts/Layouts.lua:2049), но ветка с
+    --! SetAtlas убрана: атласов на 3.3.5 нет, шим удалён, а единственный
+    --! вызывающий передаёт сюда false.
     function b:SetTexture(tex, texSize, point, isAtlas, noPushDownEffect)
         b.tex = b:CreateTexture(nil, "ARTWORK")
         b.tex:SetPoint(unpack(point))
         b.tex:SetSize(unpack(texSize))
-        if isAtlas then
-            b.tex:SetAtlas(tex)
-        else
-            b.tex:SetTexture(tex)
-        end
+        b.tex:SetTexture(tex)
         -- update fontstring point
         if s then
             s:ClearAllPoints()
@@ -806,12 +869,12 @@ function Cell.CreateCheckButton(parent, label, onClick, ...)
     cb:SetBackdropBorderColor(0, 0, 0, 1)
 
     local checkedTexture = cb:CreateTexture(nil, "ARTWORK")
-    checkedTexture:SetColorTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.7)
+    checkedTexture:SetTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.7)
     checkedTexture:SetPoint("TOPLEFT", P.Scale(1), P.Scale(-1))
     checkedTexture:SetPoint("BOTTOMRIGHT", P.Scale(-1), P.Scale(1))
 
     local highlightTexture = cb:CreateTexture(nil, "ARTWORK")
-    highlightTexture:SetColorTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.1)
+    highlightTexture:SetTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.1)
     highlightTexture:SetPoint("TOPLEFT", P.Scale(1), P.Scale(-1))
     highlightTexture:SetPoint("BOTTOMRIGHT", P.Scale(-1), P.Scale(1))
 
@@ -821,13 +884,13 @@ function Cell.CreateCheckButton(parent, label, onClick, ...)
 
     cb:SetScript("OnEnable", function()
         cb.label:SetTextColor(1, 1, 1)
-        checkedTexture:SetColorTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.7)
+        checkedTexture:SetTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.7)
         cb:SetBackdropBorderColor(0, 0, 0, 1)
     end)
 
     cb:SetScript("OnDisable", function()
         cb.label:SetTextColor(0.4, 0.4, 0.4)
-        checkedTexture:SetColorTexture(0.4, 0.4, 0.4)
+        checkedTexture:SetTexture(0.4, 0.4, 0.4)
         cb:SetBackdropBorderColor(0, 0, 0, 0.4)
     end)
 
@@ -837,6 +900,24 @@ function Cell.CreateCheckButton(parent, label, onClick, ...)
             cb:SetHitRectInsets(0, -cb.label:GetStringWidth()-5, 0, 0)
         else
             cb:SetHitRectInsets(0, 0, 0, 0)
+        end
+    end
+
+    --! WotLK fix: SetEnabled exists on no 3.3.5 widget (codex: "НЕТ"); only
+    --! Enable/Disable/IsEnabled are native, inherited by CheckButton from Button.
+    --! WidgetAPI injects a SetEnabled adapter into the Button metatable, but each
+    --! 3.3.5 widget type carries its own __index table, so CheckButton never
+    --! received it and every options pane died on the first checkbox (P0-B2 run,
+    --! session 51: General.lua:319, Layouts.lua:2690, Appearance.lua:1485,
+    --! RaidTools.lua:44). Previously the raw global came from an external
+    --! compatibility addon. Own the adapter per instance instead of taxing the
+    --! shared CheckButton metatable: this is the only CheckButton constructor in
+    --! Cell, and OnEnable/OnDisable above already carry the visual state.
+    function cb:SetEnabled(enabled)
+        if enabled then
+            cb:Enable()
+        else
+            cb:Disable()
         end
     end
 
@@ -865,7 +946,7 @@ function Cell.CreateColorPicker(parent, label, hasOpacity, onChange, onConfirm)
     cp.label:SetPoint("LEFT", cp, "RIGHT", 5, 0)
 
     cp.mask = cp:CreateTexture(nil, "ARTWORK")
-    cp.mask:SetColorTexture(0.15, 0.15, 0.15, 0.7)
+    cp.mask:SetTexture(0.15, 0.15, 0.15, 0.7)
     cp.mask:SetPoint("TOPLEFT", P.Scale(1), P.Scale(-1))
     cp.mask:SetPoint("BOTTOMRIGHT", P.Scale(-1), P.Scale(1))
     cp.mask:Hide()
@@ -961,6 +1042,51 @@ end
 -----------------------------------------
 -- editbox
 -----------------------------------------
+--! WotLK fix: EditBox on 3.3.5 has NO native Enable/Disable/IsEnabled at all
+--! (codex: only EnableMouse/EnableKeyboard/IsMouseEnabled; Button and Slider do
+--! have the real trio, EditBox does not). WidgetAPI.lua:242 fills that hole in
+--! the shared EditBox metatable, but its Enable/Disable swap the FONT OBJECT to
+--! Blizzard's GameFontWhite/GameFontDisable - which throws away the font set by
+--! Cell.CreateEditBox and never puts it back, so one disable leaves the box on
+--! Blizzard's face and size for the rest of the session. That is not a corner
+--! case: Cell.CreateSlider's OnDisable/OnEnable drive their inline edit box
+--! through SetEnabled(false/true), and Appearance.lua:40 registers scaleSlider
+--! with F.ApplyCombatProtectionToWidget, so every combat entry and exit runs the
+--! cycle. Own the trio per instance instead of touching the shared metatable
+--! (rule 3 - other addons read that entry), exactly as CheckButton does at :883.
+--! Kept from the shared version: the _Enabled flag name and firing the
+--! OnEnable/OnDisable scripts by hand, since 3.3.5 fires neither by itself for
+--! an EditBox. Dropped: the font swap (the scripts already carry grey/white via
+--! SetTextColor) and ClearFocus inside Enable, which would kick the player out
+--! of a box they are typing in. Shared upvalues rather than per-instance
+--! closures: same reason eb.AddConfirmButton below is one.
+local function EditBox_Enable(self)
+    self._Enabled = true
+    self:EnableMouse(true)
+    local script = self:GetScript("OnEnable")
+    if script then script(self) end
+end
+
+local function EditBox_Disable(self)
+    self._Enabled = nil
+    self:EnableMouse(false)
+    self:ClearFocus()
+    local script = self:GetScript("OnDisable")
+    if script then script(self) end
+end
+
+local function EditBox_IsEnabled(self)
+    return self._Enabled or false
+end
+
+local function EditBox_SetEnabled(self, enabled)
+    if enabled then
+        EditBox_Enable(self)
+    else
+        EditBox_Disable(self)
+    end
+end
+
 local function EditBox_AddConfirmButton(self, func, mode)
     self.confirmBtn = self.confirmBtn or Cell.CreateButton(self, "OK", "accent", {27, 20})
     self.confirmBtn:Hide()
@@ -1029,6 +1155,15 @@ function Cell.CreateEditBox(parent, width, height, isTransparent, isMultiLine, i
     eb:SetScript("OnDisable", function() eb:SetTextColor(0.4, 0.4, 0.4, 1) end)
     eb:SetScript("OnEnable", function() eb:SetTextColor(1, 1, 1, 1) end)
 
+    --! WotLK fix: own Enable/Disable/IsEnabled/SetEnabled per instance so the
+    --! shared EditBox metatable adapter never swaps the font object set above.
+    --! Full reasoning at the EditBox_Enable definition.
+    eb._Enabled = true
+    eb.Enable = EditBox_Enable
+    eb.Disable = EditBox_Disable
+    eb.IsEnabled = EditBox_IsEnabled
+    eb.SetEnabled = EditBox_SetEnabled
+
     eb.AddConfirmButton = EditBox_AddConfirmButton
 
     return eb
@@ -1075,6 +1210,18 @@ function Cell.CreateScrollEditBox(parent, onTextChanged, scrollStep)
         end
     end)
 
+    --! WotLK fix: CreateFrame("ScrollFrame") starts with the MOUSE DISABLED,
+    --! and Cell.CreateScrollFrame only calls EnableMouseWheel - so this
+    --! OnMouseDown never fired and clicking the box never handed keyboard
+    --! focus to the EditBox. The EditBox is only as tall as its own text
+    --! (20px while empty), so everything below that thin strip was dead
+    --! space, and without focus Ctrl+V does nothing at all. Blizzard avoids
+    --! the problem by sizing its macro EditBox to the whole visible area
+    --! (Blizzard_MacroUI.xml: MacroFrameText, 286x85, the scroll child);
+    --! here the scroll frame has to take the click and forward the focus.
+    --! Scoped to this widget: Cell.CreateScrollFrame is shared with lists and
+    --! dropdowns, which must keep their click-through behaviour.
+    frame.scrollFrame:EnableMouse(true)
     frame.scrollFrame:SetScript("OnMouseDown", function()
         frame.eb:SetFocus(true)
     end)
@@ -1103,6 +1250,14 @@ end
 function Cell.CreateSlider(name, parent, low, high, width, step, onValueChangedFn, afterValueChangedFn, isPercentage, ...)
     local tooltips = {...}
     local slider = CreateFrame("Slider", nil, parent, nil)
+    --! WotLK fix: synthesize retail's userChanged contract only for this Cell
+    --! slider; never replace the shared native Slider metatable.
+    local NativeSetValue = slider.SetValue
+    function slider:SetValue(value)
+        self._cellProgrammaticChange = true
+        NativeSetValue(self, value)
+        self._cellProgrammaticChange = nil
+    end
     slider:SetValueStep(step)
     if slider.SetObeyStepOnDrag then
         slider:SetObeyStepOnDrag(true)
@@ -1162,13 +1317,13 @@ function Cell.CreateSlider(name, parent, low, high, width, step, onValueChangedF
     highText:SetPoint("BOTTOM", currentEditBox)
 
     local tex = slider:CreateTexture(nil, "ARTWORK")
-    tex:SetColorTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.7)
+    tex:SetTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.7)
     tex:SetSize(8, 8)
     slider:SetThumbTexture(tex)
 
     local valueBeforeClick
     slider.onEnter = function()
-        tex:SetColorTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 1)
+        tex:SetTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 1)
         valueBeforeClick = slider:GetValue()
         if #tooltips > 0 then
             ShowTooltips(slider, "ANCHOR_TOPLEFT", 0, 3, tooltips)
@@ -1176,7 +1331,7 @@ function Cell.CreateSlider(name, parent, low, high, width, step, onValueChangedF
     end
     slider:SetScript("OnEnter", slider.onEnter)
     slider.onLeave = function()
-        tex:SetColorTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.7)
+        tex:SetTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.7)
         CellTooltip:Hide()
     end
     slider:SetScript("OnLeave", slider.onLeave)
@@ -1188,6 +1343,11 @@ function Cell.CreateSlider(name, parent, low, high, width, step, onValueChangedF
 
     local oldValue
     slider:SetScript("OnValueChanged", function(self, value, userChanged)
+        --! WotLK fix: 3.3.5 does not provide userChanged; a native callback
+        --! outside our SetValue wrapper is a user interaction.
+        if userChanged == nil then
+            userChanged = not self._cellProgrammaticChange
+        end
         if oldValue == value then return end
         oldValue = value
 
@@ -1251,7 +1411,7 @@ function Cell.CreateSlider(name, parent, low, high, width, step, onValueChangedF
         currentEditBox:SetEnabled(false)
         slider:SetScript("OnEnter", nil)
         slider:SetScript("OnLeave", nil)
-        tex:SetColorTexture(0.4, 0.4, 0.4, 0.7)
+        tex:SetTexture(0.4, 0.4, 0.4, 0.7)
         lowText:SetTextColor(0.4, 0.4, 0.4)
         highText:SetTextColor(0.4, 0.4, 0.4)
     end)
@@ -1261,7 +1421,7 @@ function Cell.CreateSlider(name, parent, low, high, width, step, onValueChangedF
         currentEditBox:SetEnabled(true)
         slider:SetScript("OnEnter", slider.onEnter)
         slider:SetScript("OnLeave", slider.onLeave)
-        tex:SetColorTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.7)
+        tex:SetTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.7)
         lowText:SetTextColor(unpack(colors.grey.t))
         highText:SetTextColor(unpack(colors.grey.t))
     end)
@@ -1285,6 +1445,14 @@ function Cell.CreateSwitch(parent, size, leftText, leftValue, rightText, rightVa
     local switch = CreateFrame("Frame", nil, parent, nil)
     P.Size(switch, size[1], size[2])
     Cell.StylizeFrame(switch, {0.115, 0.115, 0.115, 1})
+    --! WotLK fix: a bare Frame gets no mouse input until EnableMouse(true), so the three
+    --! handlers below (OnMouseDown / OnEnter / OnLeave) never fired and the switch was a
+    --! dead picture. Neither CreateFrame nor StylizeFrame nor P.Size turns it on - unlike
+    --! Cell.CreateFrame, which does it at :359. This went unnoticed because CreateSwitch
+    --! had no live caller in the backport until the Role|Spec toggle in the Layouts pane
+    --! (the only other one, Layouts.lua:2630, is commented out). Upstream has the same
+    --! hole in all three switch constructors; the other two are still callerless.
+    switch:EnableMouse(true)
 
     local textLeft = switch:CreateFontString(nil, "OVERLAY", font_name)
     textLeft:SetPoint("LEFT", 2, 0)
@@ -1298,9 +1466,9 @@ function Cell.CreateSwitch(parent, size, leftText, leftValue, rightText, rightVa
 
     local highlight = switch:CreateTexture(nil, "ARTWORK")
     if class == "PRIEST" and not accentColorOverride then
-        highlight:SetColorTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.35)
+        highlight:SetTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.35)
     else
-        highlight:SetColorTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.45)
+        highlight:SetTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.45)
     end
 
     local function UpdateHighlight(which)
@@ -1358,17 +1526,17 @@ function Cell.CreateSwitch(parent, size, leftText, leftValue, rightText, rightVa
 
     switch:SetScript("OnEnter", function()
         if class == "PRIEST" and not accentColorOverride then
-            highlight:SetColorTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.55)
+            highlight:SetTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.55)
         else
-            highlight:SetColorTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.65)
+            highlight:SetTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.65)
         end
     end)
 
     switch:SetScript("OnLeave", function()
         if class == "PRIEST" and not accentColorOverride then
-            highlight:SetColorTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.35)
+            highlight:SetTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.35)
         else
-            highlight:SetColorTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.45)
+            highlight:SetTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.45)
         end
     end)
 
@@ -1382,9 +1550,9 @@ function Cell.CreateTripleSwitch(parent, size, func)
 
     local highlight = switch:CreateTexture(nil, "ARTWORK")
     if class == "PRIEST" and not accentColorOverride then
-        highlight:SetColorTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.35)
+        highlight:SetTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.35)
     else
-        highlight:SetColorTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.45)
+        highlight:SetTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.45)
     end
 
     local function UpdateHighlight(which)
@@ -1451,17 +1619,17 @@ function Cell.CreateTripleSwitch(parent, size, func)
 
     switch:SetScript("OnEnter", function()
         if class == "PRIEST" and not accentColorOverride then
-            highlight:SetColorTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.55)
+            highlight:SetTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.55)
         else
-            highlight:SetColorTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.65)
+            highlight:SetTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.65)
         end
     end)
 
     switch:SetScript("OnLeave", function()
         if class == "PRIEST" and not accentColorOverride then
-            highlight:SetColorTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.35)
+            highlight:SetTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.35)
         else
-            highlight:SetColorTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.45)
+            highlight:SetTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.45)
         end
     end)
 
@@ -1475,9 +1643,9 @@ function Cell.CreateFourfoldSwitch(parent, size, func)
 
     local highlight = switch:CreateTexture(nil, "ARTWORK")
     if class == "PRIEST" and not accentColorOverride then
-        highlight:SetColorTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.35)
+        highlight:SetTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.35)
     else
-        highlight:SetColorTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.45)
+        highlight:SetTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.45)
     end
 
     local function UpdateHighlight(value)
@@ -1539,17 +1707,17 @@ function Cell.CreateFourfoldSwitch(parent, size, func)
 
     switch:SetScript("OnEnter", function()
         if class == "PRIEST" and not accentColorOverride then
-            highlight:SetColorTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.55)
+            highlight:SetTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.55)
         else
-            highlight:SetColorTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.65)
+            highlight:SetTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.65)
         end
     end)
 
     switch:SetScript("OnLeave", function()
         if class == "PRIEST" and not accentColorOverride then
-            highlight:SetColorTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.35)
+            highlight:SetTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.35)
         else
-            highlight:SetColorTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.45)
+            highlight:SetTexture(accentColor.t[1], accentColor.t[2], accentColor.t[3], 0.45)
         end
     end)
 
@@ -1566,7 +1734,12 @@ function Cell.CreateStatusBar(name, parent, width, height, maxValue, smooth, fun
     if not texture then texture = Cell.vars.whiteTexture end
     bar:SetStatusBarTexture(texture)
     bar:SetStatusBarColor(unpack(color))
-    bar:GetStatusBarTexture():SetDrawLayer("BORDER", -1)
+    --! WotLK fix: keep native StatusBar methods untouched and guard the
+    --! client-sensitive texture lookup locally.
+    local barTexture = bar:GetStatusBarTexture()
+    if barTexture then
+        barTexture:SetDrawLayer("BORDER", -1)
+    end
 
     P.Width(bar, width)
     P.Height(bar, height)
@@ -1584,7 +1757,7 @@ function Cell.CreateStatusBar(name, parent, width, height, maxValue, smooth, fun
 
     bar:SetMinMaxValues(0, maxValue)
     bar:SetValue(0)
-    if smooth then Mixin(bar, SmoothStatusBarMixin) end -- Interface\SharedXML\SmoothStatusBar.lua
+    if smooth then ApplySmoothStatusBarMixin(bar) end --! WotLK fix: Cell-private SharedXML smoothing fork.
 
     function bar:SetMaxValue(m)
         maxValue = m
@@ -1984,7 +2157,7 @@ function Cell.CreatePopupEditBox(parent, func, multiLine)
         tipsBackground:SetPoint("TOPLEFT", eb, "BOTTOMLEFT")
         tipsBackground:SetPoint("TOPRIGHT", eb, "BOTTOMRIGHT")
         tipsBackground:SetPoint("BOTTOM", tipsText, 0, -2)
-        tipsBackground:SetColorTexture(0.115, 0.115, 0.115, 0.9)
+        tipsBackground:SetTexture(0.115, 0.115, 0.115, 0.9)
         tipsBackground:Hide()
 
         function eb:SetTips(text)
@@ -2195,7 +2368,7 @@ local function CreateItemButtons(items, itemTable, itemParent, level)
                 b.iconBg = b:CreateTexture(nil, "BORDER")
                 P.Size(b.iconBg, 16, 16)
                 b.iconBg:SetPoint("TOPLEFT", P.Scale(5), P.Scale(-1))
-                b.iconBg:SetColorTexture(0, 0, 0, 1)
+                b.iconBg:SetTexture(0, 0, 0, 1)
 
                 b.icon = b:CreateTexture(nil, "ARTWORK")
                 b.icon:SetPoint("TOPLEFT", b.iconBg, P.Scale(1), P.Scale(-1))
@@ -2318,7 +2491,7 @@ local function CreateItemButtons_Scroll(items, itemTable, limit, level)
                 b.iconBg = b:CreateTexture(nil, "BORDER")
                 P.Size(b.iconBg, 16, 16)
                 b.iconBg:SetPoint("TOPLEFT", P.Scale(5), P.Scale(-1))
-                b.iconBg:SetColorTexture(0, 0, 0, 1)
+                b.iconBg:SetTexture(0, 0, 0, 1)
 
                 b.icon = b:CreateTexture(nil, "ARTWORK")
                 b.icon:SetPoint("TOPLEFT", b.iconBg, P.Scale(1), P.Scale(-1))
@@ -2500,20 +2673,18 @@ function Cell.CreateScrollTextFrame(parent, s, timePerScroll, scrollStep, delayT
     -- alpha changing animation
     local fadeIn = text:CreateAnimationGroup()
     local alpha = fadeIn:CreateAnimation("Alpha")
-    alpha:SetFromAlpha(0)
-    alpha:SetToAlpha(1)
+    --! WotLK fix: use Cell's private absolute-alpha driver; do not depend on shared widget shims.
+    A.SetAbsoluteAlpha(alpha, 0, 1)
     alpha:SetDuration(0.5)
 
     local fadeOutIn = text:CreateAnimationGroup()
     local alpha1 = fadeOutIn:CreateAnimation("Alpha")
     alpha1:SetStartDelay(delayTime)
-    alpha1:SetFromAlpha(1)
-    alpha1:SetToAlpha(0)
+    A.SetAbsoluteAlpha(alpha1, 1, 0)
     alpha1:SetDuration(0.5)
     alpha1:SetOrder(1)
     local alpha2 = fadeOutIn:CreateAnimation("Alpha")
-    alpha2:SetFromAlpha(0)
-    alpha2:SetToAlpha(1)
+    A.SetAbsoluteAlpha(alpha2, 0, 1)
     alpha2:SetDuration(0.5)
     alpha2:SetOrder(2)
     alpha2:SetStartDelay(0.1)
@@ -2752,6 +2923,14 @@ function Cell.CreateScrollFrame(parent, top, bottom, color, border)
         local uiScale = CellParent:GetEffectiveScale() -- https://wowpedia.fandom.com/wiki/API_GetCursorPosition
         local currentScroll = scrollFrame:GetVerticalScroll()
         self:SetScript("OnUpdate", function(self)
+            --! WotLK fix: a release outside the scrollbar can skip OnMouseUp;
+            --! stop the temporary driver from the 3.3.5 IsMouseButtonDown
+            --! watchdog used by Blizzard's own drag code.
+            if not IsMouseButtonDown("LeftButton") then
+                self:SetScript("OnUpdate", nil)
+                return
+            end
+
             --------------------- y offset before dragging + mouse offset
             local newOffsetY = offsetY + (select(2, GetCursorPosition()) - mouseY) / uiScale
 
@@ -2771,6 +2950,11 @@ function Cell.CreateScrollFrame(parent, top, bottom, color, border)
     end)
 
     scrollThumb:SetScript("OnMouseUp", function(self)
+        self:SetScript("OnUpdate", nil)
+    end)
+    --! WotLK fix: OnHide is the second cleanup path when the scrollbar or its
+    --! parent disappears before the lost mouse-up can be observed.
+    scrollThumb:SetScript("OnHide", function(self)
         self:SetScript("OnUpdate", nil)
     end)
 
@@ -2831,6 +3015,13 @@ list:SetScript("OnShow", function()
     list:SetFrameLevel(list.menu:GetFrameLevel() + 20) -- top
 end)
 list:SetScript("OnHide", function() list:Hide() end)
+
+--! WotLK fix: the dropdown list is a Cell-owned local frame. Expose only the
+--! close operation required by other Cell modules; do not create a disconnected
+--! global CellDropdownList placeholder in Polyfills.lua.
+function Cell.HideDropdownList()
+    list:Hide()
+end
 
 -- close dropdown
 function Cell.RegisterForCloseDropdown(f)
@@ -3343,7 +3534,7 @@ local function CreateGrid(parent, text, width)
         parent:SetFrameStrata("LOW")
         -- self:Hide() --! Hide() will cause OnDragStop trigger TWICE!!!
         C_Timer.After(0.05, function()
-            local b = F.GetMouseFocus()
+            local b = GetMouseFocus()
             if b then b = b:GetParent() end
             F.MoveClickCastings(parent.clickCastingIndex, b and b.clickCastingIndex)
         end)
@@ -3398,7 +3589,7 @@ function Cell.CreateBindingListButton(parent, modifier, bindKey, bindType, bindA
     local spellIconBg = actionGrid:CreateTexture(nil, "BORDER")
     P.Size(spellIconBg, 16, 16)
     spellIconBg:SetPoint("TOPLEFT", P.Scale(2), P.Scale(-2))
-    spellIconBg:SetColorTexture(0, 0, 0, 1)
+    spellIconBg:SetTexture(0, 0, 0, 1)
     spellIconBg:Hide()
 
     local spellIcon = actionGrid:CreateTexture(nil, "OVERLAY")

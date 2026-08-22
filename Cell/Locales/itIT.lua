@@ -166,7 +166,6 @@ L["castByMe"] = "Mostra solo buff lanciati da me"
 --[[Translation missing --]]
 --[[ L["Check if your group members need some raid buffs"] = "Check if your group members need some raid buffs"--]]
 --[[Translation missing --]]
---[[ L["circledStackNums"] = "Circled Stack Numbers"--]]
 --[[Translation missing --]]
 --[[ L["Class Color"] = "Class Color"--]]
 --[[Translation missing --]]

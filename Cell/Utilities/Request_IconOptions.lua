@@ -100,7 +100,11 @@ end)
 -------------------------------------------------
 -- icon options
 -------------------------------------------------
-local iconAnimation, iconAnchor, iconAnchorTo, iconiconGlowColor, size, xOffset, yOffset
+--! WotLK fix: было `iconiconGlowColor` - опечатка, "icon" дважды. Такого имени в
+--! файле больше нет нигде, а настоящий виджет зовётся iconGlowColor (:257), поэтому
+--! локал стоял пустой, а сам color picker уходил в глобал _G.iconGlowColor.
+--! Cell не владеет глобалами. В апстриме та же опечатка (Cell-retail:103).
+local iconAnimation, iconAnchor, iconAnchorTo, iconGlowColor, size, xOffset, yOffset
 
 local function UpdateIconPreview()
     local setting = CellDB["spellRequest"]["sharedIconOptions"]

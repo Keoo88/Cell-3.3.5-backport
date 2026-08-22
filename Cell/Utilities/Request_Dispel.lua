@@ -44,7 +44,7 @@ local function CreateDRPane()
         CellDB["dispelRequest"]["enabled"] = checked
         UpdateDRWidgets()
         Cell.Fire("UpdateRequests", "dispelRequest")
-        CellDropdownList:Hide()
+        Cell.HideDropdownList()
 
         U.HideGlowOptions()
         U.HideTextOptions()
@@ -295,7 +295,9 @@ LoadList = function(scrollToBottom)
             debuffItems[i].spellIconBg = debuffItems[i]:CreateTexture(nil, "BORDER")
             debuffItems[i].spellIconBg:SetSize(16, 16)
             debuffItems[i].spellIconBg:SetPoint("TOPLEFT", 2, -2)
-            debuffItems[i].spellIconBg:SetColorTexture(0, 0, 0, 1)
+            --! WotLK fix: SetColorTexture на 3.3.5 нет - это нативная числовая форма
+            --! SetTexture(r, g, b[, a]); шим TextureBase в WidgetAPI удалён.
+            debuffItems[i].spellIconBg:SetTexture(0, 0, 0, 1)
             debuffItems[i].spellIconBg:Hide()
 
             debuffItems[i].spellIcon = debuffItems[i]:CreateTexture(nil, "OVERLAY")
@@ -411,7 +413,7 @@ local flipBookInfo = {
 function U.CreateDispelRequestText(parent)
     local drText = CreateFrame("Frame", parent:GetName().."DispelRequestText", parent.widgets.indicatorFrame)
     parent.widgets.drText = drText
-    drText:SetIgnoreParentAlpha(true)
+    --! WotLK fix: parent-alpha isolation is unavailable on 3.3.5.
     drText:SetFrameLevel(parent.widgets.indicatorFrame:GetFrameLevel()+30) -- 3.3.5: was +110, level cap is 128
     drText:Hide()
 

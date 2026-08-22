@@ -582,11 +582,15 @@ L["buffByMe"] = "只显示我能施放的增益"
 L["trackByName"] = "匹配法术名称"
 L["showDuration"] = "显示持续时间文本"
 L["showAnimation"] = "显示动画"
+--! WotLK fix: подпись собственного тумблера бэкпорта. Строка перенесена сюда из
+--! Modules/Indicators/Indicators.lua, где стояла врезка на GetLocale(): та читала
+--! локаль КЛИЕНТА и не знала про собственный переключатель языка Cell
+--! (CellDB.general.locale), поэтому одна подпись оставалась не в тон остальной панели.
+L["showJump"] = "显示刷新跳动动画"
 L["showStack"] = "显示层数文本"
 -- L["Show duration text instead of icon animation"] = "用持续时间文本取代图标动画"
 L["enableHighlight"] = "高亮单位按钮"
 L["onlyShowTopGlow"] = "仅为优先级最高的减益显示发光效果"
-L["circledStackNums"] = "用带圈数字显示层数"
 L["Require font support"] = "需要字体支持"
 L["showTooltip"] = "显示鼠标提示"
 L["This will make these icons not click-through-able"] = "将会使这些图标无法点击穿透"

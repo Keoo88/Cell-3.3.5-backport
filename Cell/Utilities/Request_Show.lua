@@ -1,12 +1,7 @@
 -- /script SetAllowDangerousScripts(true)
 local _, Cell = ...
-
---! WotLK fix (coexistence): CombatLogGetCurrentEventInfo is a TRANSLATOR of the
---! native COMBAT_LOG_EVENT varargs, not a retail-style no-arg getter. The global
---! may belong to the standalone !!!ClassicAPI, whose copy has different semantics,
---! so always prefer OUR implementation from the private CellClassicAPI namespace.
-local CombatLogGetCurrentEventInfo = (_G.CellClassicAPI and _G.CellClassicAPI.CombatLogGetCurrentEventInfo) or _G.CombatLogGetCurrentEventInfo
-
+--! WotLK fix: bind Cell timers privately so standalone !!!ClassicAPI cannot change semantics.
+local C_Timer = Cell.C_Timer
 local L = Cell.L
 local F = Cell.funcs
 local I = Cell.iFuncs
@@ -143,7 +138,9 @@ local SR = CreateFrame("Frame")
 local COOLDOWN_TIME = _G.ITEM_COOLDOWN_TIME
 local IsSpellReady = F.IsSpellReady
 
-local GetSpellLink = C_Spell.GetSpellLink or GetSpellLink
+--! WotLK fix: bind the native 3.3.5 spell-link API directly; do not require a
+--! partial global C_Spell namespace from Cell's compatibility layer.
+local GetSpellLink = GetSpellLink
 
 local function CheckSRConditions(spellId, unit, sender)
     F.Debug("|cffcdb4dbCheckSRConditions:|r", spellId, unit, sender)
@@ -233,12 +230,30 @@ end)
 --! glow on whisper
 local COOLDOWN_TIME_TEXT = string.gsub(ITEM_COOLDOWN_TIME, "%%s", "")
 -- NOTE: playerName always contains SERVER name!
-function SR:CHAT_MSG_WHISPER(text, playerName, languageName, channelName, playerName2, specialFlags, zoneChannelID, channelIndex, channelBaseName, languageID, lineID, guid, bnSenderID, isMobile, isSubtitle, hideSenderInLetterbox, supressRaidIcons)
+--! WotLK fix: CHAT_MSG_WHISPER на 3.3.5a отдаёт ровно 12 значений, guid - двенадцатое
+--! (кодекс, payload события). Хвост ретейла (bnSenderID, isMobile, isSubtitle,
+--! hideSenderInLetterbox, supressRaidIcons) всегда nil - убран, чтобы позиция guid
+--! читалась глазами и совпадала с числом слотов в диспетчере ниже.
+function SR:CHAT_MSG_WHISPER(text, playerName, languageName, channelName, playerName2, specialFlags, zoneChannelID, channelIndex, channelBaseName, languageID, lineID, guid)
     -- NOTE: filter cd reply
     if strfind(text, "^|c.+|H.+|h%[.+%]|h|r "..COOLDOWN_TIME_TEXT..".+") then return end
 
     for spellId, t in pairs(srSpells) do
-        if strfind(strlower(text), strlower(t[3])) then
+        --! WotLK fix: t[3] - это keywords, свободный текст, который игрок сам вписывает
+        --! в поле с подписью L["Contains"] ("Содержит", Request_Spell.lua:58). Он уходил
+        --! в strfind как Lua-паттерн, хотя подпись обещает поиск подстроки. Замерено под
+        --! настоящим Lua 5.1: обработчик CHAT_MSG_WHISPER падает целиком, но не на любом
+        --! шёпоте - Lua доходит до сломанного места в паттерне только когда в тексте
+        --! встретилась буквальная голова ключа. Ключ "50%" (malformed pattern (ends with
+        --! '%')) молчит на "bop" и падает на "мне 50% хп", то есть ровно на том шёпоте,
+        --! которым просили заклинание; ключ "[pi" (malformed pattern (missing ']'))
+        --! открывает класс на первом же символе и потому роняет ЛЮБОЙ входящий шёпот,
+        --! включая пустой. "bop (please)" не срабатывает никогда (скобки съедаются как
+        --! capture); "pi." и "^pi" дают ложные срабатывания на чужих шёпотах.
+        --! Четвёртый аргумент plain=true документирован для strfind на 3.3.5a
+        --! (кодекс: strfind("s","pattern"[,init[,plain]])) и делает ровно то, что обещает
+        --! подпись. Апстрим-баг (Cell-retail/Utilities/Request_Show.lua:234).
+        if strfind(strlower(text), strlower(t[3]), 1, true) then
             if CheckSRConditions(spellId, Cell.vars.guids[guid], playerName) then
                 F.HandleUnitButton("guid", guid, ShowSpellRequest, spellId)
                 -- notify WA
@@ -249,39 +264,39 @@ function SR:CHAT_MSG_WHISPER(text, playerName, languageName, channelName, player
     end
 end
 
---! hide on applied
-function SR:COMBAT_LOG_EVENT_UNFILTERED(_, event, _, sourceGUID, sourceName, sourceFlags, _, destGUID, destName, destFlags, _, buffId)
-    if event == "SPELL_AURA_APPLIED" or event == "SPELL_AURA_REFRESH" then
-        local unit = Cell.vars.guids[destGUID]
-        if unit and srUnits[unit] == buffId then
-            -- hide
-            F.HandleUnitButton("unit", unit, HideSpellRequest)
-            -- notify APPLIED
-            F.Notify("SPELL_REQ_APPLIED", unit, buffId, 0, Cell.vars.guids[sourceGUID])
-            F.Debug("|cffdda15eSR_HIDE [|cffbc6c25CLEU:"..event.."|r]:|r", unit, buffId, Cell.vars.guids[sourceGUID])
-            -- cast msg (if castByMe)
-            if sourceGUID == Cell.vars.playerGUID and srCastMsg then
-                SendChatMessage(srCastMsg, "WHISPER", nil, GetUnitName(unit, true))
-            end
-            -- clear
-            srUnits[unit] = nil
-        end
-    end
-end
+--! WotLK perf: SR слушает ровно два события, и обоим хватает двенадцати слотов
+--! (CLEU до spellID - девять, CHAT_MSG_WHISPER на 3.3.5a отдаёт двенадцать, кодекс).
+--! Поэтому скрипт объявлен именованными параметрами и вообще не является vararg-
+--! функцией: в Lua 5.1 каждое объявление ... стоит adjust_varargs при входе плюс
+--! опкод VARARG на распаковку, а CLEU - самое частое событие в игре.
+SR:SetScript("OnEvent", function(self, event,
+    a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12)
 
-SR:SetScript("OnEvent", function(self, event, ...)
     if event == "COMBAT_LOG_EVENT_UNFILTERED" then
-        --! WotLK fix: the ClassicAPI CombatLogGetCurrentEventInfo shim is a TRANSLATOR
-        --! (native varargs in -> retail layout out); called WITHOUT arguments it returns
-        --! nothing, so the handler saw only nils and the spell-request glow was never
-        --! hidden on SPELL_AURA_APPLIED. Pass the native varargs through.
-        if CombatLogGetCurrentEventInfo then
-            self:COMBAT_LOG_EVENT_UNFILTERED(CombatLogGetCurrentEventInfo(...))
-        else
-            self:COMBAT_LOG_EVENT_UNFILTERED(...)
+        --! WotLK fix: the handler consumes the native 3.3.5 payload directly;
+        --! do not route Cell behavior through a foreign retail-layout translator.
+        --! Нативный порядок: timestamp, subEvent, sourceGUID, sourceName,
+        --! sourceFlags, destGUID, destName, destFlags, spellId (без hideCaster и
+        --! без raid-flag слотов ретейла).
+        local subEvent, sourceGUID, destGUID, buffId = a2, a3, a6, a9
+        if subEvent == "SPELL_AURA_APPLIED" or subEvent == "SPELL_AURA_REFRESH" then
+            local unit = Cell.vars.guids[destGUID]
+            if unit and srUnits[unit] == buffId then
+                -- hide
+                F.HandleUnitButton("unit", unit, HideSpellRequest)
+                -- notify APPLIED
+                F.Notify("SPELL_REQ_APPLIED", unit, buffId, 0, Cell.vars.guids[sourceGUID])
+                F.Debug("|cffdda15eSR_HIDE [|cffbc6c25CLEU:"..subEvent.."|r]:|r", unit, buffId, Cell.vars.guids[sourceGUID])
+                -- cast msg (if castByMe)
+                if sourceGUID == Cell.vars.playerGUID and srCastMsg then
+                    SendChatMessage(srCastMsg, "WHISPER", nil, GetUnitName(unit, true))
+                end
+                -- clear
+                srUnits[unit] = nil
+            end
         end
     else
-        self[event](self, ...)
+        self[event](self, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12)
     end
 end)
 
@@ -351,42 +366,49 @@ local drEnabled, drDispellable, drResponseType, drTimeout, drDebuffs, drDisplayT
 local drUnits = {}
 local DR = CreateFrame("Frame")
 
+--! WotLK fix: одна функция вместо двух одинаковых замыканий ниже - они создавались
+--! заново на каждом вызове, а в HideAllDRGlows ещё и на каждой итерации.
+local function HideDRRequest(b)
+    HideGlow(b.widgets.drGlowFrame)
+    HideText(b.widgets.drText)
+end
+
 -- hide all
 local function HideAllDRGlows()
     -- NOTE: hide all
     for unit in pairs(drUnits) do
-        F.HandleUnitButton("guid", destGUID, function(b)
-            HideGlow(b.widgets.drGlowFrame)
-            HideText(b.widgets.drText)
-        end)
+        --! WotLK fix: было F.HandleUnitButton("guid", destGUID) - destGUID здесь не
+        --! существует ни как локал, ни как параметр, читался глобал (nil), и функция
+        --! молча выходила на первой же проверке `if not unit then return end`.
+        --! То есть свечение/таймер запроса диспела не гасились никогда: wipe(drUnits)
+        --! ниже стирал состояние, а на рамке оставалась висеть подсветка до тех пор,
+        --! пока её не перерисует что-то другое. Ключ drUnits - юнит-токен
+        --! (см. Cell.vars.names[sender] и Cell.vars.guids[destGUID] ниже), поэтому "unit".
+        --! В апстриме та же ошибка (Cell-retail/Utilities/Request_Show.lua:343).
+        F.HandleUnitButton("unit", unit, HideDRRequest)
     end
     wipe(drUnits)
 end
 
 -- hide glow if removed
-DR:SetScript("OnEvent", function(self, event, ...)
+--! WotLK perf: DR слушает только CLEU (регистрация ниже), и дальше девятого слота
+--! обработчик не смотрит - объявлено девять именованных параметров, поэтому
+--! функция вообще не vararg. В Lua 5.1 объявление ... стоит adjust_varargs при
+--! входе плюс опкод VARARG на распаковку, а CLEU в рейде идёт сотнями в секунду.
+DR:SetScript("OnEvent", function(self, event,
+    _, subEvent, _, _, _, destGUID, _, _, spellID)
+
     if event == "COMBAT_LOG_EVENT_UNFILTERED" then
-        -- WotLK 3.3.5a: sourceRaidFlags and destRaidFlags don't exist (added in 4.2.0)
-        --! WotLK fix: the translator shim called WITHOUT arguments returns nothing, so
-        --! the dispel-request glow was never hidden on SPELL_AURA_REMOVED. Pass varargs.
-        local timestamp, subEvent, _, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, spellID
-        if CombatLogGetCurrentEventInfo then
-            -- Retail/Cata+ has sourceRaidFlags and destRaidFlags
-            local sourceRaidFlags, destRaidFlags
-            timestamp, subEvent, _, sourceGUID, sourceName, sourceFlags, sourceRaidFlags, destGUID, destName, destFlags, destRaidFlags, spellID = CombatLogGetCurrentEventInfo(...)
-        else
-            -- WotLK 3.3.5a: No sourceRaidFlags/destRaidFlags
-            timestamp, subEvent, _, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, spellID = ...
-        end
+        --! WotLK fix: native 3.3.5 CLEU has no hideCaster/raidFlags. Direct
+        --! parsing keeps dispel requests independent of standalone ClassicAPI.
         if subEvent == "SPELL_AURA_REMOVED" then
             local unit = Cell.vars.guids[destGUID]
             if unit and drUnits[unit] and drUnits[unit][spellID] then
                 -- NOTE: one of debuffs removed, hide glow
                 drUnits[unit] = nil
-                F.HandleUnitButton("guid", destGUID, function(b)
-                    HideGlow(b.widgets.drGlowFrame)
-                    HideText(b.widgets.drText)
-                end)
+                --! WotLK fix: здесь destGUID настоящий (распакован из CLEU выше), правка
+                --! только про замыкание - оно создавалось на каждое снятие дебаффа.
+                F.HandleUnitButton("guid", destGUID, HideDRRequest)
             end
         end
     else

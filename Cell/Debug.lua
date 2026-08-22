@@ -13,8 +13,11 @@ Cell.Debug = {}
 -- Debug flags (can be toggled via /cell debug)
 Cell.Debug.enabled = false
 Cell.Debug.verboseCallbacks = false
-Cell.Debug.trackRegistrations = true
-Cell.Debug.trackFires = true
+--! WotLK fix: registration/fire instrumentation is opt-in with debug mode.
+--! Keeping registration tracking enabled at startup allocated one table and
+--! called time() for every static Cell.RegisterCallback even when debugging was off.
+Cell.Debug.trackRegistrations = false
+Cell.Debug.trackFires = false
 
 -- Storage for tracking
 Cell.Debug.registrations = {}
@@ -25,6 +28,38 @@ Cell.Debug.stats = {
     missedCallbacks = {}
 }
 
+--! WotLK fix: in-memory ring buffer for /cell debug log.
+--! Kept independent of Cell.Debug.enabled so the user can run with debug OFF
+--! and still capture the last N interesting events; toggle it explicitly
+--! with /cell debug log on. The buffer survives across the same session
+--! (Lua state) but is not persisted.
+Cell.Debug.Ring = {
+    enabled = false,
+    max = 500,
+    buffer = {},
+}
+
+--! WotLK fix: cheap push for the ring. Skip when disabled, otherwise
+--! append with a timestamp and trim from the head if the buffer is full.
+--! O(1) amortized; called from TrackFire/Print/Animation stop queue.
+function Cell.Debug.RingPush(category, msg)
+    if not Cell.Debug.Ring.enabled then return end
+    local buf = Cell.Debug.Ring.buffer
+    local n = #buf
+    local entry = string.format("%s [%s] %s", date("%H:%M:%S"), tostring(category), tostring(msg))
+    if n >= Cell.Debug.Ring.max then
+        -- bulk-shift by 10% when full: cheaper than per-push table.remove
+        local drop = math.floor(Cell.Debug.Ring.max / 10) + 1
+        for i = drop + 1, n do
+            buf[i - drop] = buf[i]
+        end
+        for i = n - drop + 1, n do buf[i] = nil end
+        buf[#buf + 1] = entry
+    else
+        buf[n + 1] = entry
+    end
+end
+
 -- Color codes for output
 local COLOR_INFO = "|cff00ff00"    -- Green
 local COLOR_WARN = "|cffffff00"    -- Yellow
@@ -34,16 +69,22 @@ local COLOR_RESET = "|r"
 
 -- Debug print function
 function Cell.Debug:Print(category, message, color)
+    --! WotLK fix: capture the event into the ring even when chat printing
+    --! is disabled - the whole point of /cell debug log is to keep evidence
+    --! from a session where debug mode was off and the bug already fired.
+    if self.Ring.enabled then
+        self.RingPush(category, message)
+    end
     if not self.enabled then return end
-    
+
     color = color or COLOR_INFO
     local timestamp = date("%H:%M:%S")
-    
-    print(string.format("[Cell Debug][%s][%s] %s%s%s", 
-        timestamp, 
-        category, 
-        color, 
-        message, 
+
+    print(string.format("[Cell Debug][%s][%s] %s%s%s",
+        timestamp,
+        category,
+        color,
+        message,
         COLOR_RESET))
 end
 
@@ -73,19 +114,27 @@ end
 
 -- Track callback fire
 function Cell.Debug:TrackFire(event, ...)
-    if not self.enabled or not self.trackFires then return end
-    
+    if not self.trackFires then return end
+
+    --! WotLK fix: ring capture runs before the enabled gate so a session
+    --! without /cell debug still keeps the last N fires (e.g. for a
+    --! RAID_ROSTER_UPDATE spike that the user noticed only in retrospect).
+    if self.Ring.enabled then
+        self.RingPush("FIRE", event)
+    end
+    if not self.enabled then return end
+
     -- Count fires
     self.fires[event] = (self.fires[event] or 0) + 1
     self.stats.totalFires = self.stats.totalFires + 1
-    
+
     -- Check if there are any listeners
     local listenerCount = Cell.GetEventListenersCount and Cell.GetEventListenersCount(event) or 0
-    
+
     if self.verboseCallbacks then
         self:Print("FIRE", string.format("%s | listeners: %d", event, listenerCount), COLOR_INFO)
     end
-    
+
     -- Track as potentially missed if no listeners
     if listenerCount == 0 then
         if not self.stats.missedCallbacks[event] then
@@ -138,8 +187,17 @@ function Cell.Debug:Clear()
         totalFires = 0,
         missedCallbacks = {}
     }
-    self:Print("SYSTEM", "Debug data cleared", COLOR_INFO)
+    --! WotLK fix: also wipe the in-memory ring buffer so /cell debug c
+    --! gives the user a clean slate before a fresh reproduction.
+    self.Ring.buffer = {}
+    self:Print("SYSTEM", "Debug data cleared (incl. ring buffer)", COLOR_INFO)
 end
+
+--! WotLK fix: hooks for backport-specific dump sections.
+--! Debug_Wrath.lua appends closures that emit env / timers / glow / anim /
+--! ring-buffer lines into the table. Plain ordered list; no need to
+--! key by name since the order in the dump is fixed by registration order.
+Cell.Debug.DumpSections = {}
 
 -- Handle debug commands
 function Cell.Debug:HandleCommand(option)
@@ -163,6 +221,13 @@ function Cell.Debug:HandleCommand(option)
         print("  /cell debug h|help - Show this help")
     else
         self.enabled = not self.enabled
+        --! WotLK fix: make the normal debug toggle own the expensive callback
+        --! instrumentation flags too. They are disabled by default so a normal
+        --! session does not allocate registration records or count fires.
+        self.trackRegistrations = self.enabled
+        --! WotLK fix: ring logging may remain enabled while chat/debug mode is
+        --! disabled, so keep the cheap fire route alive for ring capture only.
+        self.trackFires = self.enabled or self.Ring.enabled
         print(string.format("Cell Debug: %s", 
             self.enabled and "enabled" or "disabled"))
     end
@@ -242,7 +307,7 @@ local function AddUnitLines(lines, unit)
     local name = UnitName(unit)
     local _, class = UnitClass(unit)
     local level = UnitLevel(unit)
-    local role = Cell_UnitGroupRolesAssigned and Cell_UnitGroupRolesAssigned(unit) or "?" --! WotLK fix: Cell-private role polyfill (global stays native)
+    local role = Cell.UnitGroupRolesAssigned and Cell.UnitGroupRolesAssigned(unit) or "?" --! WotLK fix: Cell-private role adapter (global stays native).
     table.insert(lines, string.format("%s: %s (%s, lvl %s) role=%s",
         unit, tostring(name), tostring(class), tostring(level), tostring(role)))
 
@@ -269,34 +334,38 @@ end
 
 function Cell.Debug:BuildDumpText()
     local lines = {}
-    table.insert(lines, "=== Cell Debug Dump ===")
-    table.insert(lines, date("%Y-%m-%d %H:%M:%S"))
+    local function add(s) lines[#lines + 1] = s end
+
+    add("=== Cell Debug Dump ===")
+    add("generated: " .. date("%Y-%m-%d %H:%M:%S"))
 
     local version, build = GetBuildInfo()
-    table.insert(lines, string.format("client: %s (build %s)", tostring(version), tostring(build)))
+    add(string.format("client: %s (build %s)", tostring(version), tostring(build)))
     local cellVer = GetAddOnMetadata and GetAddOnMetadata("Cell", "Version")
-    table.insert(lines, "Cell version: " .. tostring(cellVer))
+    add("Cell version: " .. tostring(cellVer))
 
     if UpdateAddOnMemoryUsage and GetAddOnMemoryUsage then
         UpdateAddOnMemoryUsage()
-        table.insert(lines, string.format("memory: %.0f KB", GetAddOnMemoryUsage("Cell")))
+        add(string.format("memory: %.0f KB", GetAddOnMemoryUsage("Cell")))
     end
 
     -- own talents: name(backgroundFileName)=points per tab
     if GetNumTalentTabs and GetTalentTabInfo then
         local tabs = {}
         for i = 1, GetNumTalentTabs() do
+            --! WotLK fix: native build 12340 tuple is
+            --! name, icon, pointsSpent, background, previewPointsSpent.
             local tname, _, points, background = GetTalentTabInfo(i)
             table.insert(tabs, string.format("%s(%s)=%d",
                 tostring(tname), tostring(background), points or 0))
         end
-        table.insert(lines, "player talents: " .. table.concat(tabs, ", "))
+        add("player talents: " .. table.concat(tabs, ", "))
     end
 
     local numRaid = GetNumRaidMembers and GetNumRaidMembers() or 0
     local numParty = GetNumPartyMembers and GetNumPartyMembers() or 0
-    table.insert(lines, "")
-    table.insert(lines, string.format("group: raid=%d party=%d", numRaid, numParty))
+    add("")
+    add(string.format("group: raid=%d party=%d", numRaid, numParty))
     if numRaid > 0 then
         for i = 1, numRaid do
             AddUnitLines(lines, "raid" .. i)
@@ -308,24 +377,34 @@ function Cell.Debug:BuildDumpText()
         end
     end
 
-    table.insert(lines, "")
-    table.insert(lines, string.format("callbacks: registrations=%d fires=%d (fires counted only while debug mode is ON)",
+    add("")
+    add(string.format("callbacks: registrations=%d fires=%d (fires counted only while debug mode is ON)",
         self.stats.totalRegistrations, self.stats.totalFires))
     for event, registrations in pairs(self.registrations) do
-        table.insert(lines, string.format("  reg %s: %d", event, #registrations))
+        add(string.format("  reg %s: %d", event, #registrations))
     end
     for event, count in pairs(self.fires) do
         local listeners = Cell.GetEventListenersCount and Cell.GetEventListenersCount(event) or -1
-        table.insert(lines, string.format("  fired %s: %d (listeners now: %d)", event, count, listeners))
+        add(string.format("  fired %s: %d (listeners now: %d)", event, count, listeners))
     end
     if next(self.stats.missedCallbacks) then
-        table.insert(lines, "  MISSED (fired with 0 listeners):")
+        add("  MISSED (fired with 0 listeners):")
         for event, count in pairs(self.stats.missedCallbacks) do
-            table.insert(lines, string.format("    %s: %d", event, count))
+            add(string.format("    %s: %d", event, count))
         end
     end
 
-    table.insert(lines, "=== end of dump ===")
+    --! WotLK fix: invoke the registered dump-section builders (env / timers /
+    --! glow / anim / ring buffer). Each builder appends plain lines into the
+    --! shared table and may add its own blank-line separator.
+    for _, builder in ipairs(self.DumpSections) do
+        local ok, err = pcall(builder, lines, self)
+        if not ok then
+            add("  [dump section error: " .. tostring(err) .. "]")
+        end
+    end
+
+    add("=== end of dump ===")
     return table.concat(lines, "\n")
 end
 

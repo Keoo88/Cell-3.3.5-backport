@@ -1,9 +1,12 @@
 local _, Cell = ...
+--! WotLK fix: bind Cell timers privately so standalone !!!ClassicAPI cannot change semantics.
+local C_Timer = Cell.C_Timer
 local L = Cell.L
 ---@type CellFuncs
 local F = Cell.funcs
 ---@type CellUnitButtonFuncs
 local B = Cell.bFuncs
+local A = Cell.animations
 ---@type PixelPerfectFuncs
 local P = Cell.pixelPerfectFuncs
 
@@ -161,8 +164,8 @@ local function CreateLayoutPreview()
     -- init raid preview
     layoutPreview.fadeIn = layoutPreview:CreateAnimationGroup()
     local fadeIn = layoutPreview.fadeIn:CreateAnimation("alpha")
-    fadeIn:SetFromAlpha(0)
-    fadeIn:SetToAlpha(1)
+    --! WotLK fix: use Cell's private absolute-alpha driver; do not modify shared Alpha methods.
+    A.SetAbsoluteAlpha(fadeIn, 0, 1)
     fadeIn:SetDuration(0.5)
     fadeIn:SetSmoothing("OUT")
     fadeIn:SetScript("OnPlay", function()
@@ -171,8 +174,7 @@ local function CreateLayoutPreview()
 
     layoutPreview.fadeOut = layoutPreview:CreateAnimationGroup()
     local fadeOut = layoutPreview.fadeOut:CreateAnimation("alpha")
-    fadeOut:SetFromAlpha(1)
-    fadeOut:SetToAlpha(0)
+    A.SetAbsoluteAlpha(fadeOut, 1, 0)
     fadeOut:SetDuration(0.5)
     fadeOut:SetSmoothing("IN")
     fadeOut:SetScript("OnFinished", function()
@@ -187,7 +189,9 @@ local function CreateLayoutPreview()
 
         for j = 1, 5 do
             header[j] = header:CreateTexture(nil, "BACKGROUND")
-            header[j]:SetColorTexture(0, 0, 0)
+            --! WotLK fix: SetColorTexture на 3.3.5 нет - это нативная числовая форма
+            --! SetTexture(r, g, b[, a]); шим TextureBase в WidgetAPI удалён.
+            header[j]:SetTexture(0, 0, 0)
             header[j]:SetAlpha(0.555)
             -- header[j]:SetSize(30, 20)
 
@@ -228,7 +232,7 @@ local function CreateLayoutPreview()
         local f = layoutPreview.combinedHeader:CreateTexture(nil, "BACKGROUND")
         layoutPreview.combinedHeader[i] = f
 
-        f:SetColorTexture(0, 0, 0)
+        f:SetTexture(0, 0, 0)
         f:SetAlpha(0.555)
 
         f.tex = layoutPreview.combinedHeader:CreateTexture(nil, "ARTWORK")
@@ -509,8 +513,8 @@ local function CreateNPCPreview()
 
     npcPreview.fadeIn = npcPreview:CreateAnimationGroup()
     local fadeIn = npcPreview.fadeIn:CreateAnimation("alpha")
-    fadeIn:SetFromAlpha(0)
-    fadeIn:SetToAlpha(1)
+    --! WotLK fix: use Cell's private absolute-alpha driver; do not modify shared Alpha methods.
+    A.SetAbsoluteAlpha(fadeIn, 0, 1)
     fadeIn:SetDuration(0.5)
     fadeIn:SetSmoothing("OUT")
     fadeIn:SetScript("OnPlay", function()
@@ -519,8 +523,7 @@ local function CreateNPCPreview()
 
     npcPreview.fadeOut = npcPreview:CreateAnimationGroup()
     local fadeOut = npcPreview.fadeOut:CreateAnimation("alpha")
-    fadeOut:SetFromAlpha(1)
-    fadeOut:SetToAlpha(0)
+    A.SetAbsoluteAlpha(fadeOut, 1, 0)
     fadeOut:SetDuration(0.5)
     fadeOut:SetSmoothing("IN")
     fadeOut:SetScript("OnFinished", function()
@@ -530,7 +533,7 @@ local function CreateNPCPreview()
     npcPreview.header = CreateFrame("Frame", "CellNPCPreviewFrameHeader", npcPreview)
     for i = 1, 5 do
         npcPreview.header[i] = npcPreview.header:CreateTexture(nil, "BACKGROUND")
-        npcPreview.header[i]:SetColorTexture(0, 0, 0)
+        npcPreview.header[i]:SetTexture(0, 0, 0)
         npcPreview.header[i]:SetAlpha(0.555)
 
         npcPreview.header[i].tex = npcPreview.header:CreateTexture(nil, "ARTWORK")
@@ -728,7 +731,8 @@ end
 -- pet preview
 -------------------------------------------------
 local petPreview, petPreviewAnchor, petPreviewName
-local petNums = Cell.isRetail and 20 or 25
+--! Ретейл-флаг свёрнут: на 3.3.5 всегда 25.
+local petNums = 25
 local function CreatePetPreview()
     petPreview = Cell.CreateFrame("CellPetPreviewFrame", Cell.frames.mainFrame, nil, nil, true)
     petPreview:EnableMouse(false)
@@ -757,8 +761,8 @@ local function CreatePetPreview()
 
     petPreview.fadeIn = petPreview:CreateAnimationGroup()
     local fadeIn = petPreview.fadeIn:CreateAnimation("alpha")
-    fadeIn:SetFromAlpha(0)
-    fadeIn:SetToAlpha(1)
+    --! WotLK fix: use Cell's private absolute-alpha driver; do not modify shared Alpha methods.
+    A.SetAbsoluteAlpha(fadeIn, 0, 1)
     fadeIn:SetDuration(0.5)
     fadeIn:SetSmoothing("OUT")
     fadeIn:SetScript("OnPlay", function()
@@ -767,8 +771,7 @@ local function CreatePetPreview()
 
     petPreview.fadeOut = petPreview:CreateAnimationGroup()
     local fadeOut = petPreview.fadeOut:CreateAnimation("alpha")
-    fadeOut:SetFromAlpha(1)
-    fadeOut:SetToAlpha(0)
+    A.SetAbsoluteAlpha(fadeOut, 1, 0)
     fadeOut:SetDuration(0.5)
     fadeOut:SetSmoothing("IN")
     fadeOut:SetScript("OnFinished", function()
@@ -779,7 +782,7 @@ local function CreatePetPreview()
 
     for i = 1, petNums do
         petPreview.header[i] = petPreview.header:CreateTexture(nil, "BACKGROUND")
-        petPreview.header[i]:SetColorTexture(0, 0, 0)
+        petPreview.header[i]:SetTexture(0, 0, 0)
         petPreview.header[i]:SetAlpha(0.555)
 
         petPreview.header[i].tex = petPreview.header:CreateTexture(nil, "ARTWORK")
@@ -1037,8 +1040,8 @@ local function CreateSpotlightPreview()
 
     spotlightPreview.fadeIn = spotlightPreview:CreateAnimationGroup()
     local fadeIn = spotlightPreview.fadeIn:CreateAnimation("alpha")
-    fadeIn:SetFromAlpha(0)
-    fadeIn:SetToAlpha(1)
+    --! WotLK fix: use Cell's private absolute-alpha driver; do not modify shared Alpha methods.
+    A.SetAbsoluteAlpha(fadeIn, 0, 1)
     fadeIn:SetDuration(0.5)
     fadeIn:SetSmoothing("OUT")
     fadeIn:SetScript("OnPlay", function()
@@ -1047,8 +1050,7 @@ local function CreateSpotlightPreview()
 
     spotlightPreview.fadeOut = spotlightPreview:CreateAnimationGroup()
     local fadeOut = spotlightPreview.fadeOut:CreateAnimation("alpha")
-    fadeOut:SetFromAlpha(1)
-    fadeOut:SetToAlpha(0)
+    A.SetAbsoluteAlpha(fadeOut, 1, 0)
     fadeOut:SetDuration(0.5)
     fadeOut:SetSmoothing("IN")
     fadeOut:SetScript("OnFinished", function()
@@ -1058,7 +1060,7 @@ local function CreateSpotlightPreview()
     spotlightPreview.header = CreateFrame("Frame", "CellSpotlightPreviewFrameHeader", spotlightPreview)
     for i = 1, 15 do
         spotlightPreview.header[i] = spotlightPreview.header:CreateTexture(nil, "BACKGROUND")
-        spotlightPreview.header[i]:SetColorTexture(0, 0, 0)
+        spotlightPreview.header[i]:SetTexture(0, 0, 0)
         spotlightPreview.header[i]:SetAlpha(0.555)
 
         spotlightPreview.header[i].tex = spotlightPreview.header:CreateTexture(nil, "ARTWORK")
@@ -1319,10 +1321,31 @@ end
 -------------------------------------------------
 local autoSwitchFrame
 local currentProfileBox
+local typeSwitch
 local layoutDropdown, soloDropdown, partyDropdown, raidOutdoorDropdown, arenaDropdown, bg15Dropdown, bg40Dropdown
 local raid10Dropdown, raid25Dropdown -- wrath
 local LoadLayoutDropdown, LoadAutoSwitchDropdowns
-local LoadLayoutDB, UpdateButtonStates, LoadLayoutAutoSwitchDB
+--! WotLK fix: LoadPageDB не было в списке - функция (строка ~2690) писалась в глобал
+--! _G.LoadPageDB. Cell не владеет глобалами, а имя ничем не защищено: любой аддон с
+--! такой же функцией затёр бы нашу или наоборот. Вызывается она только внутри этого
+--! файла (2546, 2766), причём один вызов идёт РАНЬШЕ определения - поэтому имя нужно
+--! объявить здесь, вверху, а не превращать в `local function` на месте.
+local LoadLayoutDB, UpdateButtonStates, LoadLayoutAutoSwitchDB, LoadPageDB
+
+--! WotLK fix: walks every stored auto-switch table, not just the one currently in force.
+--! Rename and delete below only ever fixed up Cell.vars.layoutAutoSwitch, so a layout
+--! renamed while in talent group 1 left group 2 pointing at a name that no longer exists;
+--! the validation loop in Core_Wrath.lua then quietly reset it to "default" at the next
+--! login and the assignment was gone. That was one stale table; with Role mode there are
+--! up to five, so the same slip would now cost four.
+local function ForEachLayoutAutoSwitchTable(func)
+    for _, t in pairs(CellCharacterDB["layoutAutoSwitch"]) do
+        func(t)
+    end
+    for _, t in pairs(CellDB["layoutAutoSwitchRole"]) do
+        func(t)
+    end
+end
 
 -- local enabledLayoutText
 -- local function UpdateEnabledLayoutText()
@@ -1451,6 +1474,16 @@ local function CreateLayoutPane()
                         end
                     end
                 end
+                --! WotLK fix: and the tables that are not in force right now - the other
+                --! talent group and the three role profiles. No dropdown to touch there,
+                --! they are not on screen; without this the name would go stale.
+                ForEachLayoutAutoSwitchTable(function(t)
+                    for groupType, layout in pairs(t) do
+                        if layout == selectedLayout then
+                            t[groupType] = name
+                        end
+                    end
+                end)
 
                 -- update master-slave
                 for layout, t in pairs(CellDB["layouts"]) do
@@ -1523,6 +1556,14 @@ local function CreateLayoutPane()
                     end
                 end
             end
+            --! WotLK fix: same for the tables not in force - see the rename handler above.
+            ForEachLayoutAutoSwitchTable(function(t)
+                for groupType, layout in pairs(t) do
+                    if layout == selectedLayout then
+                        t[groupType] = "default"
+                    end
+                end
+            end)
 
             -- update master-slave
             for layout, t in pairs(CellDB["layouts"]) do
@@ -1622,8 +1663,6 @@ local soloText, partyText, raidOutdoorText
 local arenaText, bg15Text, bg40Text
 local raid10Text, raid25Text -- wrath
 
-local raidOutdoor = L["Raid"].." "..L["Outdoor"]
-
 local function CreateAutoSwitchPane()
     autoSwitchFrame = Cell.CreateFrame("CellLayoutAutoSwitchFrame", layoutsTab, 160, 465)
     autoSwitchFrame:SetPoint("TOPLEFT", layoutsTab, "TOPRIGHT", 5, 0)
@@ -1631,6 +1670,51 @@ local function CreateAutoSwitchPane()
 
     local autoSwitchPane = Cell.CreateTitledPane(autoSwitchFrame, L["Layout Auto Switch"], 150, 400)
     autoSwitchPane:SetPoint("TOPLEFT", 5, -5)
+
+    --! WotLK fix: Role|Spec switch, ported from retail (Cell-retail/Layouts.lua:1651).
+    --! "Spec" on 3.3.5 means the dual-spec talent group, because there is no
+    --! GetSpecialization here - see F.GetDominantTalentTab in Utils.lua. Presence of the
+    --! per-talent-group table is the mode flag, so flipping to Role deletes it and
+    --! flipping to Spec seeds it from whatever the role profile currently holds - the
+    --! player keeps their dropdown values instead of dropping back to "default".
+    typeSwitch = Cell.CreateSwitch(autoSwitchPane, {140, 20}, L["Role"], "role", L["Spec"], "spec", function(value)
+        if value == "role" then
+            CellCharacterDB["layoutAutoSwitch"][Cell.vars.activeTalentGroup] = nil
+        else
+            CellCharacterDB["layoutAutoSwitch"][Cell.vars.activeTalentGroup] =
+                F.Copy(CellDB["layoutAutoSwitchRole"][Cell.vars.playerTalentRole or "DAMAGER"])
+        end
+        --! re-key: F.UpdateLayout is the only place that resolves which table is in force,
+        --! and it also re-points Cell.vars.layoutAutoSwitch, which every dropdown writes to.
+        --! Vars first and unconditionally: in combat F.UpdateLayout only queues itself, and
+        --! without this the pane below would redraw off the table we just deleted, and every
+        --! dropdown would write into it. Guarded call: F.UpdateLayout(nil) would index the
+        --! switch table with a nil key and leave currentLayoutTable nil.
+        F.UpdateLayoutAutoSwitchVars()
+        if Cell.vars.layoutGroupType then
+            F.UpdateLayout(Cell.vars.layoutGroupType)
+        end
+        Cell.Fire("LayoutAutoSwitchChanged")
+        LoadLayoutAutoSwitchDB()
+    end)
+    typeSwitch:SetPoint("TOPLEFT", 5, -27)
+
+    typeSwitch:HookScript("OnEnter", function()
+        CellTooltip:SetOwner(typeSwitch, "ANCHOR_NONE")
+        CellTooltip:SetPoint("TOPLEFT", typeSwitch, "TOPRIGHT", 15, 0)
+        CellTooltip:AddLine(L["Layout Auto Switch"])
+        CellTooltip:AddLine(L["Role"]..": |cffffffff"..strlower(L["Use common profile"]) .. " " ..
+            F.GetDefaultRoleIconEscapeSequence("TANK", 12) .. " " ..
+            F.GetDefaultRoleIconEscapeSequence("HEALER", 12) .. " " ..
+            F.GetDefaultRoleIconEscapeSequence("DAMAGER", 12)
+        )
+        CellTooltip:AddLine(L["Spec"]..": |cffffffff"..L["use separate profile for current spec"])
+        CellTooltip:Show()
+    end)
+
+    typeSwitch:HookScript("OnLeave", function()
+        CellTooltip:Hide()
+    end)
 
     -- current profile box
     currentProfileBox = CreateFrame("Frame", nil, autoSwitchPane, nil)
@@ -1642,8 +1726,12 @@ local function CreateAutoSwitchPane()
     currentProfileBox.text:SetPoint("RIGHT", P.Scale(-5), 0)
     currentProfileBox.text:SetJustifyH("LEFT")
 
-    currentProfileBox:SetPoint("TOPLEFT", 5, -42)
-    P.Height(autoSwitchFrame, 430)
+    --! WotLK fix: the box used to sit at a fixed 5,-42 with the frame at 430; the switch
+    --! now occupies that spot, so anchor below it and give the frame the extra 35 the
+    --! switch and its gap need. Height also set in LoadLayoutAutoSwitchDB, which runs
+    --! later - both numbers are 513 so the pane does not jump on first open.
+    currentProfileBox:SetPoint("TOPLEFT", typeSwitch, "BOTTOMLEFT", 0, -30)
+    P.Height(autoSwitchFrame, 513)
 
     local currentProfileText = autoSwitchPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     currentProfileText:SetPoint("BOTTOMLEFT", currentProfileBox, "TOPLEFT", 0, 1)
@@ -1672,32 +1760,32 @@ local function CreateAutoSwitchPane()
 
     raidOutdoorText = autoSwitchPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     raidOutdoorText:SetPoint("BOTTOMLEFT", raidOutdoorDropdown, "TOPLEFT", 0, 1)
-    raidOutdoorText.text = raidOutdoor
+    --! WotLK fix: built here rather than in a file-level local. Cell's L only holds the
+    --! translations after ns.LoadUserLocale() (ADDON_LOADED), so a main-chunk
+    --! concatenation froze "Raid Outdoor" in English for the whole session. Every
+    --! sibling label around it (solo/party/raid10/...) was already built inside this
+    --! function; this one was the odd one out.
+    raidOutdoorText.text = L["Raid"].." "..L["Outdoor"]
 
-    if Cell.isMists or Cell.isCata or Cell.isWrath then
-        -- raid10
-        raid10Dropdown = Cell.CreateDropdown(autoSwitchPane, 140)
-        raid10Dropdown:SetPoint("TOPLEFT", raidOutdoorDropdown, "BOTTOMLEFT", 0, -30)
+    -- raid10
+    raid10Dropdown = Cell.CreateDropdown(autoSwitchPane, 140)
+    raid10Dropdown:SetPoint("TOPLEFT", raidOutdoorDropdown, "BOTTOMLEFT", 0, -30)
 
-        raid10Text = autoSwitchPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
-        raid10Text:SetPoint("BOTTOMLEFT", raid10Dropdown, "TOPLEFT", 0, 1)
-        raid10Text.text = L["Raid"].." 10"
+    raid10Text = autoSwitchPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
+    raid10Text:SetPoint("BOTTOMLEFT", raid10Dropdown, "TOPLEFT", 0, 1)
+    raid10Text.text = L["Raid"].." 10"
 
-        -- raid25
-        raid25Dropdown = Cell.CreateDropdown(autoSwitchPane, 140)
-        raid25Dropdown:SetPoint("TOPLEFT", raid10Dropdown, "BOTTOMLEFT", 0, -30)
+    -- raid25
+    raid25Dropdown = Cell.CreateDropdown(autoSwitchPane, 140)
+    raid25Dropdown:SetPoint("TOPLEFT", raid10Dropdown, "BOTTOMLEFT", 0, -30)
 
-        raid25Text = autoSwitchPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
-        raid25Text:SetPoint("BOTTOMLEFT", raid25Dropdown, "TOPLEFT", 0, 1)
-        raid25Text.text = L["Raid"].." 25"
-
-    end
+    raid25Text = autoSwitchPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
+    raid25Text:SetPoint("BOTTOMLEFT", raid25Dropdown, "TOPLEFT", 0, 1)
+    raid25Text.text = L["Raid"].." 25"
 
     -- arena
     arenaDropdown = Cell.CreateDropdown(autoSwitchPane, 140)
-    if Cell.isMists or Cell.isCata or Cell.isWrath then
-        arenaDropdown:SetPoint("TOPLEFT", raid25Dropdown, "BOTTOMLEFT", 0, -30)
-    end
+    arenaDropdown:SetPoint("TOPLEFT", raid25Dropdown, "BOTTOMLEFT", 0, -30)
 
     arenaText = autoSwitchPane:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
     arenaText:SetPoint("BOTTOMLEFT", arenaDropdown, "TOPLEFT", 0, 1)
@@ -1767,13 +1855,10 @@ LoadAutoSwitchDropdowns = function()
     -- raidOutdoorDropdown
     raidOutdoorDropdown:SetItems(GetDropdownItems(indices, "raid_outdoor"))
 
-    if Cell.isMists or Cell.isCata or Cell.isWrath then
-        -- raid10Dropdown
-        raid10Dropdown:SetItems(GetDropdownItems(indices, "raid10"))
-        -- raid25Dropdown
-        raid25Dropdown:SetItems(GetDropdownItems(indices, "raid25"))
-
-    end
+    -- raid10Dropdown
+    raid10Dropdown:SetItems(GetDropdownItems(indices, "raid10"))
+    -- raid25Dropdown
+    raid25Dropdown:SetItems(GetDropdownItems(indices, "raid25"))
 
     -- arenaDropdown
     arenaDropdown:SetItems(GetDropdownItems(indices, "arena"))
@@ -1982,7 +2067,7 @@ local function CreateRoleOrderWidget(parent)
             self:StopMovingOrSizing()
             self:SetFrameStrata("LOW")
             C_Timer.After(0.05, function()
-                local b = F.GetMouseFocus()
+                local b = GetMouseFocus()
                 if b ~= self and b and b._role then
                     local roleToIndex = F.ConvertTable(selectedLayoutTable["main"]["roleOrder"])
                     local oldIndex = roleToIndex[self._role]
@@ -2263,7 +2348,7 @@ local function CreateLayoutSetupPane()
     groupSpacingSlider:SetPoint("TOPLEFT", spacingYSlider, 0, -55)
 
     -- unitsPerColumn
-    unitsSlider = Cell.CreateSlider(L["Units Per Column"], pages.main, 2, Cell.isRetail and 20 or 25, 117, 1, function(value)
+    unitsSlider = Cell.CreateSlider(L["Units Per Column"], pages.main, 2, 25, 117, 1, function(value)
         selectedLayoutTable["main"]["unitsPerColumn"] = value
         if selectedLayout == Cell.vars.currentLayout then
             Cell.Fire("UpdateLayout", selectedLayout, "unitsPerColumn")
@@ -2315,7 +2400,15 @@ local function CreateLayoutSetupPane()
             Cell.Fire("UpdateLayout", selectedLayout, "pet")
         end
     end, L["Detached"], L["Show pets in a separate frame"], L["You can move it in Preview mode"])
-    partyPetsDetachedCB:SetPoint("TOPLEFT", partyPetsCB, "TOPRIGHT", 203, 0)
+    --! WotLK fix (ruRU): the 203px gap was measured against the English label.
+    --! "Отображать Питомцев в Группе/Арене" is ~1.6x wider than
+    --! "Show Party/Arena Pets", so the left label ran under this checkbox -
+    --! and since CreateCheckButton stretches a box's hit rect over its own
+    --! label (SetHitRectInsets(0, -GetStringWidth()-5, 0, 0)), that hit rect
+    --! also swallowed the clicks aimed here. Keep the English spacing, but
+    --! never let this box start before the neighbouring label ends. The pane
+    --! is 422 wide, so there is room for the longest translation.
+    partyPetsDetachedCB:SetPoint("TOPLEFT", partyPetsCB, "TOPRIGHT", max(203, partyPetsCB.label:GetStringWidth() + 15), 0)
 
     raidPetsCB = Cell.CreateCheckButton(pages.pet, L["Show Raid Pets"], function(checked)
         selectedLayoutTable["pet"]["raidEnabled"] = checked
@@ -2590,7 +2683,9 @@ end
 local tips = layoutsTab:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
 tips:SetPoint("BOTTOMLEFT", 5, 5)
 tips:SetJustifyH("LEFT")
-tips:SetText("|cffababab"..L["Tip: Every layout has its own position setting"])
+--! WotLK fix: the text itself is set from ShowTab's lazy init - at load time L still
+--! returns the English key (ns.LoadUserLocale runs on ADDON_LOADED), and a FontString
+--! keeps whatever string it was given.
 
 -------------------------------------------------
 -- functions
@@ -2708,19 +2803,27 @@ LoadLayoutDB = function(layout, dontShowPreview)
 end
 
 LoadLayoutAutoSwitchDB = function()
-    if Cell.isCata or Cell.isWrath then
-        P.Height(autoSwitchFrame, 478)
-        if Cell.vars.activeTalentGroup == 1 then
+    --! Guard `if Cell.isCata or Cell.isWrath` вырезан - на 3.3.5 всегда истина.
+    --! WotLK fix: 478 -> 513, the Role|Spec switch added a row (same number retail uses).
+    P.Height(autoSwitchFrame, 513)
+        --! WotLK fix: the label follows the mode. In Spec mode it names the talent group,
+        --! as before; in Role mode it names the role, using the same role icon the raid
+        --! frames use. _G["TANK"/"HEALER"/"DAMAGER"] are native 3.3.5 global strings
+        --! (GlobalStrings.lua:7468/4006/1906), localised by the client.
+        if Cell.vars.layoutAutoSwitchBy == "role" then
+            local role = Cell.vars.playerTalentRole or "DAMAGER"
+            currentProfileBox.text:SetText(F.GetDefaultRoleIconEscapeSequence(role, 12).." ".._G[role])
+        elseif Cell.vars.activeTalentGroup == 1 then
             currentProfileBox.text:SetText("|TInterface\\AddOns\\Cell\\Media\\Icons\\1:13|t "..L["Primary Talents"])
         else
             currentProfileBox.text:SetText("|TInterface\\AddOns\\Cell\\Media\\Icons\\2:13|t "..L["Secondary Talents"])
         end
-        raid10Dropdown:SetSelectedValue(Cell.vars.layoutAutoSwitch["raid10"])
-        raid25Dropdown:SetSelectedValue(Cell.vars.layoutAutoSwitch["raid25"])
-        bg15Dropdown:SetSelectedValue(Cell.vars.layoutAutoSwitch["battleground15"])
-        bg40Dropdown:SetSelectedValue(Cell.vars.layoutAutoSwitch["battleground40"])
 
-    end
+    typeSwitch:SetSelected(Cell.vars.layoutAutoSwitchBy)
+    raid10Dropdown:SetSelectedValue(Cell.vars.layoutAutoSwitch["raid10"])
+    raid25Dropdown:SetSelectedValue(Cell.vars.layoutAutoSwitch["raid25"])
+    bg15Dropdown:SetSelectedValue(Cell.vars.layoutAutoSwitch["battleground15"])
+    bg40Dropdown:SetSelectedValue(Cell.vars.layoutAutoSwitch["battleground40"])
 
     soloDropdown:SetSelectedValue(Cell.vars.layoutAutoSwitch["solo"])
     partyDropdown:SetSelectedValue(Cell.vars.layoutAutoSwitch["party"])
@@ -2763,12 +2866,10 @@ local function UpdateLayoutAutoSwitch(layout, which)
             partyText:SetText(Cell.GetAccentColorString()..partyText.text.."*")
         else
             if Cell.vars.inInstance then
-                if Cell.isMists or Cell.isCata or Cell.isWrath then
-                    if Cell.vars.raidType == "raid10" then
-                        raid10Text:SetText(Cell.GetAccentColorString()..raid10Text.text.."*")
-                    else
-                        raid25Text:SetText(Cell.GetAccentColorString()..raid25Text.text.."*")
-                    end
+                if Cell.vars.raidType == "raid10" then
+                    raid10Text:SetText(Cell.GetAccentColorString()..raid10Text.text.."*")
+                else
+                    raid25Text:SetText(Cell.GetAccentColorString()..raid25Text.text.."*")
                 end
             else
                 raidOutdoorText:SetText(Cell.GetAccentColorString()..raidOutdoorText.text.."*")
@@ -2777,6 +2878,19 @@ local function UpdateLayoutAutoSwitch(layout, which)
     end
 end
 Cell.RegisterCallback("UpdateLayout", "LayoutsTab_UpdateLayout", UpdateLayoutAutoSwitch)
+
+--! WotLK fix: the role can change while the pane is open - a respec inside the same talent
+--! group fires PLAYER_TALENT_UPDATE, never ACTIVE_TALENT_GROUP_CHANGED, so "UpdateLayout"
+--! above would not necessarily arrive (in Spec mode it does not, and even then the label
+--! and the switch state are what went stale, not the layout). Core_Wrath.lua fires this
+--! whenever Cell.vars.playerTalentRole actually changes.
+local function LayoutAutoSwitchChanged()
+    if not init then return end
+    if layoutsTab:IsVisible() then
+        LoadLayoutAutoSwitchDB()
+    end
+end
+Cell.RegisterCallback("LayoutAutoSwitchChanged", "LayoutsTab_LayoutAutoSwitchChanged", LayoutAutoSwitchChanged)
 
 local function UpdateAppearance()
     if previewButton and selectedLayout == Cell.vars.currentLayout then
@@ -2824,6 +2938,8 @@ local function ShowTab(tab)
     if tab == "layouts" then
         if not init then
             init = true
+
+            tips:SetText("|cffababab"..L["Tip: Every layout has its own position setting"])
 
             CreateLayoutPane()
             CreateAutoSwitchPane()

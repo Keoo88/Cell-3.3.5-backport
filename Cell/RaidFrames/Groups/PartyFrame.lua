@@ -1,4 +1,6 @@
 local _, Cell = ...
+--! WotLK fix: bind Cell timers privately so standalone !!!ClassicAPI cannot change semantics.
+local C_Timer = Cell.C_Timer
 local F = Cell.funcs
 local B = Cell.bFuncs
 local P = Cell.pixelPerfectFuncs
@@ -28,35 +30,10 @@ function header:UpdateButtonUnit(bName, unit)
     Cell.unitButtons.party.units[petUnit] = _G[bName].petButton
 end
 
--- header:SetAttribute("initialConfigFunction", [[
---     RegisterUnitWatch(self)
-
---     local header = self:GetParent()
---     self:SetWidth(header:GetAttribute("buttonWidth") or 66)
---     self:SetHeight(header:GetAttribute("buttonHeight") or 46)
--- ]])
-
-header:SetAttribute("_initialAttributeNames", "refreshUnitChange")
-header:SetAttribute("_initialAttribute-refreshUnitChange", [[
-    local unit = self:GetAttribute("unit")
-    local header = self:GetParent()
-    local petButton = self:GetFrameRef("petButton")
-
-    -- print(self:GetName(), unit, petButton)
-
-    if petButton and header:GetAttribute("showPartyPets") and not header:GetAttribute("partyDetached") then
-        local petUnit
-        if unit == "player" then
-            petUnit = "pet"
-        else
-            petUnit = string.gsub(unit, "party", "partypet")
-        end
-        petButton:SetAttribute("unit", petUnit)
-        RegisterUnitWatch(petButton)
-    end
-
-    header:CallMethod("UpdateButtonUnit", self:GetName(), unit)
-]])
+--! WotLK fix: 3.3.5 SecureGroupHeaderTemplate has no
+--! _initialAttribute-* child initialization mechanism. These party and pet
+--! buttons are created with fixed units below, so configure and register them
+--! directly in regular Lua instead of storing a dead restricted snippet.
 
 header:SetAttribute("point", "TOP")
 header:SetAttribute("xOffset", 0)
@@ -91,7 +68,7 @@ for i = 1, 5 do
 
     -- Create pet button
     local petButton = CreateFrame("Button", buttonName.."Pet", playerButton, "CellUnitButtonTemplate")
-    petButton:SetIgnoreParentAlpha(true)
+    --! WotLK fix: parent-alpha isolation is unavailable on 3.3.5.
     petButton:SetAttribute("toggleForVehicle", false)
 
     local petUnit
@@ -101,6 +78,7 @@ for i = 1, 5 do
         petUnit = "partypet" .. (i - 1)
     end
     petButton:SetAttribute("unit", petUnit)
+    RegisterUnitWatch(petButton)
 
     playerButton.petButton = petButton
     SecureHandlerSetFrameRef(playerButton, "petButton", petButton)
@@ -108,9 +86,14 @@ for i = 1, 5 do
     -- for IterateAllUnitButtons
     Cell.unitButtons.party["player"..i] = playerButton
     Cell.unitButtons.party["pet"..i] = petButton
+    --! WotLK fix: populate the fixed-unit lookup immediately; the removed
+    --! _initialAttribute-* snippet never ran on native 3.3.5 headers.
+    Cell.unitButtons.party.units[unit] = playerButton
+    Cell.unitButtons.party.units[petUnit] = petButton
 
     -- OmniCD
     _G[buttonName] = playerButton
+    playerButton.unit = unit
 end
 
 header:SetAttribute("startingIndex", 1)
@@ -124,8 +107,8 @@ header:Show()
 --! children, while this backport creates the 5 party buttons manually with fixed units
 --! (player/party1-4); and groupBy="ASSIGNEDROLE" does not exist in 3.3.5 anyway (native
 --! groupBy knows GROUP/CLASS/ROLE=MAINTANK/MAINASSIST only). Sort by re-anchoring the
---! manual buttons in role order instead (roles via Cell_UnitGroupRolesAssigned ->
---! LibGroupTalents). Re-anchoring protected frames happens out of combat only.
+--! manual buttons in role order instead (roles via Cell.UnitGroupRolesAssigned ->
+--! Cell/Libs/LibGroupInfo.lua). Re-anchoring protected frames happens out of combat only.
 local buttonOrder = {1, 2, 3, 4, 5}
 local ROLE_ORDER_FALLBACK = {"TANK", "HEALER", "DAMAGER"}
 
@@ -146,8 +129,8 @@ local function UpdateButtonOrder(layout)
     table.sort(buttonOrder, function(a, b)
         local ua = manualButtons[a]:GetAttribute("unit")
         local ub = manualButtons[b]:GetAttribute("unit")
-        local pa = (ua and UnitExists(ua) and prio[Cell_UnitGroupRolesAssigned(ua)]) or 10
-        local pb = (ub and UnitExists(ub) and prio[Cell_UnitGroupRolesAssigned(ub)]) or 10
+        local pa = (ua and UnitExists(ua) and prio[Cell.UnitGroupRolesAssigned(ua)]) or 10
+        local pb = (ub and UnitExists(ub) and prio[Cell.UnitGroupRolesAssigned(ub)]) or 10
         if pa ~= pb then
             return pa < pb
         end
@@ -183,7 +166,7 @@ local function ForceSyncPartyButtons()
 end
 
 -- Manually trigger UpdateButtonUnit for each button to populate Cell.unitButtons.party.units
-C_Timer.After(0.1, function()
+Cell.C_Timer.After(0.1, function()
     if not header.UpdateButtonUnit then return end
     for i = 1, 5 do
         local button = manualButtons[i]
@@ -199,7 +182,10 @@ end)
 
 -- Trigger layout update after button creation
 -- NOTE: This ensures buttons are sized correctly after initial load
-C_Timer.After(0.5, function()
+Cell.C_Timer.After(0.5, function()
+    --! WotLK fix: route the startup retry through Core_Wrath's combat-aware
+    --! UpdateLayout owner; it queues the rebuild instead of touching protected
+    --! party attributes from this timer.
     if Cell and F and F.UpdateLayout and (Cell.vars.groupType == "party" or Cell.vars.groupType == "solo") then
         F.UpdateLayout(Cell.vars.groupType)
     end
@@ -208,21 +194,26 @@ end)
 local function PartyFrame_UpdateLayout(layout, which)
     -- visibility
     if Cell.vars.groupType ~= "party" or Cell.vars.isHidden then
-        UnregisterAttributeDriver(partyFrame, "state-visibility")
+        Cell.UnregisterAttributeDriver(partyFrame, "state-visibility")
         partyFrame:Hide()
         return
     else
-        --! WotLK 3.3.5a: Simplified visibility driver - just show when groupType is party
-        RegisterAttributeDriver(partyFrame, "state-visibility", "show")
-        partyFrame:Show()  --! WotLK 3.3.5a: Must explicitly call Show()
+        --! WotLK fix: a constant "show" state driver is polled every 0.2s on
+        --! 3.3.5 and is redundant because Core already defers layout updates
+        --! until combat ends. Show this Cell-owned secure frame directly.
+        Cell.UnregisterAttributeDriver(partyFrame, "state-visibility")
+        partyFrame:Show()
     end
 
     --! WotLK 3.3.5a: Safety check for layout
     if not layout or not CellDB or not CellDB["layouts"] or not CellDB["layouts"][layout] then
         -- Layout not ready yet, retry later
-        C_Timer.After(0.5, function()
-            local layoutName = CellDB["general"] and CellDB["general"]["layout"] or "default"
-            Cell.Fire("UpdateLayout", layoutName, which)
+        Cell.C_Timer.After(0.5, function()
+            --! WotLK fix: retry through Core_Wrath so a combat transition is
+            --! queued centrally instead of broadcasting protected layout work.
+            if F and F.UpdateLayout then
+                F.UpdateLayout(Cell.vars.groupType or "party")
+            end
         end)
         return
     end
@@ -453,11 +444,12 @@ end
 Cell.RegisterCallback("UpdateLayout", "PartyFrame_UpdateLayout", PartyFrame_UpdateLayout)
 
 --! WotLK fix: keep party role sorting fresh - roles arrive asynchronously from
---! LibGroupTalents inspects and members join/leave. Re-anchor out of combat only.
+--! LibGroupInfo inspects and members join/leave. Re-anchor out of combat only.
 local partySortTimer
 local partySortFrame = CreateFrame("Frame")
 partySortFrame:RegisterEvent("PARTY_MEMBERS_CHANGED")
-partySortFrame:RegisterEvent("PLAYER_ROLES_ASSIGNED") -- synthetic, ClassicAPI EventHandler
+--! WotLK fix: do not depend on standalone !!!ClassicAPI's synthetic
+--! PLAYER_ROLES_ASSIGNED route; Cell-private LibGroupInfo reports fresh roles.
 partySortFrame:SetScript("OnEvent", function(self, event)
     if event == "PLAYER_REGEN_ENABLED" then
         self:UnregisterEvent("PLAYER_REGEN_ENABLED")
@@ -474,7 +466,7 @@ partySortFrame:SetScript("OnEvent", function(self, event)
 
     -- debounce: roster/role events arrive in bursts
     if partySortTimer then partySortTimer:Cancel() end
-    partySortTimer = C_Timer.NewTimer(0.2, function()
+    partySortTimer = Cell.C_Timer.NewTimer(0.2, function()
         partySortTimer = nil
         local lo = Cell.vars.currentLayoutTable
         if lo and lo["main"] and lo["main"]["sortByRole"]
@@ -488,16 +480,27 @@ partySortFrame:SetScript("OnEvent", function(self, event)
     end)
 end)
 
+--! WotLK fix: refresh manual button anchors when Cell's own inspect cache
+--! learns a role, independent of which ClassicAPI copy loaded first.
+do
+    local LGI = LibStub and LibStub:GetLibrary("LibGroupInfo", true)
+    if LGI then
+        LGI.RegisterCallback("CellPartyFrame_RoleSort", "GroupInfo_Update", function()
+            partySortFrame:GetScript("OnEvent")(partySortFrame, "GroupInfo_Update")
+        end)
+    end
+end
+
 -- local function PartyFrame_UpdateVisibility(which)
 --     if not which or which == "party" then
 --         header:SetAttribute("showParty", CellDB["general"]["showParty"])
 --         if CellDB["general"]["showParty"] then
 --             --! [group] won't fire during combat
---             -- RegisterAttributeDriver(partyFrame, "state-visibility", "[group:raid] hide; [group:party] show; hide")
+--             -- Cell.RegisterAttributeDriver(partyFrame, "state-visibility", "[group:raid] hide; [group:party] show; hide")
 --             -- NOTE: [group:party] show: fix for premade, only player in party, but party1 not exists
---             RegisterAttributeDriver(partyFrame, "state-visibility", "[@raid1,exists] hide;[@party1,exists] show;[group:party] show;hide")
+--             Cell.RegisterAttributeDriver(partyFrame, "state-visibility", "[@raid1,exists] hide;[@party1,exists] show;[group:party] show;hide")
 --         else
---             UnregisterAttributeDriver(partyFrame, "state-visibility")
+--             Cell.UnregisterAttributeDriver(partyFrame, "state-visibility")
 --             partyFrame:Hide()
 --         end
 --     end
@@ -505,7 +508,7 @@ end)
 -- Cell.RegisterCallback("UpdateVisibility", "PartyFrame_UpdateVisibility", PartyFrame_UpdateVisibility)
 
 -- local f = CreateFrame("Frame", nil, CellParent, "SecureFrameTemplate")
--- RegisterAttributeDriver(f, "state-group", "[@raid1,exists] raid;[@party1,exists] party; solo")
+-- Cell.RegisterAttributeDriver(f, "state-group", "[@raid1,exists] raid;[@party1,exists] party; solo")
 -- SecureHandlerWrapScript(f, "OnAttributeChanged", f, [[
 --     print(name, value)
 --     if name ~= "state-group" then return end
@@ -517,40 +520,47 @@ end)
 -- ]])
 
 -- WotLK Fix: Force update party buttons when entering party group type
--- The RegisterAttributeDriver visibility state doesn't always sync properly after leaving BG/raid
+-- The Cell.RegisterAttributeDriver visibility state doesn't always sync properly after leaving BG/raid
 local function PartyFrame_GroupTypeChanged(groupType)
     if groupType == "party" then
         -- Force update after a delay to ensure frame is visible
-        C_Timer.After(0.5, function()
-            if Cell.vars.groupType == "party" then
-                -- Force show the frame if not visible
-                if not partyFrame:IsVisible() then
-                    partyFrame:Show()
-                end
-                -- Force update all party buttons
-                for i = 1, 5 do
-                    local button = manualButtons[i]
-                    if button then
-                        if button:IsVisible() then
-                            button._updateRequired = 1
-                            button._powerUpdateRequired = 1
-                            if button._indicatorsReady and Cell.bFuncs and Cell.bFuncs.UpdateAll then
-                                Cell.bFuncs.UpdateAll(button)
-                            end
+        Cell.C_Timer.After(0.5, function()
+            --! WotLK fix: this timer may outlive its group transition or fire
+            --! after combat starts. Abort stale/hidden work and let Core_Wrath
+            --! perform the authoritative protected rebuild after combat.
+            if Cell.vars.groupType ~= "party" or Cell.vars.isHidden then return end
+            if InCombatLockdown() then
+                F.UpdateLayout("party")
+                return
+            end
+
+            -- Force show the frame if not visible
+            if not partyFrame:IsVisible() then
+                partyFrame:Show()
+            end
+            -- Force update all party buttons
+            for i = 1, 5 do
+                local button = manualButtons[i]
+                if button then
+                    if button:IsVisible() then
+                        button._updateRequired = 1
+                        button._powerUpdateRequired = 1
+                        if button._indicatorsReady and Cell.bFuncs and Cell.bFuncs.UpdateAll then
+                            Cell.bFuncs.UpdateAll(button)
                         end
-                        -- Also update pet button
-                        if button.petButton and button.petButton:IsVisible() then
-                            button.petButton._updateRequired = 1
-                            button.petButton._powerUpdateRequired = 1
-                            if button.petButton._indicatorsReady and Cell.bFuncs and Cell.bFuncs.UpdateAll then
-                                Cell.bFuncs.UpdateAll(button.petButton)
-                            end
+                    end
+                    -- Also update pet button
+                    if button.petButton and button.petButton:IsVisible() then
+                        button.petButton._updateRequired = 1
+                        button.petButton._powerUpdateRequired = 1
+                        if button.petButton._indicatorsReady and Cell.bFuncs and Cell.bFuncs.UpdateAll then
+                            Cell.bFuncs.UpdateAll(button.petButton)
                         end
                     end
                 end
-                -- Ensure unit attributes are synced and buttons refresh even if they never received OnAttributeChanged
-                ForceSyncPartyButtons()
             end
+            -- Ensure unit attributes are synced and buttons refresh even if they never received OnAttributeChanged
+            ForceSyncPartyButtons()
         end)
     end
 end

@@ -1,4 +1,6 @@
 local _, Cell = ...
+--! WotLK fix: bind Cell timers privately so standalone !!!ClassicAPI cannot change semantics.
+local C_Timer = Cell.C_Timer
 local L = Cell.L
 ---@type CellFuncs
 local F = Cell.funcs
@@ -11,6 +13,15 @@ local P = Cell.pixelPerfectFuncs
 
 local LCG = LibStub("LibCustomGlow-1.0-Cell")
 local LibTranslit = LibStub("LibTranslit-1.0")
+--! WotLK fix: use Cell's private class-token normalizer; keep native UnitClassBase untouched.
+local UnitClassBase = Cell.GetUnitClassToken
+--! WotLK fix: consume Cell-private group state.
+local IsInRaid = Cell.IsInRaid
+
+--! WotLK perf: sin зовётся из драйвера aggro-пульса, а тот работает на полном
+--! фреймрейте на каждом юните с аггро. Файловый локал убирает из каждого кадра
+--! GETGLOBAL math (хеш-лукап в _G) плюс хеш-лукап поля .sin.
+local sin = math.sin
 
 local function noop() end
 
@@ -280,19 +291,31 @@ function I.CreateTankActiveMitigation(parent)
     bar:Hide()
 
     bar:SetStatusBarTexture(Cell.vars.whiteTexture)
-    bar:GetStatusBarTexture():SetAlpha(0)
-    bar:SetReverseFill(true)
+    --! WotLK fix: keep the fallback private to this Cell-owned bar.
+    local barTexture = bar:GetStatusBarTexture()
+    if not barTexture then
+        barTexture = bar:CreateTexture(nil, "ARTWORK")
+        barTexture:SetTexture(Cell.vars.whiteTexture)
+        bar:SetStatusBarTexture(barTexture)
+    end
+    barTexture:SetAlpha(0)
+    --! WotLK fix: the visible mitigation texture is anchored to the native bar
+    --! texture; no fake shared StatusBar:SetReverseFill contract is required.
 
     local tex = bar:CreateTexture(nil, "BORDER", nil, -1)
     bar.tex = tex
-    tex:SetColorTexture(F.GetClassColor(Cell.vars.playerClass))
+    --! WotLK fix: SetColorTexture на 3.3.5 нет - это нативная числовая форма
+    --! SetTexture(r, g, b[, a]); шим TextureBase в WidgetAPI удалён.
+    tex:SetTexture(F.GetClassColor(Cell.vars.playerClass))
     tex:SetPoint("TOPLEFT")
-    tex:SetPoint("BOTTOMRIGHT", bar:GetStatusBarTexture(), "BOTTOMLEFT")
+    tex:SetPoint("BOTTOMRIGHT", barTexture, "BOTTOMLEFT")
 
     local elapsedTime = 0
     bar:SetScript("OnUpdate", function(self, elapsed)
         if elapsedTime >= 0.1 then
-            bar:SetValue(bar:GetValue() + elapsedTime)
+            --! WotLK perf: работаем через self, а не через апвалью bar - это тот
+            --! же фрейм (скрипт висит на нём), но локал дешевле апвалью.
+            self:SetValue(self:GetValue() + elapsedTime)
             elapsedTime = 0
         end
         elapsedTime = elapsedTime + elapsed
@@ -301,9 +324,9 @@ function I.CreateTankActiveMitigation(parent)
     function bar:SetCooldown(start, duration)
         if bar.cType == "class_color" then
             if not parent.states.class then parent.states.class = UnitClassBase(parent.states.unit) end --? why sometimes parent.states.class == nil ???
-            tex:SetColorTexture(F.GetClassColor(parent.states.class))
+            tex:SetTexture(F.GetClassColor(parent.states.class))
         else
-            tex:SetColorTexture(bar.cTable[1], bar.cTable[2], bar.cTable[3])
+            tex:SetTexture(bar.cTable[1], bar.cTable[2], bar.cTable[3])
         end
         bar:SetMinMaxValues(0, duration)
         bar:SetValue(GetTime()-start)
@@ -428,10 +451,14 @@ local function Debuffs_ShowTooltip(debuffs, show)
     for i = 1, 10 do
         if show then
             debuffs[i]:SetScript("OnEnter", function(self)
+                --! WotLK fix: the second branch was "elseif self.auraInstanceID" ->
+                --! F.ShowTooltips(..., "aura", ...), i.e. retail's aura-instance
+                --! tooltip. Nothing on 3.3.5 ever sets .auraInstanceID on an icon
+                --! (UnitButton_Cata_Wrath.lua stores the aura INDEX in .index, see
+                --! "NOTE: for tooltip"), so it was two dead field lookups per hover
+                --! guarding a call into methods this client does not have.
                 if self.index then
                     F.ShowTooltips(debuffs.parent, "spell", debuffs.parent.states.displayedUnit, self.index, "HARMFUL")
-                elseif self.auraInstanceID then
-                    F.ShowTooltips(debuffs.parent, "aura", debuffs.parent.states.displayedUnit, self.auraInstanceID, "HARMFUL")
                 end
             end)
 
@@ -479,14 +506,10 @@ local function Debuffs_EnableBlacklistShortcut(debuffs, enabled)
         else
             debuffs[i]:SetScript("OnMouseUp", nil)
             if debuffs.showTooltip then
-                --! WotLK fix: 3.3.5 has no SetMouseClickEnabled, and the shim maps it to
-                --! EnableMouse(false), which kills hover as well -- the debuff tooltip
-                --! would stop showing. Mouse must stay enabled for OnEnter to fire.
-                if Cell.isWrath or Cell.isVanilla or Cell.isCata then
-                    debuffs[i]:EnableMouse(true)
-                else
-                    debuffs[i]:SetMouseClickEnabled(false)
-                end
+                --! WotLK fix: 3.3.5 cannot separate click and hover ownership;
+                --! keep mouse enabled on this Cell-owned debuff so OnEnter tooltip
+                --! still fires, and leave the unsupported shared retail API absent.
+                debuffs[i]:EnableMouse(true)
             else
                 debuffs[i]:EnableMouse(false)
             end
@@ -773,19 +796,55 @@ local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 
 local function UpdateDebuffsForCurrentZone(instanceName)
-    wipe(currentAreaDebuffs)
     local iName = F.GetInstanceName()
-    if iName == "" then return end
 
-    if iName == instanceName or instanceName == nil then
-        currentAreaDebuffs = F.GetDebuffList(iName)
-        F.Debug("|cffff77AARaidDebuffsChanged:|r", iName)
+    --! WotLK fix: upstream wipes the list BEFORE checking whose instance changed
+    --! (Cell-retail/Indicators/Built-in.lua:765), so a RaidDebuffsChanged about any
+    --! OTHER instance blanked the list for the zone you are standing in, and nothing
+    --! rebuilds it until the next PLAYER_ENTERING_WORLD - the only other refresh point.
+    --! Easy to hit: opening Options -> Raid Debuffs selects the FIRST instance of the
+    --! expansion, not the one you are in (ShowInstances ends with instanceButtons[1]:Click()),
+    --! so one click on a debuff there killed the whole RaidDebuffs indicator mid-raid:
+    --! with an empty list I.GetDebuffOrder returns nil for every aura, so nothing is
+    --! inserted into debuffsRaid at all. Same for an imported/shared list from another
+    --! player. Ignore events about other instances; nil still means "refresh anyway".
+    if instanceName ~= nil and instanceName ~= iName then
+        --! WotLK fix: the two names come from different sources and need not be equal
+        --! even for the SAME instance. The event carries instanceIdToName, i.e. the name
+        --! from the ExpansionData payload, while F.GetInstanceName returns whatever the
+        --! CLIENT calls the zone. On esMX there is no localized payload at all (only
+        --! ExpansionData_esMX aliases), so the event says "Icecrown Citadel" while the
+        --! zone says "Ciudadela de la Corona de Hielo"; on the locales that do replace
+        --! the payload it is a retail Encounter Journal name against a 3.3.5 zone name.
+        --! A raw string compare would ignore every edit for the instance you stand in.
+        --! Resolve both through instanceNameMapping instead - F.GetInstanceAndBossId is
+        --! the public, alias-aware way to do it - and compare instance ids.
+        local eventId = F.GetInstanceAndBossId and F.GetInstanceAndBossId(instanceName)
+        local zoneId = F.GetInstanceAndBossId and F.GetInstanceAndBossId(iName)
+        --! Both nil means neither name is known to the module: the rebuild below yields
+        --! an empty list, which is exactly right for a zone without built-in debuffs.
+        if eventId ~= zoneId then return end
     end
+
+    if iName == "" then
+        wipe(currentAreaDebuffs)
+        return
+    end
+
+    currentAreaDebuffs = F.GetDebuffList(iName)
+    F.Debug("|cffff77AARaidDebuffsChanged:|r", iName)
 end
 Cell.RegisterCallback("RaidDebuffsChanged", "UpdateDebuffsForCurrentZone", UpdateDebuffsForCurrentZone)
 eventFrame:SetScript("OnEvent", function()
     UpdateDebuffsForCurrentZone()
 end)
+
+--! WotLK fix: currentAreaDebuffs is a file local, so nothing outside could tell whether
+--! the ACTIVE list survived an options edit - the bug above was invisible in game except
+--! as "the indicator just stopped". Expose it read-only for /cell debug raiddebuffs.
+function I.GetCurrentAreaDebuffs()
+    return currentAreaDebuffs
+end
 
 local function CheckCondition(operator, checkedValue, currentValue)
     if operator == "=" then
@@ -906,10 +965,10 @@ local function RaidDebuffs_ShowTooltip(raidDebuffs, show)
     for i = 1, 3 do
         if show then
             raidDebuffs[i]:SetScript("OnEnter", function(self)
+                --! WotLK fix: same dead retail branch as in Debuffs_ShowTooltip -
+                --! .auraInstanceID is never set on 3.3.5, the icon carries .index.
                 if self.index then
                     F.ShowTooltips(raidDebuffs.parent, "spell", raidDebuffs.parent.states.displayedUnit, self.index, "HARMFUL")
-                elseif self.auraInstanceID then
-                    F.ShowTooltips(raidDebuffs.parent, "aura", raidDebuffs.parent.states.displayedUnit, self.auraInstanceID, "HARMFUL")
                 end
             end)
             raidDebuffs[i]:SetScript("OnLeave", function()
@@ -1178,7 +1237,13 @@ function I.CreateNameText(parent)
         nameText:UpdateName()
 
         if parent.states.inVehicle or nameText.isPreview then
-            F.UpdateTextWidth(nameText.vehicle, nameText.isPreview and L["Vehicle Name"] or UnitName(parent.states.displayedUnit), width, parent.widgets.healthBar)
+            --! WotLK fix: та же заглушка предпросмотра, что и в UpdateVehicleName выше,
+            --! но ключ был другой ("Vehicle Name" вместо "vehicle name"). Переведён
+            --! в локалях только строчный вариант, поэтому в режиме предпросмотра
+            --! одна и та же подпись показывалась то по-русски, то по-английски —
+            --! в зависимости от того, какая из двух функций обновила ширину последней.
+            --! Апстрим-баг (Cell-retail/Indicators/Built-in.lua:1231).
+            F.UpdateTextWidth(nameText.vehicle, nameText.isPreview and L["vehicle name"] or UnitName(parent.states.displayedUnit), width, parent.widgets.healthBar)
         end
     end
 
@@ -1290,19 +1355,21 @@ local function StatusText_SetPosition(self, point, yOffset, justify)
         self.text:SetJustifyH("LEFT")
         self.timer:SetPoint("RIGHT")
         self.timer:SetJustifyH("RIGHT")
-        self.bg:SetGradient("HORIZONTAL", CreateColor(0, 0, 0, 0.777), CreateColor(0, 0, 0, 0))
+        --! WotLK fix: native Texture:SetGradientAlpha - the retail color-object form
+        --! SetGradient(orientation, color, color) does not exist on 3.3.5.
+        self.bg:SetGradientAlpha("HORIZONTAL", 0, 0, 0, 0.777, 0, 0, 0, 0)
     elseif justify == "left" then
         self.text:SetPoint("LEFT")
         self.text:SetJustifyH("LEFT")
         self.timer:SetPoint("LEFT", self.text, "RIGHT", 2, 0)
         self.timer:SetJustifyH("LEFT")
-        self.bg:SetGradient("HORIZONTAL", CreateColor(0, 0, 0, 0.777), CreateColor(0, 0, 0, 0))
+        self.bg:SetGradientAlpha("HORIZONTAL", 0, 0, 0, 0.777, 0, 0, 0, 0)
     else
         self.text:SetPoint("RIGHT")
         self.text:SetJustifyH("RIGHT")
         self.timer:SetPoint("RIGHT", self.text, "LEFT", -2, 0)
         self.timer:SetJustifyH("RIGHT")
-        self.bg:SetGradient("HORIZONTAL", CreateColor(0, 0, 0, 0), CreateColor(0, 0, 0, 0.777))
+        self.bg:SetGradientAlpha("HORIZONTAL", 0, 0, 0, 0, 0, 0, 0, 0.777)
     end
 
     self:SetHeight(self.text:GetHeight()+P.Scale(1)*2)
@@ -1343,7 +1410,8 @@ end
 function I.CreateStatusText(parent)
     local statusText = CreateFrame("Frame", parent:GetName().."StatusText", parent.widgets.indicatorFrame)
     parent.indicators.statusText = statusText
-    statusText:SetIgnoreParentAlpha(true)
+    --! WotLK fix: parent-alpha isolation is unavailable on 3.3.5; do not call
+    --! a state-only shared compatibility method that cannot affect rendering.
     statusText:Hide()
 
     statusText.parent = parent
@@ -1866,7 +1934,7 @@ function I.CreateReadyCheckIcon(parent)
     local readyCheckIcon = CreateFrame("Frame", parent:GetName().."ReadyCheckIcon", parent.widgets.indicatorFrame)
     parent.indicators.readyCheckIcon = readyCheckIcon
     readyCheckIcon:Hide()
-    readyCheckIcon:SetIgnoreParentAlpha(true)
+    --! WotLK fix: parent-alpha isolation is unavailable on 3.3.5.
 
     readyCheckIcon.tex = readyCheckIcon:CreateTexture(nil, "ARTWORK")
     readyCheckIcon.tex:SetAllPoints(readyCheckIcon)
@@ -1951,6 +2019,40 @@ end
 -------------------------------------------------
 -- aggro blink
 -------------------------------------------------
+-- smooth alpha pulse via OnUpdate.
+-- The Animation API is only partial on this 3.3.5 client (eased looping is
+-- unreliable, FlipBook absent), so drive the blink manually: safe + smooth.
+local PULSE_MIN, PULSE_MAX, PULSE_SPEED = 0.1, 1, 12.5 -- period = 2*pi/SPEED ~ 0.5s (matches original tempo)
+--! WotLK perf: середина и амплитуда считаются один раз при загрузке, а не
+--! заново в каждом кадре. Тождество: MIN + (MAX-MIN)*(sin*0.5+0.5) =
+--! (MIN + (MAX-MIN)*0.5) + (MAX-MIN)*0.5*sin. Порядок сложения плавающей точки
+--! чуть другой, расхождение - единицы ulp на альфе, глазом не видно.
+local PULSE_AMP = (PULSE_MAX - PULSE_MIN) * 0.5
+local PULSE_MID = PULSE_MIN + PULSE_AMP
+
+--! WotLK perf: три обработчика вынесены из тела CreateAggroBlink на уровень
+--! файла. Раньше на каждую кнопку рейда создавалось по три замыкания (40 юнитов
+--! = 120 объектов), хотя ни одно из них не захватывало ничего от конкретной
+--! кнопки - только константы и self.
+local function AggroBlink_OnShow(self)
+    self.pulseElapsed = 0
+    self:SetAlpha(PULSE_MAX)
+end
+
+local function AggroBlink_OnUpdate(self, elapsed)
+    --! WotLK perf: накопитель держится в локале на время кадра. Поле
+    --! pulseElapsed читалось из таблицы дважды за вызов, а драйвер работает на
+    --! полном фреймрейте на каждом юните с аггро. Запись в поле сохранена: его
+    --! обнуляет OnShow. Возврата между чтением и записью в драйвере нет.
+    local t = self.pulseElapsed + elapsed
+    self.pulseElapsed = t
+    self:SetAlpha(PULSE_MID + PULSE_AMP * sin(t * PULSE_SPEED))
+end
+
+local function AggroBlink_OnHide(self)
+    self:SetAlpha(1)
+end
+
 function I.CreateAggroBlink(parent)
     local aggroBlink = CreateFrame("Frame", parent:GetName().."AggroBlink", parent.widgets.indicatorFrame, nil)
     parent.indicators.aggroBlink = aggroBlink
@@ -1961,24 +2063,14 @@ function I.CreateAggroBlink(parent)
     aggroBlink:SetBackdropBorderColor(0, 0, 0, 1)
     aggroBlink:Hide()
 
-    -- smooth alpha pulse via OnUpdate.
-    -- The Animation API is only partial on this 3.3.5 client (eased looping is
-    -- unreliable, FlipBook absent), so drive the blink manually: safe + smooth.
-    local PULSE_MIN, PULSE_MAX, PULSE_SPEED = 0.1, 1, 12.5 -- period = 2*pi/SPEED ~ 0.5s (matches original tempo)
+    --! WotLK fix: поле заводится сразу, чтобы драйвер читал число, а не nil.
+    --! Фрейм создан скрытым, так что OnShow всё равно отработает первым, но
+    --! завязываться на порядок скриптов ради одного присваивания не стоит.
+    aggroBlink.pulseElapsed = 0
 
-    aggroBlink:SetScript("OnShow", function(self)
-        self.pulseElapsed = 0
-        self:SetAlpha(PULSE_MAX)
-    end)
-
-    aggroBlink:SetScript("OnUpdate", function(self, elapsed)
-        self.pulseElapsed = (self.pulseElapsed or 0) + elapsed
-        self:SetAlpha(PULSE_MIN + (PULSE_MAX - PULSE_MIN) * (math.sin(self.pulseElapsed * PULSE_SPEED) * 0.5 + 0.5))
-    end)
-
-    aggroBlink:SetScript("OnHide", function(self)
-        self:SetAlpha(1)
-    end)
+    aggroBlink:SetScript("OnShow", AggroBlink_OnShow)
+    aggroBlink:SetScript("OnUpdate", AggroBlink_OnUpdate)
+    aggroBlink:SetScript("OnHide", AggroBlink_OnHide)
 
     function aggroBlink:ShowAggro(r, g, b)
         aggroBlink:SetBackdropColor(r, g, b)
@@ -2056,7 +2148,7 @@ function I.CreateShieldBar(parent)
     shieldBar.parentHealthBar = parent.widgets.healthBar
 
     function shieldBar:SetColor(r, g, b, a)
-        tex:SetColorTexture(r, g, b, a)
+        tex:SetTexture(r, g, b, a)
     end
 
     function shieldBar:UpdatePixelPerfect()
@@ -2107,7 +2199,7 @@ function I.CreateHealthThresholds(parent)
             else
                 healthThresholds.tex:SetPoint("BOTTOM", 0, Cell.vars.healthThresholds[found][1] * parent.widgets.healthBar:GetHeight())
             end
-            healthThresholds.tex:SetColorTexture(unpack(Cell.vars.healthThresholds[found][2]))
+            healthThresholds.tex:SetTexture(unpack(Cell.vars.healthThresholds[found][2]))
             healthThresholds:Show()
         else
             healthThresholds:Hide()
@@ -2121,7 +2213,7 @@ function I.CreateHealthThresholds(parent)
             for i, t in ipairs(Cell.vars.healthThresholds) do
                 healthThresholds[i] = healthThresholds[i] or healthThresholds:CreateTexture(nil, "ARTWORK")
                 P.Size(healthThresholds[i], healthThresholds.thickness, healthThresholds.thickness)
-                healthThresholds[i]:SetColorTexture(unpack(t[2]))
+                healthThresholds[i]:SetTexture(unpack(t[2]))
                 -- healthThresholds[i]:SetBlendMode("ADD")
 
                 healthThresholds[i]:ClearAllPoints()
@@ -2162,11 +2254,11 @@ function I.CreatePowerWordShield(parent)
 
     -- simple vertical bars beside the unit button: yellow = PW:S duration, red = Weakened Soul
     local shieldBar = powerWordShield:CreateTexture(nil, "OVERLAY", nil, 0)
-    shieldBar:SetColorTexture(1, 1, 0, 0.9)
+    shieldBar:SetTexture(1, 1, 0, 0.9)
     shieldBar:Hide()
 
     local wsBar = powerWordShield:CreateTexture(nil, "OVERLAY", nil, 1)
-    wsBar:SetColorTexture(1, 0.2, 0.2, 0.9)
+    wsBar:SetTexture(1, 0.2, 0.2, 0.9)
     wsBar:Hide()
 
     powerWordShield.shieldBar = shieldBar
@@ -2185,44 +2277,66 @@ function I.CreatePowerWordShield(parent)
         end
     end
 
-    powerWordShield:SetScript("OnUpdate", function(self)
+    --! WotLK fix: the manual duration bars do not need layout mutations every
+    --! rendered frame. Their anchors are static; update only heights at 10 Hz.
+    shieldBar:SetPoint("BOTTOMRIGHT", powerWordShield, "BOTTOMRIGHT")
+    wsBar:SetPoint("BOTTOMRIGHT", powerWordShield, "BOTTOMRIGHT")
+
+    --! WotLK perf: накопитель троттлинга переехал из поля кадра в локал
+    --! замыкания. Поле `_elapsed` стоило три хеш-лукапа в таблице кадра за кадр
+    --! (чтение, запись, чтение на гейте), и всё это на полном фреймрейте на
+    --! каждом юните со щитом. Снаружи его никто не читал - проверено грепом по
+    --! Cell/. `or 0` не нужен: локал инициализирован здесь же. Накопленное время
+    --! пишется до раннего возврата, так что тик не залипает.
+    local elapsedTime = 0
+
+    powerWordShield:SetScript("OnUpdate", function(self, elapsed)
+        elapsedTime = elapsedTime + elapsed
+        if elapsedTime < 0.1 then return end
+        elapsedTime = 0
+
         local now = GetTime()
-        local width = self.barWidth or P.Scale(2)
-        if width <= 0 then width = P.Scale(4) end
+        local configuredWidth = self.barWidth or 2
+        local width = P.Scale(configuredWidth > 0 and configuredWidth or 4)
         local height = parent:GetHeight() or 0
         if height <= 0 then height = P.Scale(20) end
 
-        -- place bars overlaid on the right side
-        self:SetWidth(width)
-        self:SetHeight(height)
+        if self:GetWidth() ~= width or self:GetHeight() ~= height then
+            self:_SetSize(width, height)
+            shieldBar:SetWidth(width)
+            wsBar:SetWidth(width)
+        end
+
+        --! WotLK perf: сроки и длительности сняты в локалы - каждое поле
+        --! читалось из таблицы кадра по три раза за проход. И вместо двух
+        --! вызовов IsShown() в конце видимость считается тем же проходом:
+        --! показать или скрыть решено здесь же, парой строк выше, а других
+        --! писателей между этими точками нет - обе текстуры приватны замыканию.
+        local shown = false
 
         -- PW:S (bottom-to-top on the right edge)
-        if self.shieldExpires > now and self.shieldDuration > 0 then
-            local pct = (self.shieldExpires - now) / self.shieldDuration
-            local barHeight = height * pct
+        local expires, duration = self.shieldExpires, self.shieldDuration
+        if expires > now and duration > 0 then
+            local pct = (expires - now) / duration
+            shieldBar:SetHeight(height * pct)
             shieldBar:Show()
-            shieldBar:ClearAllPoints()
-            shieldBar:SetWidth(width)
-            shieldBar:SetHeight(barHeight)
-            shieldBar:SetPoint("BOTTOMRIGHT", self, "BOTTOMRIGHT")
+            shown = true
         else
             shieldBar:Hide()
         end
 
         -- Weakened Soul (bottom-to-top, overlaid on top of PW:S)
-        if self.wsExpires > now and self.wsDuration > 0 then
-            local pct = (self.wsExpires - now) / self.wsDuration
-            local barHeight = height * pct
+        expires, duration = self.wsExpires, self.wsDuration
+        if expires > now and duration > 0 then
+            local pct = (expires - now) / duration
+            wsBar:SetHeight(height * pct)
             wsBar:Show()
-            wsBar:ClearAllPoints()
-            wsBar:SetWidth(width)
-            wsBar:SetHeight(barHeight)
-            wsBar:SetPoint("BOTTOMRIGHT", self, "BOTTOMRIGHT")
+            shown = true
         else
             wsBar:Hide()
         end
 
-        if not (shieldBar:IsShown() or wsBar:IsShown()) then
+        if not shown then
             self:Hide()
         end
     end)
@@ -2234,15 +2348,17 @@ function I.CreatePowerWordShield(parent)
     end
 
     function powerWordShield:UpdatePixelPerfect()
-        local bw = self.barWidth or 2
+        local configuredWidth = self.barWidth or 2
+        local bw = P.Scale(configuredWidth > 0 and configuredWidth or 4)
         local bh = parent:GetHeight() or 0
-        self:_SetSize(P.Scale((bw > 0 and bw or 4)), (bh > 0 and bh or P.Scale(20)))
+        if bh <= 0 then bh = P.Scale(20) end
+        self:_SetSize(bw, bh)
+        shieldBar:SetWidth(bw)
+        wsBar:SetWidth(bw)
     end
 
-    function powerWordShield:SetShape()
-        -- shape no longer used (bars)
-    end
-
+    --! WotLK fix: заглушка SetShape убрана — после перевода индикатора на полосы
+    --! форму никто не задаёт: ни таблица настроек, ни UnitButton, ни панель опций.
     function powerWordShield:SetColors()
         -- colors no longer configurable; keep stub to avoid errors
     end
@@ -2330,8 +2446,14 @@ function I.CreateCombatIcon(parent)
 
     A.CreateBlinkAnimation(combatIcon.flashTex, nil, true)
 
-    combatIcon:SetScript("OnEvent", CombatIcon_OnEvent)
-
+    --! WotLK fix: убрана строка `combatIcon:SetScript("OnEvent", CombatIcon_OnEvent)`.
+    --! Функции CombatIcon_OnEvent нет нигде - ни здесь, ни в апстриме (Cell-retail
+    --! :2389, та же строка), так что имя читалось из _G и давало nil, то есть вызов
+    --! сводился к SetScript("OnEvent", nil). Событий на этот фрейм никто не регистрирует:
+    --! иконка обновляется опросом из UnitButton_OnUpdate (UnitButton_Cata_Wrath:3717),
+    --! поэтому обработчик и не нужен. Оставлять чтение чужого глобала нельзя (CLAUDE.md
+    --! §3): аддон с собственной CombatIcon_OnEvent превратил бы это в установку чужой
+    --! функции обработчиком нашего фрейма.
     combatIcon.UpdatePixelPerfect = CombatIcon_UpdatePixelPerfect
 
     return combatIcon
@@ -2340,6 +2462,16 @@ end
 -------------------------------------------------
 -- missing buffs
 -------------------------------------------------
+--! WotLK fix: подсветка (ButtonGlow) иконок "нехватающих баффов" стала отдельной
+--! настройкой индикатора - showGlow. Тестер (Mr.Mole, 25ппл на прогрессивном
+--! заполнении рейда): иконки мигают пачкой и мешают читать рамки, а выключать
+--! индикатор целиком не хочется - сами иконки полезны. Флаг модульный, а не на
+--! кнопку: настройка одна на индикатор, значит и читать её надо один раз, а не
+--! по 40 таблиц на каждом проходе аур. Объявлен до CreateMissingBuffs: замыкание
+--! OnSizeChanged ниже иначе увидело бы не этот local, а глобал (nil) - в Lua 5.1
+--! upvalue связывается по месту компиляции, а не по месту вызова.
+local missingBuffsGlow = true
+
 function I.CreateMissingBuffs(parent)
     local missingBuffs = CreateFrame("Frame", parent:GetName().."MissingBuffParent", parent.widgets.indicatorFrame)
     parent.indicators.missingBuffs = missingBuffs
@@ -2356,9 +2488,33 @@ function I.CreateMissingBuffs(parent)
         local frame = I.CreateAura_BarIcon(name, missingBuffs)
         tinsert(missingBuffs, frame)
         frame:HookScript("OnSizeChanged", function()
-            LCG.ButtonGlow_Start(frame)
+            --! WotLK fix: пересчёт подсветки под новый размер - только если она включена.
+            if missingBuffsGlow then
+                LCG.ButtonGlow_Start(frame)
+            else
+                LCG.ButtonGlow_Stop(frame)
+            end
         end)
     end
+end
+
+--! WotLK fix: применение настройки showGlow, см. объявление missingBuffsGlow выше.
+function I.SetMissingBuffsGlow(enabled)
+    missingBuffsGlow = enabled and true or false
+    --! Пройти по уже нарисованным иконкам: LCG держит анимацию на самом фрейме,
+    --! а иконка после смены настройки своей перерисовки не получит - только на
+    --! следующем UNIT_AURA, то есть галка выглядела бы неработающей.
+    F.IterateAllUnitButtons(function(b)
+        local t = b.indicators and b.indicators.missingBuffs
+        if not t then return end
+        for i = 1, 3 do
+            if missingBuffsGlow and t[i]:IsShown() then
+                LCG.ButtonGlow_Start(t[i])
+            else
+                LCG.ButtonGlow_Stop(t[i])
+            end
+        end
+    end, true)
 end
 
 local missingBuffsEnabled = false
@@ -2366,15 +2522,22 @@ function I.EnableMissingBuffs(enabled)
     missingBuffsEnabled = enabled
 
     if enabled and CellDB["tools"]["buffTracker"][1] then
-        CellBuffTrackerFrame:GROUP_ROSTER_UPDATE(true)
+        CellBuffTrackerFrame:GroupRosterUpdate(true)
     end
 end
 
+--! WotLK fix: было без local - запись в глобал _G.missingBuffsFilters. Cell не владеет
+--! глобалами, а имя ничем не защищено. Читателя у этого значения нет ни здесь, ни в
+--! апстриме (Cell-retail/Indicators/Built-in.lua:2430 - та же строка, тоже без чтения):
+--! фильтры до BuffTracker доходят через CellDB["tools"]["buffTracker"], а сама
+--! I.UpdateMissingBuffsFilters в бэкпорте вообще ни разу не вызывается. Оставлено
+--! локальным, а не вырезано: контракт функции не меняется, а глобал больше не течёт.
+local missingBuffsFilters
 function I.UpdateMissingBuffsFilters(filters, noUpdate)
     if filters then missingBuffsFilters = filters end
 
     if not noUpdate and missingBuffsEnabled and CellDB["tools"]["buffTracker"][1] then
-        CellBuffTrackerFrame:GROUP_ROSTER_UPDATE(true)
+        CellBuffTrackerFrame:GroupRosterUpdate(true)
     end
 end
 
@@ -2396,7 +2559,12 @@ local function ShowMissingBuff(b, index, icon)
 
     local f = b.indicators.missingBuffs[index]
     f:SetCooldown(0, 0, nil, icon, 0)
-    LCG.ButtonGlow_Start(f)
+    --! WotLK fix: подсветка по настройке showGlow, см. I.SetMissingBuffsGlow.
+    if missingBuffsGlow then
+        LCG.ButtonGlow_Start(f)
+    else
+        LCG.ButtonGlow_Stop(f)
+    end
 end
 
 function I.ShowMissingBuff(unit, icon)

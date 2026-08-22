@@ -1,4 +1,6 @@
 local addonName, Cell = ...
+--! WotLK fix: bind Cell timers privately so standalone !!!ClassicAPI cannot change semantics.
+local C_Timer = Cell.C_Timer
 local L = Cell.L
 ---@type CellFuncs
 local F = Cell.funcs
@@ -23,8 +25,14 @@ local colors = {
 local class = select(2, UnitClass("player"))
 local classColor = {s="|cCCB2B2B2", t={0.7, 0.7, 0.7}}
 if class then
-    classColor.t[1], classColor.t[2], classColor.t[3], classColor.s = GetClassColor(class)
-    classColor.s = "|c"..classColor.s
+    --! WotLK fix: GetClassColor does not exist on 3.3.5 — absent from the codex and
+    --! from the FrameXML 3.3.5a sources. The raw global was silently supplied by an
+    --! external compatibility addon, so this file-level chunk aborted whenever Cell
+    --! loaded without one (P0-B1 run, GAP-015). Use the private adapters that the
+    --! other 19 call sites already use: F.GetClassColor returns r, g, b only, and
+    --! F.GetClassColorStr already carries the "|c" prefix.
+    classColor.t[1], classColor.t[2], classColor.t[3] = F.GetClassColor(class)
+    classColor.s = F.GetClassColorStr(class)
 end
 
 -----------------------------------------
@@ -292,7 +300,11 @@ local function CreateSetting_ShieldBarPosition(parent)
     local widget
 
     if not settingWidgets["shieldBarPosition"] then
-        widget = Cell.CreateFrame("CellIndicatorSettings_PositionNoHCenter", parent, 240, 95)
+        --! WotLK fix: имя совпадало с виджетом position_noHCenter (строка 195) —
+        --! оба живут одновременно в settingWidgets, но глобал достаётся только
+        --! созданному первым (кодекс, CreateFrame), а GetName() второго врёт.
+        --! Апстрим-баг.
+        widget = Cell.CreateFrame("CellIndicatorSettings_ShieldBarPosition", parent, 240, 95)
         settingWidgets["shieldBarPosition"] = widget
 
         widget.anchor = Cell.CreateDropdown(widget, 110)
@@ -667,6 +679,46 @@ local function CreateSetting_Thickness(parent)
         end
     else
         widget = settingWidgets["thickness"]
+    end
+
+    widget:Show()
+    return widget
+end
+
+--! WotLK fix: порог аггро-индикаторов. Мигание раньше включалось по одному жёсткому
+--! правилу - status >= 1 против ЛЮБОГО моба, на котором у юнита есть угроза, - и на
+--! боях с адами мигал весь рейд. Теперь это процент от угрозы того, кто моба держит:
+--! 100 - в точности прежнее поведение, меньше - раннее предупреждение, больше -
+--! только реальный съём. Ползунок один на два индикатора (мигание и рамка), значения
+--! у них при этом свои: settingWidgets - синглтоны, SetDBValue/SetFunc переназначаются
+--! при каждом открытии панели.
+local function CreateSetting_ThreatThreshold(parent)
+    local widget
+
+    if not settingWidgets["threatThreshold"] then
+        widget = Cell.CreateFrame("CellIndicatorSettings_ThreatThreshold", parent, 240, 50)
+        settingWidgets["threatThreshold"] = widget
+
+        widget.threshold = Cell.CreateSlider(L["Threat threshold"], widget, 50, 130, 110, 5, nil, nil, true,
+            L["Percentage of the threat of whoever is holding the mob"],
+            L["100 means the unit has caught up with them"],
+            L["Without a hostile target Cell falls back to the old rule and ignores this"])
+        widget.threshold:SetPoint("TOPLEFT", widget, 5, -20)
+        widget.threshold.afterValueChangedFn = function(value)
+            widget.func(value)
+        end
+
+        -- callback
+        function widget:SetFunc(func)
+            widget.func = func
+        end
+
+        -- show db value
+        function widget:SetDBValue(n)
+            widget.threshold:SetValue(n)
+        end
+    else
+        widget = settingWidgets["threatThreshold"]
     end
 
     widget:Show()
@@ -2318,7 +2370,9 @@ local function CreateSetting_BlockColors(parent)
         local colorBy = Cell.CreateDropdown(widget, 260)
         colorBy:SetPoint("TOPLEFT", 5, -20)
 
-        colorByText = widget:CreateFontString(nil, "OVERLAY", font_name)
+        --! WotLK fix: было без local - подпись писалась в глобал _G.colorByText.
+        --! Cell не владеет глобалами. Читается только на двух следующих строках.
+        local colorByText = widget:CreateFontString(nil, "OVERLAY", font_name)
         colorByText:SetText(L["Color By"])
         colorByText:SetPoint("BOTTOMLEFT", colorBy, "TOPLEFT", 0, 1)
 
@@ -3326,7 +3380,9 @@ local function CreateSetting_StatusColors(parent)
             widget.func()
         end)
         pendingColor:SetPoint("TOPLEFT", ghostColor, "BOTTOMLEFT", 0, -8)
-        pendingColor:SetEnabled(Cell.isRetail)
+        --! Ретейл-флаг свёрнут: статусы PENDING/ACCEPTED/DECLINED - фича
+        --! ретейл-чата; на 3.3.5 пикеры остаются выключенными, как и раньше.
+        pendingColor:SetEnabled(false)
 
         local acceptedColor = Cell.CreateColorPicker(widget, L["ACCEPTED"], true, function(r, g, b, a)
             widget.colorsTable["ACCEPTED"][1] = r
@@ -3336,7 +3392,7 @@ local function CreateSetting_StatusColors(parent)
             widget.func()
         end)
         acceptedColor:SetPoint("TOPLEFT", pendingColor, "TOPRIGHT", 70, 0)
-        acceptedColor:SetEnabled(Cell.isRetail)
+        acceptedColor:SetEnabled(false)
 
         local declinedColor = Cell.CreateColorPicker(widget, L["DECLINED"], true, function(r, g, b, a)
             widget.colorsTable["DECLINED"][1] = r
@@ -3346,7 +3402,7 @@ local function CreateSetting_StatusColors(parent)
             widget.func()
         end)
         declinedColor:SetPoint("TOPLEFT", acceptedColor, "TOPRIGHT", 70, 0)
-        declinedColor:SetEnabled(Cell.isRetail)
+        declinedColor:SetEnabled(false)
 
         local resetBtn = Cell.CreateButton(widget, L["Reset All"], "accent", {70, 20})
         resetBtn:SetPoint("TOPLEFT", pendingColor, "BOTTOMLEFT", 0, -8)
@@ -3593,7 +3649,7 @@ local function CreateSetting_Duration(parent)
 
         -- duration round up
         widget.durationRoundUpCB = Cell.CreateCheckButton(widget, L["Round Up Duration Text"], function(checked, self)
-            CellDropdownList:Hide()
+            Cell.HideDropdownList()
             widget.durationTbl[2] = checked
             Cell.SetEnabled(not checked, widget.durationDecimalText1, widget.durationDecimalText2, widget.durationDecimalDropdown)
             widget.func(widget.durationTbl)
@@ -3651,25 +3707,20 @@ local function CreateSetting_Stack(parent)
     local widget
 
     if not settingWidgets["stack"] then
-        widget = Cell.CreateFrame("CellIndicatorSettings_Stack", parent, 240, 52)
+        --! WotLK fix: высота 30 вместо 52 - осталась одна галочка. Вторая,
+        --! "цифры в кружках", удалена: символы ①..㊿ (Unicode U+2460+) не поддерживает
+        --! ни один шрифт клиента 3.3.5a, на экране выходили пустые прямоугольники,
+        --! а на 51-м стаке индикатор падал с ошибкой. Подробности - в
+        --! Indicators/Base.lua у Text_SetStack.
+        widget = Cell.CreateFrame("CellIndicatorSettings_Stack", parent, 240, 30)
         settingWidgets["stack"] = widget
 
         -- show stack
         widget.stackCB = Cell.CreateCheckButton(widget, L["showStack"], function(checked, self)
             widget.stackTbl[1] = checked
             widget.func(widget.stackTbl)
-            -- widget.circledStackCB:SetEnabled(checked)
         end)
         widget.stackCB:SetPoint("TOPLEFT", 5, -8)
-
-        -- circled stack nums
-        widget.circledStackCB = Cell.CreateCheckButton(widget, L["circledStackNums"], function(checked, self)
-            CellDropdownList:Hide()
-            widget.stackTbl[2] = checked
-            Cell.SetEnabled(not checked, widget.durationDecimalText1, widget.durationDecimalText2, widget.durationDecimalDropdown)
-            widget.func(widget.stackTbl)
-        end, L["circledStackNums"], L["Require font support"])
-        widget.circledStackCB:SetPoint("TOPLEFT", widget.stackCB, "BOTTOMLEFT", 0, -8)
 
         -- callback
         function widget:SetFunc(func)
@@ -3681,8 +3732,6 @@ local function CreateSetting_Stack(parent)
         function widget:SetDBValue(stackTbl)
             widget.stackTbl = stackTbl
             widget.stackCB:SetChecked(stackTbl[1])
-            widget.circledStackCB:SetChecked(stackTbl[2])
-            -- widget.circledStackCB:SetEnabled(stackTbl[1])
         end
     else
         widget = settingWidgets["stack"]
@@ -4026,7 +4075,7 @@ local function CreateSetting_Glow(parent)
         function widget:SetDBValue(t, hideNone)
             widget.useSmallerSize = not hideNone -- TODO: may require addtional arg
             widget.glowType.items[1].disabled = hideNone
-            widget.glowType.items[5].disabled = not Cell.isRetail
+            widget.glowType.items[5].disabled = true --! ретейл-флаг свёрнут
 
             -- {"Pixel", {0.95,0.95,0.32,1}, 9, 0.25, 8, 2},
             widget.glow = t
@@ -4242,7 +4291,9 @@ local function CreateAuraButtons(parent, auraButtons, auraTable, noUpDownButtons
             auraButtons[i].spellIconBg = auraButtons[i]:CreateTexture(nil, "BORDER")
             auraButtons[i].spellIconBg:SetSize(16, 16)
             auraButtons[i].spellIconBg:SetPoint("TOPLEFT", 2, -2)
-            auraButtons[i].spellIconBg:SetColorTexture(0, 0, 0, 1)
+            --! WotLK fix: SetColorTexture на 3.3.5 нет - это нативная числовая форма
+            --! SetTexture(r, g, b[, a]); шим TextureBase в WidgetAPI удалён.
+            auraButtons[i].spellIconBg:SetTexture(0, 0, 0, 1)
             auraButtons[i].spellIconBg:Hide()
 
             auraButtons[i].spellIcon = auraButtons[i]:CreateTexture(nil, "OVERLAY")
@@ -4920,7 +4971,7 @@ local function CreateCleuAuraButtons(parent, auraTable, updateHeightFunc)
             cleuAuraButtons[i].spellIconBg = cleuAuraButtons[i]:CreateTexture(nil, "BORDER")
             cleuAuraButtons[i].spellIconBg:SetSize(16, 16)
             cleuAuraButtons[i].spellIconBg:SetPoint("TOPLEFT", 2, -2)
-            cleuAuraButtons[i].spellIconBg:SetColorTexture(0, 0, 0, 1)
+            cleuAuraButtons[i].spellIconBg:SetTexture(0, 0, 0, 1)
             cleuAuraButtons[i].spellIconBg:Hide()
 
             cleuAuraButtons[i].spellIcon = cleuAuraButtons[i]:CreateTexture(nil, "OVERLAY")
@@ -5488,7 +5539,7 @@ local function CreateActionButtons(parent, spellTable, updateHeightFunc)
             actionButtons[i].spellIconBg = actionButtons[i]:CreateTexture(nil, "BORDER")
             actionButtons[i].spellIconBg:SetSize(16, 16)
             actionButtons[i].spellIconBg:SetPoint("TOPLEFT", 2, -2)
-            actionButtons[i].spellIconBg:SetColorTexture(0, 0, 0, 1)
+            actionButtons[i].spellIconBg:SetTexture(0, 0, 0, 1)
             actionButtons[i].spellIconBg:Hide()
 
             actionButtons[i].spellIcon = actionButtons[i]:CreateTexture(nil, "OVERLAY")
@@ -6032,43 +6083,6 @@ local function CreateSetting_HighlightType(parent)
     return widget
 end
 
-local function CreateSetting_PrivateAuraOptions(parent)
-    local widget
-
-    if not settingWidgets["privateAuraOptions"] then
-        widget = Cell.CreateFrame("CellIndicatorSettings_PrivateAuraOptions", parent, 240, 55)
-        settingWidgets["privateAuraOptions"] = widget
-
-        widget.cb1 = Cell.CreateCheckButton(widget, L["Show countdown swipe"])
-        widget.cb1:SetPoint("TOPLEFT", 5, -8)
-        widget.cb2 = Cell.CreateCheckButton(widget, L["Show countdown number"])
-        widget.cb2:SetPoint("TOPLEFT", widget.cb1, "BOTTOMLEFT", 0, -7)
-
-        -- callback
-        function widget:SetFunc(func)
-            widget.cb1.onClick = function(checked)
-                widget.cb2:SetEnabled(checked)
-                func({checked, widget.cb2:GetChecked()})
-            end
-            widget.cb2.onClick = function(checked)
-                func({widget.cb1:GetChecked(), checked})
-            end
-        end
-
-        -- show db value
-        function widget:SetDBValue(t)
-            widget.cb1:SetChecked(t[1])
-            widget.cb2:SetChecked(t[2])
-            widget.cb2:SetEnabled(t[1])
-        end
-    else
-        widget = settingWidgets["privateAuraOptions"]
-    end
-
-    widget:Show()
-    return widget
-end
-
 local function CreateSetting_Tips(parent, text)
     local widget
 
@@ -6093,104 +6107,6 @@ local function CreateSetting_Tips(parent, text)
     end
 
     widget.text:SetText(text)
-    widget:Show()
-    return widget
-end
-
-local function CreateSetting_Shape(parent)
-    local widget
-
-    if not settingWidgets["shape"] then
-        widget = Cell.CreateFrame("CellIndicatorSettings_Shape", parent, 240, 50)
-        settingWidgets["shape"] = widget
-
-        local shapes = {"circle", "square", "rhombus", "hexagon", "octagon"}
-
-        widget.buttons = {}
-
-        for i, s in pairs(shapes) do
-            widget.buttons[s] = Cell.CreateButton(widget, nil, "accent-hover", {22, 22})
-            widget.buttons[s]:SetTexture("Interface\\AddOns\\Cell\\Media\\Shapes\\"..shapes[i].."_filled", {18, 18}, {"CENTER", 0, 0})
-
-            -- button group
-            widget.buttons[s].id = s
-
-            if i == 1 then
-                widget.buttons[s]:SetPoint("TOPLEFT", 5, -20)
-            else
-                widget.buttons[s]:SetPoint("TOPLEFT", widget.buttons[shapes[i-1]], "TOPRIGHT", 5, 0)
-            end
-        end
-
-        widget.highlight = Cell.CreateButtonGroup(widget.buttons, function(shape)
-            widget.func(shape)
-        end)
-
-        -- widget.shape = Cell.CreateDropdown(widget, 153)
-        -- widget.shape:SetPoint("TOPLEFT", 5, -20)
-        -- widget.shape:SetItems({
-        --     {
-        --         ["text"] = "|TInterface\\AddOns\\Cell\\Media\\Shapes\\circle_filled:0|t",
-        --         ["value"] = "circle",
-        --         ["onClick"] = function()
-        --             widget.func("circle")
-        --         end,
-        --     },
-        --     {
-        --         ["text"] = "|TInterface\\AddOns\\Cell\\Media\\Shapes\\square_filled:0|t",
-        --         ["value"] = "square",
-        --         ["onClick"] = function()
-        --             widget.func("square")
-        --         end,
-        --     },
-        --     {
-        --         ["text"] = "|TInterface\\AddOns\\Cell\\Media\\Shapes\\rhombus_filled:0|t",
-        --         ["value"] = "rhombus",
-        --         ["onClick"] = function()
-        --             widget.func("rhombus")
-        --         end,
-        --     },
-        --     {
-        --         ["text"] = "|TInterface\\AddOns\\Cell\\Media\\Shapes\\hexagon_filled:0|t",
-        --         ["value"] = "hexagon",
-        --         ["onClick"] = function()
-        --             widget.func("hexagon")
-        --         end,
-        --     },
-        --     {
-        --         ["text"] = "|TInterface\\AddOns\\Cell\\Media\\Shapes\\octagon_filled:0|t",
-        --         ["value"] = "octagon",
-        --         ["onClick"] = function()
-        --             widget.func("octagon")
-        --         end,
-        --     },
-        --     {
-        --         ["text"] = "|TInterface\\AddOns\\Cell\\Media\\Shapes\\star_filled:0|t",
-        --         ["value"] = "star",
-        --         ["onClick"] = function()
-        --             widget.func("star")
-        --         end,
-        --     },
-        -- })
-
-        widget.shapeText = widget:CreateFontString(nil, "OVERLAY", font_name)
-        widget.shapeText:SetText(L["Shape"])
-        widget.shapeText:SetPoint("BOTTOMLEFT", widget.buttons[shapes[1]], "TOPLEFT", 0, 2)
-
-        -- callback
-        function widget:SetFunc(func)
-            widget.func = func
-        end
-
-        -- show db value
-        function widget:SetDBValue(shape)
-            -- widget.shape:SetSelectedValue(shape)
-            widget.highlight(shape)
-        end
-    else
-        widget = settingWidgets["shape"]
-    end
-
     widget:Show()
     return widget
 end
@@ -6669,7 +6585,8 @@ local function CreateSetting_RoleFilters(parent)
         local last
         for class in F.IterateClasses() do
             -- Only create filters for classes that exist in CLASS_ROLES (WotLK classes only)
-            local roles = Cell.isVanilla and {"TANK", "HEALER", "DAMAGER"} or CLASS_ROLES[class]
+            --! Ретейл-флаг свёрнут: на 3.3.5 всегда CLASS_ROLES[class].
+            local roles = CLASS_ROLES[class]
             if roles then
                 widget.filters[class] = CreateRoleFilter(widget, class, roles)
                 if last then
@@ -6876,7 +6793,8 @@ local builders = {
     ["duration"] = CreateSetting_Duration,
     ["stack"] = CreateSetting_Stack,
     ["roleTexture"] = CreateSetting_RoleTexture,
-    ["glow"] = CreateSetting_Glow,
+    --! WotLK fix: алиас ["glow"] убран — ключа "glow" нет ни в одном settingsTable
+    --! (в списках стоит "glowOptions"), "glow" — это тип индикатора, а не настройка.
     ["glowOptions"] = CreateSetting_Glow,
     ["targetedSpellsGlow"] = CreateSetting_Glow,
     ["texture"] = CreateSetting_Texture,
@@ -6888,13 +6806,18 @@ local builders = {
     ["actionsList"] = CreateSetting_ActionsList,
     ["highlightType"] = CreateSetting_HighlightType,
     ["thresholds"] = CreateSetting_Thresholds,
-    ["privateAuraOptions"] = CreateSetting_PrivateAuraOptions,
-    ["shape"] = CreateSetting_Shape,
+    --! WotLK fix: ["privateAuraOptions"] и ["shape"] вырезаны вместе с виджетами.
+    --! privateAuras — ретейловый индикатор (приватных аур на 3.3.5 нет), в бэкпорте
+    --! его нет вообще, а shape потерял смысл после перевода Power Word: Shield на
+    --! полосы (powerWordShield:SetShape давно был пустышкой). Ни один settingsTable
+    --! этих ключей не содержал, то есть панель настроек их не показывала никогда:
+    --! ~135 строк мёртвого кода в файле, который целиком грузится при старте.
     ["targetCounterFilters"] = CreateSetting_TargetCounterFilters,
     ["dispelFilters"] = CreateSetting_DispelFilters,
     ["castBy"] = CreateSetting_CastBy,
     -- ["showOn"] = CreateSetting_ShowOn,
     ["maxValue"] = CreateSetting_MaxValue,
+    ["threatThreshold"] = CreateSetting_ThreatThreshold, --! WotLK fix: порог аггро
     ["iconStyle"] = CreateSetting_IconStyle,
     ["powerTextFilters"] = CreateSetting_RoleFilters,
 }

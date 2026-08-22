@@ -48,7 +48,10 @@ function I.GetDefaultCustomIndicatorTable(name, indicatorName, type, auraType)
             },
             ["stack"] = {
                 true, -- show stack
-                false, -- circled stack nums
+                --! WotLK fix: второй элемент ("цифры в кружках") убран - шрифты
+                --! клиента 3.3.5a не содержат символов ①..㊿. Подробности - в
+                --! Indicators/Base.lua у Text_SetStack. Индекс [2] в старых
+                --! сохранениях просто перестаёт читаться, миграция не нужна.
             },
         }
     elseif type == "bar" then

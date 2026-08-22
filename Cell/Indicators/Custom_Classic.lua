@@ -139,7 +139,11 @@ function I.ResetCustomIndicatorTables()
     end
 end
 
-local function UpdateCustomIndicators(layout, indicatorName, setting, value, value2)
+--! WotLK fix: Cell.Fire dispatches callback listeners with pairs(), whose
+--! order is not a cache-before-redraw contract on Lua 5.1. Keep this updater
+--! on Cell's private indicator surface so UnitButton_UpdateIndicators can call
+--! it synchronously before refreshing visible buttons.
+function I.UpdateCustomIndicatorSettings(layout, indicatorName, setting, value, value2)
     if layout and layout ~= Cell.vars.currentLayout then return end
 
     if not indicatorName or not string.find(indicatorName, "^indicator") then return end
@@ -178,7 +182,6 @@ local function UpdateCustomIndicators(layout, indicatorName, setting, value, val
         end
     end
 end
-Cell.RegisterCallback("UpdateIndicators", "UpdateCustomIndicators", UpdateCustomIndicators)
 
 -------------------------------------------------
 -- reset
@@ -292,7 +295,17 @@ local function comparator(a, b)
     if a[1] and b[1] then
         return a[1] < b[1]
     else
-        return a[2] <= b[2]
+        --! WotLK fix: upstream compares "a[2] <= b[2]" here, and a non-strict
+        --! comparator is a crash on Lua 5.1: quicksort in ltablib.c trusts the
+        --! order function to be a strict weak order and walks off the array when
+        --! it is not. Measured on real 5.1: four entries with equal start times
+        --! and no order make table.sort pass nil to the comparator - "attempt to
+        --! index local 'a' (a nil value)" - and this fires inside the aura
+        --! update, i.e. it kills the whole indicator pipeline for that frame.
+        --! Four equal starts are not exotic: auras with no duration are stored
+        --! as start = 0. "<" is a valid strict order (ties compare false both
+        --! ways) and orders ties no worse - table.sort is not stable anyway.
+        return a[2] < b[2]
     end
 end
 

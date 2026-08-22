@@ -1,11 +1,6 @@
 local _, Cell = ...
-
---! WotLK fix (coexistence): CombatLogGetCurrentEventInfo is a TRANSLATOR of the
---! native COMBAT_LOG_EVENT varargs, not a retail-style no-arg getter. The global
---! may belong to the standalone !!!ClassicAPI, whose copy has different semantics,
---! so always prefer OUR implementation from the private CellClassicAPI namespace.
-local CombatLogGetCurrentEventInfo = (_G.CellClassicAPI and _G.CellClassicAPI.CombatLogGetCurrentEventInfo) or _G.CombatLogGetCurrentEventInfo
-
+--! WotLK fix: bind Cell timers privately so standalone !!!ClassicAPI cannot change semantics.
+local C_Timer = Cell.C_Timer
 local L = Cell.L
 ---@type CellFuncs
 local F = Cell.funcs
@@ -15,16 +10,6 @@ local I = Cell.iFuncs
 -------------------------------------------------
 -- CreateAoEHealing -- not support for npc
 -------------------------------------------------
--- Retail has CombatLogGetCurrentEventInfo; Wrath passes the values directly.
--- NOTE: pass varargs through — the ClassicAPI shim of CombatLogGetCurrentEventInfo
--- is a passthrough that normalizes the 3.3.5a payload and returns nothing without args.
--- Retail ignores extra args, so this is safe everywhere.
-local function GetCLEUInfo(...)
-    if CombatLogGetCurrentEventInfo then
-        return CombatLogGetCurrentEventInfo(...)
-    end
-    return ...
-end
 
 local function Display(b)
     b.indicators.aoeHealing:Display()
@@ -32,19 +17,22 @@ end
 
 local playerSummoned = {}
 local eventFrame = CreateFrame("Frame")
-eventFrame:SetScript("OnEvent", function(_, event, ...)
+--! WotLK perf: named parameters instead of `...` plus a ten-slot vararg unpack. A
+--! Lua 5.1 function that declares `...` is a vararg function - every call pays
+--! adjust_varargs plus a VARARG copy back into registers - and this frame is fed
+--! COMBAT_LOG_EVENT_UNFILTERED, the most frequent event in the game. The two
+--! interesting sub-events are also tested as one chain now instead of two
+--! independent ifs, so a line of the log that is neither (the overwhelming
+--! majority) leaves after a single comparison.
+eventFrame:SetScript("OnEvent", function(_, event,
+    timestamp, subevent, sourceGUID, sourceName, sourceFlags,
+    destGUID, destName, destFlags, spellId, spellName)
+
     if event ~= "COMBAT_LOG_EVENT_UNFILTERED" then return end
 
-    -- WotLK 3.3.5a: sourceRaidFlags and destRaidFlags don't exist (added in 4.2.0)
-    local timestamp, subevent, _, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, spellId, spellName
-    if CombatLogGetCurrentEventInfo then
-        -- Retail/Cata+ has sourceRaidFlags and destRaidFlags
-        local sourceRaidFlags, destRaidFlags
-        timestamp, subevent, _, sourceGUID, sourceName, sourceFlags, sourceRaidFlags, destGUID, destName, destFlags, destRaidFlags, spellId, spellName = GetCLEUInfo(...)
-    else
-        -- WotLK 3.3.5a: No sourceRaidFlags/destRaidFlags
-        timestamp, subevent, _, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, spellId, spellName = GetCLEUInfo(...)
-    end
+    --! WotLK fix: parse the native 3.3.5 CLEU payload directly. Depending on
+    --! global CombatLogGetCurrentEventInfo made this hot path use whichever
+    --! translator standalone !!!ClassicAPI published first.
     -- if subevent == "SPELL_SUMMON" then print(subevent, sourceName, sourceGUID, destName, destGUID, spellName) end
     if subevent == "SPELL_SUMMON" then
         -- print(sourceGUID == Cell.vars.playerGUID, destGUID, spellName, spellId)
@@ -58,9 +46,8 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
             end
         end
         -- texplore(playerSummoned)
-    end
     -- if (subevent == "SPELL_HEAL" or subevent == "SPELL_PERIODIC_HEAL") then print(subevent, sourceName, sourceGUID, destName, spellId, spellName) end
-    if subevent == "SPELL_HEAL" or subevent == "SPELL_PERIODIC_HEAL" then
+    elseif subevent == "SPELL_HEAL" or subevent == "SPELL_PERIODIC_HEAL" then
         if destGUID then
             -- print(sourceGUID == Cell.vars.playerGUID, sourceGUID, playerSummoned[sourceGUID])
             if (sourceGUID == Cell.vars.playerGUID and I.IsAoEHealing(spellName, spellId)) or playerSummoned[sourceGUID] then
@@ -122,8 +109,6 @@ function I.CreateAoEHealing(parent)
         if tex.SetGradientAlpha then
             -- native wrath signature: orientation, bottom RGBA, top RGBA
             tex:SetGradientAlpha("VERTICAL", r, g, b, 0, r, g, b, 0.77)
-        elseif tex.SetGradient then
-            tex:SetGradient("VERTICAL", CreateColor(r, g, b, 0), CreateColor(r, g, b, 0.77))
         end
     end
 

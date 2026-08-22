@@ -8,53 +8,98 @@ local LCG = LibStub("LibCustomGlow-1.0-Cell")
 -------------------------------------------------
 -- raid tools
 -------------------------------------------------
-local rtPane
-local resCB, resDetachCB, reportCB, buffCB, buffDropdown, sizeEditBox, buffButtons, readyPullCB, styleDropdown, pullDropdown, secEditBox, marksBarCB, marksDropdown, marksShowSoloCB, fadeOutToolsCB
+local rtPane, unlockBtn
+local reportCB, buffCB, buffDropdown, buffGlowCB, sizeEditBox, buffButtons, readyPullCB, styleDropdown, pullDropdown, secEditBox, marksBarCB, marksDropdown, marksShowSoloCB, fadeOutToolsCB
+
+-------------------------------------------------
+-- mover toggle
+-------------------------------------------------
+--! WotLK fix: раньше режим мувера жил только внутри OnClick кнопки Unlock, а сама
+--! кнопка лежит в rtPane - Options > наведение на Utilities > Raid Tools. В бою этот
+--! пейн целиком закрыт combat-маской (F.ApplyCombatProtectionToFrame ниже), то есть
+--! добраться до тумблера нельзя вообще. Плюс кнопка создаётся лениво, при первом
+--! показе пейна, поэтому внешний код не мог её дёрнуть. Вынесено в U.SetMoverShown:
+--! один вход для кнопки и для /cell unlock, состояние кнопки подтягивается, когда
+--! пейн наконец создан, - текст и глоу больше не расходятся со реальным состоянием.
+local function UpdateUnlockButton()
+    if not unlockBtn then return end
+    if Cell.vars.showMover then
+        unlockBtn:SetText(L["Lock"])
+        unlockBtn.locked = false
+        LCG.PixelGlow_Start(unlockBtn, {0,1,0,1}, 9, 0.25, 8, 1)
+    else
+        unlockBtn:SetText(L["Unlock"])
+        unlockBtn.locked = true
+        LCG.PixelGlow_Stop(unlockBtn)
+    end
+end
+
+function U.SetMoverShown(show, silent)
+    if show == nil then show = not Cell.vars.showMover end
+    show = show and true or false
+
+    Cell.vars.showMover = show
+    UpdateUnlockButton()
+    Cell.Fire("ShowMover", show)
+
+    if not silent then
+        if show then
+            local names = {}
+            if CellDB["tools"]["marks"][1] then table.insert(names, L["Marks Bar"]) end
+            if CellDB["tools"]["readyAndPull"][1] then table.insert(names, L["ReadyCheck and PullTimer buttons"]) end
+            if CellDB["tools"]["buffTracker"][1] then table.insert(names, L["Buff Tracker"]) end
+            if #names == 0 then
+                F.Print(L["Mover is on, but no tool is enabled - turn one on in Raid Tools first."])
+            else
+                F.Print(L["Mover is on: %s. Drag the green frame, then /cell lock."]:format(table.concat(names, ", ")))
+            end
+        else
+            F.Print(L["Mover is off."])
+        end
+    end
+
+    return show
+end
 
 local function CreateRTPane()
     rtPane = Cell.CreateTitledPane(Cell.frames.utilitiesTab, L["Raid Tools"].." |cFF777777"..L["only in group"], 422, 167)
     rtPane:SetPoint("TOPLEFT", 5, -5)
     rtPane:SetPoint("BOTTOMRIGHT", -5, 5)
 
-    local unlockBtn = Cell.CreateButton(rtPane, L["Unlock"], "accent", {77, 17})
+    unlockBtn = Cell.CreateButton(rtPane, L["Unlock"], "accent", {77, 17})
     unlockBtn:SetPoint("TOPRIGHT", rtPane)
     unlockBtn.locked = true
     unlockBtn:SetScript("OnClick", function(self)
-        if self.locked then
-            unlockBtn:SetText(L["Lock"])
-            self.locked = false
-            Cell.vars.showMover = true
-            LCG.PixelGlow_Start(unlockBtn, {0,1,0,1}, 9, 0.25, 8, 1)
-        else
-            unlockBtn:SetText(L["Unlock"])
-            self.locked = true
-            Cell.vars.showMover = false
-            LCG.PixelGlow_Stop(unlockBtn)
-        end
-        Cell.Fire("ShowMover", Cell.vars.showMover)
+        U.SetMoverShown(self.locked)
     end)
-
-    -- battle res
-    resCB = Cell.CreateCheckButton(rtPane, L["Battle Res Timer"], function(checked, self)
-        CellDB["tools"]["battleResTimer"][1] = checked
-        resDetachCB:SetEnabled(checked)
-        Cell.Fire("UpdateTools", "battleResTimer")
-    end, L["Battle Res Timer"], L["Only show during encounter or in mythic+"])
-    resCB:SetPoint("TOPLEFT", rtPane, "TOPLEFT", 5, -27)
-    resCB:SetEnabled(Cell.isRetail)
-
-    resDetachCB = Cell.CreateCheckButton(rtPane, L["Detached"], function(checked, self)
-        CellDB["tools"]["battleResTimer"][2] = checked
-        Cell.Fire("UpdateTools", "battleResTimer")
+    unlockBtn:HookScript("OnEnter", function()
+        CellTooltip:SetOwner(unlockBtn, "ANCHOR_TOPRIGHT", 0, 2)
+        CellTooltip:AddLine(L["Unlock"])
+        --! WotLK fix: подсказка про слэш - в бою этот пейн под combat-маской,
+        --! и кнопка недостижима; /cell unlock работает всегда.
+        CellTooltip:AddLine("|cffffffff"..L["Also available as |cFFFFB5C5/cell unlock|r - works in combat too"])
+        CellTooltip:Show()
     end)
-    resDetachCB:SetPoint("TOPLEFT", resCB, "BOTTOMRIGHT", 5, -5)
+    unlockBtn:HookScript("OnLeave", function()
+        CellTooltip:Hide()
+    end)
+    UpdateUnlockButton()
+
+    --! WotLK fix: галки "Battle Res Timer" и под ней "Detached" убраны с экрана
+    --! (разрешение заказчика от 2026-08-19). Боевое воскрешение с зарядами и таймером -
+    --! механика ретейла, на 3.3.5 её нет вообще: чекбокс и так стоял намертво выключенным
+    --! (resCB:SetEnabled(false)), а его Cell.Fire("UpdateTools", "battleResTimer") не имел
+    --! ни одного подписчика - настройка писалась в базу и не делала ничего. Вместе с ними
+    --! ушёл дефолт CellDB["tools"]["battleResTimer"] из Core_Wrath.lua и его зеркало в
+    --! Revise.lua. Death Report занял верхнюю строку пейна, весь остальной столбец
+    --! привязан к нему цепочкой и поднялся сам.
 
     -- death report
     reportCB = Cell.CreateCheckButton(rtPane, L["Death Report"], function(checked, self)
         CellDB["tools"]["deathReport"][1] = checked
         Cell.Fire("UpdateTools", "deathReport")
     end)
-    reportCB:SetPoint("TOPLEFT", resCB, "BOTTOMLEFT", 0, -35)
+    reportCB:SetPoint("TOPLEFT", rtPane, "TOPLEFT", 5, -27)
     reportCB:HookScript("OnEnter", function()
         CellTooltip:SetOwner(reportCB, "ANCHOR_TOPLEFT", 0, 2)
         CellTooltip:AddLine(L["Death Report"].." |cffff2727"..L["HIGH CPU USAGE"])
@@ -73,6 +118,7 @@ local function CreateRTPane()
         CellDB["tools"]["buffTracker"][1] = checked
         buffDropdown:SetEnabled(checked)
         sizeEditBox:SetEnabled(checked)
+        buffGlowCB:SetEnabled(checked) --! WotLK fix
         if buffButtons then
             for buff, b in pairs(buffButtons) do
                 b:SetEnabled(checked)
@@ -80,7 +126,8 @@ local function CreateRTPane()
         end
         Cell.Fire("UpdateTools", "buffTracker")
     end, L["Buff Tracker"].." |cffff7727"..L["MODERATE CPU USAGE"], L["Check if your group members need some raid buffs"],
-    Cell.isRetail and L["|cffffb5c5Left-Click:|r cast the spell"] or "|cffffb5c5(Shift)|r "..L["|cffffb5c5Left-Click:|r cast the spell"],
+    --! Ретейл-ветка подсказки вырезана: на 3.3.5 всегда вариант с Shift.
+    "|cffffb5c5(Shift)|r "..L["|cffffb5c5Left-Click:|r cast the spell"],
     L["|cffffb5c5Right-Click:|r report unaffected"])
     -- L["Use |cFFFFB5C5/cell buff X|r to set icon size"],
     -- "|cffffffff" .. L["Current"]..": |cFFFFB5C5"..CellDB["tools"]["buffTracker"][3])
@@ -151,48 +198,58 @@ local function CreateRTPane()
         end
     end)
 
-    if Cell.isVanilla or Cell.isWrath or Cell.isCata then
-        buffButtons = {}
+    --! Guard по флейворам вырезан - на 3.3.5 (isWrath=true) он всегда истина.
+    buffButtons = {}
 
-        local buffOrder, buffs = U.GetBuffTrackerInfo()
+    local buffOrder, buffs = U.GetBuffTrackerInfo()
 
-        local last
-        for i, buff in ipairs(buffOrder) do
-            local b = Cell.CreateButton(rtPane, "", "accent-hover", {20, 20})
-            buffButtons[buff] = b
+    local last
+    for i, buff in ipairs(buffOrder) do
+        local b = Cell.CreateButton(rtPane, "", "accent-hover", {20, 20})
+        buffButtons[buff] = b
 
-            local tex = b:CreateTexture(nil, "ARTWORK")
-            P.Point(tex, "TOPLEFT", b, "TOPLEFT", 1, -1)
-            P.Point(tex, "BOTTOMRIGHT", b, "BOTTOMRIGHT", -1, 1)
-            tex:SetTexture(buffs[buff]["buff1"]["icon"])
-            tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        local tex = b:CreateTexture(nil, "ARTWORK")
+        P.Point(tex, "TOPLEFT", b, "TOPLEFT", 1, -1)
+        P.Point(tex, "BOTTOMRIGHT", b, "BOTTOMRIGHT", -1, 1)
+        tex:SetTexture(buffs[buff]["buff1"]["icon"])
+        tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 
-            b:SetScript("OnEnable", function()
-                tex:SetDesaturated(false)
-            end)
-            b:SetScript("OnDisable", function()
-                tex:SetDesaturated(true)
-            end)
+        b:SetScript("OnEnable", function()
+            tex:SetDesaturated(false)
+        end)
+        b:SetScript("OnDisable", function()
+            tex:SetDesaturated(true)
+        end)
 
-            b:SetScript("OnClick", function()
-                CellDB["tools"]["buffTracker"][5][buff] = not CellDB["tools"]["buffTracker"][5][buff]
-                Cell.Fire("UpdateTools", "buffTracker")
-                if CellDB["tools"]["buffTracker"][5][buff] then
-                    b:SetAlpha(1)
-                else
-                    b:SetAlpha(0.25)
-                end
-            end)
-
-            if last then
-                b:SetPoint("TOPLEFT", last, "TOPRIGHT", 2, 0)
+        b:SetScript("OnClick", function()
+            CellDB["tools"]["buffTracker"][5][buff] = not CellDB["tools"]["buffTracker"][5][buff]
+            Cell.Fire("UpdateTools", "buffTracker")
+            if CellDB["tools"]["buffTracker"][5][buff] then
+                b:SetAlpha(1)
             else
-                b:SetPoint("TOPLEFT", sizeEditBox.confirmBtn, "TOPRIGHT", 5, 0)
+                b:SetAlpha(0.25)
             end
+        end)
 
-            last = b
+        if last then
+            b:SetPoint("TOPLEFT", last, "TOPRIGHT", 2, 0)
+        else
+            b:SetPoint("TOPLEFT", sizeEditBox.confirmBtn, "TOPRIGHT", 5, 0)
         end
+
+        last = b
     end
+
+    --! WotLK fix: тумблер мигающей рамки на иконке Buff Tracker-а.
+    --! Раньше глоу включался жёстко, когда баффа нет на самом игроке, и погасить его
+    --! можно было только выключив Buff Tracker целиком - то есть потеряв и счётчик,
+    --! и кнопки каста. Теперь это отдельная настройка (buffTracker[6]): иконка,
+    --! счётчик и затемнение остаются, уходит только мигание.
+    buffGlowCB = Cell.CreateCheckButton(rtPane, L["Glow when you are missing the buff"], function(checked, self)
+        CellDB["tools"]["buffTracker"][6] = checked
+        Cell.Fire("UpdateTools", "buffTracker")
+    end, L["Glow when you are missing the buff"], L["The icon and the counter stay either way"])
+    buffGlowCB:SetPoint("TOPLEFT", buffCB, "BOTTOMRIGHT", 5, -28)
 
     -- ready & pull
     readyPullCB = Cell.CreateCheckButton(rtPane, L["ReadyCheck and PullTimer buttons"], function(checked, self)
@@ -202,7 +259,8 @@ local function CreateRTPane()
         secEditBox:SetEnabled(checked)
         Cell.Fire("UpdateTools", "buttons")
     end, L["ReadyCheck and PullTimer buttons"], L["Only show when you have permission to do this"], L["readyCheckTips"], L["pullTimerTips"])
-    readyPullCB:SetPoint("TOPLEFT", buffCB, "BOTTOMLEFT", 0, -43)
+    --! WotLK fix: было -43, освободили строку под buffGlowCB (см. выше).
+    readyPullCB:SetPoint("TOPLEFT", buffCB, "BOTTOMLEFT", 0, -63)
     Cell.RegisterForCloseDropdown(readyPullCB)
 
     styleDropdown = Cell.CreateDropdown(rtPane, 120)
@@ -310,6 +368,10 @@ local function CreateRTPane()
 
     marksDropdown = Cell.CreateDropdown(rtPane, 217)
     marksDropdown:SetPoint("TOPLEFT", marksBarCB, "BOTTOMRIGHT", 5, -5)
+    --! WotLK fix: четыре пункта World Marks (H/V) и Both (H/V) вырезаны вместе с
+    --! самой веткой world-меток - на 3.3.5 её нет ни в API, ни в secure-типах,
+    --! и раньше они висели в списке серыми (["disabled"] = true). Осталось два
+    --! рабочих режима. Подробности - audit/STUDY_GAPS.md §2.23.
     marksDropdown:SetItems({
         {
             ["text"] = L["Target Marks"].." ("..L["Horizontal"]..")",
@@ -324,42 +386,6 @@ local function CreateRTPane()
             ["value"] = "target_v",
             ["onClick"] = function()
                 CellDB["tools"]["marks"][3] = "target_v"
-                Cell.Fire("UpdateTools", "marks")
-            end,
-        },
-        {
-            ["text"] = L["World Marks"].." ("..L["Horizontal"]..")",
-            ["value"] = "world_h",
-            ["disabled"] = Cell.isVanilla or Cell.isWrath,
-            ["onClick"] = function()
-                CellDB["tools"]["marks"][3] = "world_h"
-                Cell.Fire("UpdateTools", "marks")
-            end,
-        },
-        {
-            ["text"] = L["World Marks"].." ("..L["Vertical"]..")",
-            ["value"] = "world_v",
-            ["disabled"] = Cell.isVanilla or Cell.isWrath,
-            ["onClick"] = function()
-                CellDB["tools"]["marks"][3] = "world_v"
-                Cell.Fire("UpdateTools", "marks")
-            end,
-        },
-        {
-            ["text"] = L["Both"].." ("..L["Horizontal"]..")",
-            ["value"] = "both_h",
-            ["disabled"] = Cell.isVanilla or Cell.isWrath,
-            ["onClick"] = function()
-                CellDB["tools"]["marks"][3] = "both_h"
-                Cell.Fire("UpdateTools", "marks")
-            end,
-        },
-        {
-            ["text"] = L["Both"].." ("..L["Vertical"]..")",
-            ["value"] = "both_v",
-            ["disabled"] = Cell.isVanilla or Cell.isWrath,
-            ["onClick"] = function()
-                CellDB["tools"]["marks"][3] = "both_v"
                 Cell.Fire("UpdateTools", "marks")
             end,
         }
@@ -408,15 +434,13 @@ local function ShowUtilitySettings(which)
         init = true
 
         -- raid tools
-        resCB:SetChecked(CellDB["tools"]["battleResTimer"][1])
-        resDetachCB:SetChecked(CellDB["tools"]["battleResTimer"][2])
-        resDetachCB:SetEnabled(Cell.isRetail and CellDB["tools"]["battleResTimer"][1])
         reportCB:SetChecked(CellDB["tools"]["deathReport"][1])
 
         buffCB:SetChecked(CellDB["tools"]["buffTracker"][1])
         buffDropdown:SetSelectedValue(CellDB["tools"]["buffTracker"][2])
         sizeEditBox:SetText(CellDB["tools"]["buffTracker"][3])
-        Cell.SetEnabled(CellDB["tools"]["buffTracker"][1], buffDropdown, sizeEditBox)
+        buffGlowCB:SetChecked(CellDB["tools"]["buffTracker"][6]) --! WotLK fix
+        Cell.SetEnabled(CellDB["tools"]["buffTracker"][1], buffDropdown, sizeEditBox, buffGlowCB)
         if buffButtons then
             for buff, b in pairs(buffButtons) do
                 b:SetEnabled(CellDB["tools"]["buffTracker"][1])

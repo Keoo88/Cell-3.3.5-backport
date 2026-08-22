@@ -66,11 +66,13 @@ local function CreateIndicatorsExportFrame()
     textArea:SetPoint("BOTTOMRIGHT", -5, 5)
 
     -- highlight text
+    --! WotLK fix: the condition here tested `isImport`, an UNDECLARED GLOBAL
+    --! (the real local belongs to Modules/About/ImportExport.lua). This frame
+    --! is export-only, so select-all on click is always what we want - state
+    --! it directly instead of leaning on a global Cell does not own.
     textArea.eb:SetScript("OnEditFocusGained", function() textArea.eb:HighlightText() end)
     textArea.eb:SetScript("OnMouseUp", function()
-        if not isImport then
-            textArea.eb:HighlightText()
-        end
+        textArea.eb:HighlightText()
     end)
 
     -- list buttons
@@ -180,7 +182,9 @@ Validate = function()
 end
 
 Toggle = function(index, isSelect, unhighlight)
-    b = indicatorButtons[index]
+    --! WotLK fix: было `b = ...` без local - запись в глобал _G.b на каждый клик.
+    --! См. пояснение в Copy.lua.
+    local b = indicatorButtons[index]
     if isSelect then
         selectedIndicators[index] = true
         b:SetBackdropColor(unpack(b.hoverColor))

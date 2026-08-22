@@ -16,8 +16,10 @@ _G.Cell = _G.Cell or ns or {}
 local Cell = _G.Cell
 
 local snapshot = {
-    widgets = {},   -- тип виджета -> { имя метода = true }
-    globals = {},   -- имя глобала -> "function" | "table"
+    --! WotLK fix: сохраняем точные ссылки, а не только тип/флаг наличия.
+    --! Иначе подмена function -> function или table -> table после снимка невидима.
+    widgets = {},   -- тип виджета -> { имя метода = исходная функция }
+    globals = {},   -- имя глобала -> исходное значение
     order = {},     -- порядок появления владельцев (кто грузился)
 }
 Cell.nativeSnapshot = snapshot
@@ -40,7 +42,9 @@ local function RecordMetatable(label, obj)
     local t = {}
     for k, v in pairs(index) do
         if type(k) == "string" and type(v) == "function" then
-            t[k] = true
+            --! WotLK fix: ссылка нужна для обнаружения подмены метода функцией
+            --! того же типа; boolean показывал только появление нового имени.
+            t[k] = v
         end
     end
     snapshot.widgets[label] = t
@@ -102,8 +106,9 @@ local WATCHED = {
     "UnitGroupRolesAssigned", "UnitIsGroupLeader", "UnitIsGroupAssistant",
     "UnitAura", "UnitBuff", "UnitDebuff", "UnitPower", "UnitPowerMax",
     "UnitPowerType", "UnitInRange", "UnitInRaid", "UnitInParty", "UnitGUID",
-    "UnitHealth", "UnitHealthMax", "UnitClass", "UnitName", "UnitExists",
-    "UnitGetIncomingHeals", "UnitGetTotalAbsorbs", "UnitIsPlayer", "UnitIsUnit",
+    "UnitHealth", "UnitHealthMax", "UnitClass", "UnitClassBase", "UnitName", "UnitExists",
+    "UnitGetIncomingHeals", "UnitGetTotalAbsorbs", "UnitGetTotalHealAbsorbs",
+    "UnitHasIncomingResurrection", "UnitIsPlayer", "UnitIsUnit",
     -- группа
     "GetNumGroupMembers", "GetNumRaidMembers", "GetNumPartyMembers",
     "GetRaidRosterInfo", "GetPartyAssignment", "IsInGroup", "IsInRaid",
@@ -146,7 +151,7 @@ for _, n in ipairs({
     -- C-API (codex)
     "UnitAura", "UnitBuff", "UnitDebuff", "UnitPower", "UnitPowerMax", "UnitPowerType",
     "UnitInRange", "UnitInRaid", "UnitInParty", "UnitGUID", "UnitHealth", "UnitHealthMax",
-    "UnitClass", "UnitName", "UnitExists", "UnitIsPlayer", "UnitIsUnit",
+    "UnitClass", "UnitClassBase", "UnitName", "UnitExists", "UnitIsPlayer", "UnitIsUnit",
     "GetNumRaidMembers", "GetNumPartyMembers", "GetRaidRosterInfo", "GetPartyAssignment",
     "GetInstanceInfo", "IsInInstance", "GetSpellInfo", "GetSpellCooldown", "IsSpellInRange",
     "GetItemInfo", "GetItemCount", "IsItemInRange", "CreateFrame", "GetRaidTargetIndex",
@@ -163,7 +168,9 @@ for i = 1, #WATCHED do
     local name = WATCHED[i]
     local v = _G[name]
     if v ~= nil then
-        snapshot.globals[name] = type(v)
+        --! WotLK fix: точечный список удерживает только проверяемые значения и
+        --! позволяет отличить изменение типа от подмены объекта того же типа.
+        snapshot.globals[name] = v
     end
 end
 

@@ -26,11 +26,10 @@ local function DoImport(noReload)
     end
 
     -- deal with invalid
-    if Cell.isMists or Cell.isVanilla or Cell.isWrath or Cell.isCata then
-        imported["quickCast"] = nil
-        imported["quickAssist"] = nil
-        imported["appearance"]["healAbsorb"][1] = false
-    end
+    --! Guard по флейворам вырезан - на 3.3.5 (isWrath=true) он всегда истина.
+    imported["quickCast"] = nil
+    imported["quickAssist"] = nil
+    imported["appearance"]["healAbsorb"][1] = false
 
     -- layouts
     local builtInFound = {}
@@ -114,12 +113,11 @@ local function DoImport(noReload)
         imported["clickCastings"] = nil
 
     elseif imported["characterDB"] and imported["characterDB"]["clickCastings"] then
-        if (Cell.isVanilla or Cell.isWrath or Cell.isCata) and imported["characterDB"]["clickCastings"]["class"] == Cell.vars.playerClass then -- WRATH -> WRATH, same class
+        --! Guard по флейворам и ретейл-ветка вырезаны: на 3.3.5 всегда
+        --! WRATH -> WRATH одного класса.
+        if imported["characterDB"]["clickCastings"]["class"] == Cell.vars.playerClass then
             clickCastings = imported["characterDB"]["clickCastings"]
-            if Cell.isVanilla and GetNumTalentGroups() == 1 then -- no dual spec system
-                clickCastings["useCommon"] = true
-            end
-        else -- WRATH -> RETAIL
+        else
             clickCastings = nil
         end
         imported["characterDB"]["clickCastings"] = nil
@@ -136,11 +134,8 @@ local function DoImport(noReload)
         imported["layoutAutoSwitch"] = nil
 
     elseif imported["characterDB"] and imported["characterDB"]["layoutAutoSwitch"] then
-        if Cell.isVanilla or Cell.isWrath or Cell.isCata then -- WRATH -> WRATH
-            layoutAutoSwitch = imported["characterDB"]["layoutAutoSwitch"]
-        else -- CLASSIC -> RETAIL
-            layoutAutoSwitch = nil
-        end
+        --! Guard вырезан: на 3.3.5 всегда WRATH -> WRATH.
+        layoutAutoSwitch = imported["characterDB"]["layoutAutoSwitch"]
         imported["characterDB"]["layoutAutoSwitch"] = nil
     end
 
@@ -300,6 +295,11 @@ local function CreateImportConfirmationFrame()
     checkboxes.layouts = Cell.CreateCheckButton(confirmationFrame, L["Layouts"] .. " & " .. L["Indicators"], function(checked)
         ignoredIndices["layouts"] = not checked
         ignoredIndices["layoutAutoSwitch"] = not checked
+        --! WotLK fix: the per-role auto-switch table is account-level, so unlike
+        --! layoutAutoSwitch above it rides the generic `for k, v in pairs(imported) do
+        --! CellDB[k] = v end` at :187 - which means it needs its own entry here, or
+        --! unchecking Layouts would import it anyway.
+        ignoredIndices["layoutAutoSwitchRole"] = not checked
         ignoredIndices["dispelBlacklist"] = not checked
         ignoredIndices["debuffBlacklist"] = not checked
         ignoredIndices["bigDebuffs"] = not checked
@@ -549,10 +549,8 @@ function F.ShowExportFrame()
 
     includeNicknamesCB:SetChecked(false)
     includeNicknamesCB:Show()
-    if Cell.isVanilla or Cell.isWrath or Cell.isCata then
-        includeCharacterCB:SetChecked(false)
-        includeCharacterCB:Show()
-    end
+    includeCharacterCB:SetChecked(false)
+    includeCharacterCB:Show() --! guard вырезан
     textArea:SetPoint("TOPLEFT", 5, -50)
     P.Height(importExportFrame, 230)
 end

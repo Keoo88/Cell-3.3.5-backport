@@ -3260,7 +3260,8 @@ local function groupUpdate(unit)
 
 		if ( raidID ) then
 			local _
-			_, _, group = GetRaidRosterInfo(raidID)
+			--! WotLK fix: UnitInRaid is zero-based on build 12340; the roster API is one-based.
+			_, _, group = GetRaidRosterInfo(raidID + 1)
 		end
 
 		guidToUnit[guid] = unit
@@ -3302,6 +3303,11 @@ function HealComm:PARTY_MEMBERS_CHANGED()
 		groupUpdate("player")
 	end
 end
+
+--! WotLK fix: PARTY_MEMBERS_CHANGED and RAID_ROSTER_UPDATE are separate
+--! native roster notifications on 3.3.5. Reuse the complete mapper so this
+--! high-minor LibStub copy also stays correct for foreign HealComm consumers.
+HealComm.RAID_ROSTER_UPDATE = HealComm.PARTY_MEMBERS_CHANGED
 
 -- PLAYER_ALIVE = got talent data
 function HealComm:PLAYER_ALIVE()
@@ -3471,6 +3477,8 @@ function HealComm:PLAYER_LOGIN()
 	self.eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 	self.eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 	self.eventFrame:RegisterEvent("PARTY_MEMBERS_CHANGED")
+	--! WotLK fix: raid roster changes do not reliably arrive as the party event.
+	self.eventFrame:RegisterEvent("RAID_ROSTER_UPDATE")
 
 	self:ZONE_CHANGED_NEW_AREA()
 	self:PARTY_MEMBERS_CHANGED()

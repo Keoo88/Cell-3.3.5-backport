@@ -1,4 +1,6 @@
 local _, Cell = ...
+--! WotLK fix: bind Cell timers privately so standalone !!!ClassicAPI cannot change semantics.
+local C_Timer = Cell.C_Timer
 local L = Cell.L
 local F = Cell.funcs
 local B = Cell.bFuncs
@@ -502,10 +504,18 @@ local function UpdatePreviewButton(which)
         previewButton.widgets.damageFlashTex:SetTexture(Cell.vars.texture)
 
         previewButton2.widgets.healthBar:SetStatusBarTexture(Cell.vars.texture)
-        previewButton2.widgets.healthBar:GetStatusBarTexture():SetDrawLayer("ARTWORK", -7) --! VERY IMPORTANT
+        --! WotLK fix: native GetStatusBarTexture may be nil on some custom
+        --! clients; guard Cell's preview bars locally.
+        local healthTexture = previewButton2.widgets.healthBar:GetStatusBarTexture()
+        if healthTexture then
+            healthTexture:SetDrawLayer("ARTWORK", -7) --! VERY IMPORTANT
+        end
         previewButton2.widgets.healthBarLoss:SetTexture(Cell.vars.texture)
         previewButton2.widgets.powerBar:SetStatusBarTexture(Cell.vars.texture)
-        previewButton2.widgets.powerBar:GetStatusBarTexture():SetDrawLayer("ARTWORK", -7) --! VERY IMPORTANT
+        local powerTexture = previewButton2.widgets.powerBar:GetStatusBarTexture()
+        if powerTexture then
+            powerTexture:SetDrawLayer("ARTWORK", -7) --! VERY IMPORTANT
+        end
         previewButton2.widgets.powerBarLoss:SetTexture(Cell.vars.texture)
         previewButton2.widgets.incomingHeal:SetTexture(Cell.vars.texture)
         previewButton2.widgets.damageFlashTex:SetTexture(Cell.vars.texture)
@@ -621,7 +631,11 @@ local function CreateIconOptionsFrame()
         appearanceTab.mask:Hide()
     end
 
-    iconOptionsFrame = Cell.CreateFrame("CellOptionsFrame_IconOptions", appearanceTab, 230, 235)
+    --! WotLK fix: имя совпадало с панелью иконок Spell Request
+    --! (Utilities/Request_IconOptions.lua:132) — это разные панели, живут
+    --! одновременно, но глобал получает только созданная первой (кодекс,
+    --! CreateFrame). Здесь настройки иконок аур, отсюда и имя. Апстрим-баг.
+    iconOptionsFrame = Cell.CreateFrame("CellOptionsFrame_AuraIconOptions", appearanceTab, 230, 235)
     iconOptionsFrame:SetBackdropBorderColor(unpack(Cell.GetAccentColorTable()))
     iconOptionsFrame:SetPoint("TOP", iconOptionsBtn, "BOTTOM", 0, -5)
     iconOptionsFrame:SetPoint("RIGHT", -5, 0)
@@ -673,7 +687,7 @@ local function CreateIconOptionsFrame()
 
     -- duration round up
     durationRoundUpCB = Cell.CreateCheckButton(iconOptionsFrame, L["Round Up Duration Text"], function(checked, self)
-        CellDropdownList:Hide()
+        Cell.HideDropdownList()
 
         CellDB["appearance"]["auraIconOptions"]["durationRoundUp"] = checked
         Cell.SetEnabled(not checked, durationDecimalText1, durationDecimalText2, durationDecimalDropdown)
@@ -709,7 +723,7 @@ local function CreateIconOptionsFrame()
 
     -- duration text color
     durationColorCB = Cell.CreateCheckButton(iconOptionsFrame, L["Color Duration Text"], function(checked, self)
-        CellDropdownList:Hide()
+        Cell.HideDropdownList()
 
         -- restore sec
         durationSecondEB:SetText(CellDB["appearance"]["auraIconOptions"]["durationColors"][3][4])
@@ -1503,7 +1517,8 @@ local function CreateUnitButtonStylePane()
     -- WotLK: Position at same level as Heal Prediction (not as a child)
     -- Place below predCustomCB but align with predCB's left edge
     shieldCB:SetPoint("TOPLEFT", predCB, "BOTTOMLEFT", 0, -35)
-    shieldCB:SetEnabled(not Cell.isVanilla)
+    --! WotLK fix: ретейл-флаг свёрнут в константу 3.3.5 - Cell.is* заданы литералами в Utils.lua.
+    shieldCB:SetEnabled(true)
 
     shieldColorPicker = Cell.CreateColorPicker(unitButtonPane, L["Shield Texture"], true, function(r, g, b, a)
         CellDB["appearance"]["shield"][2][1] = r
@@ -1528,7 +1543,7 @@ local function CreateUnitButtonStylePane()
         Cell.Fire("UpdateAppearance", "shields")
     end)
     oversCB:SetPoint("TOPLEFT", shieldCB, "BOTTOMLEFT", 0, -28)
-    oversCB:SetEnabled(not Cell.isVanilla)
+    oversCB:SetEnabled(true)
 
     oversColorPicker = Cell.CreateColorPicker(unitButtonPane, L["Overshield Texture"], true, function(r, g, b, a)
         CellDB["appearance"]["overshield"][2][1] = r

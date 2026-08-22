@@ -1,54 +1,131 @@
 <Ui xmlns="http://www.blizzard.com/wow/ui/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.blizzard.com/wow/ui/
 ..\FrameXML\UI.xsd">
-	<!-- ClassicAPI by Tsoukie, embedded as a library for Cell; coexists with the standalone !!!ClassicAPI addon (works with it and without it) -->
+	<!-- ClassicAPI by Tsoukie, embedded as a library for Cell (no standalone !!!ClassicAPI addon required) -->
 	<!-- Trimmed to the modules used by Cell; load order matches the original !!!ClassicAPI.toc -->
-	<!-- Coexistence layer: must load first (see Util\Coexist.lua) -->
-	<Script file="Util\Coexist.lua" />
-
 	<Script file="Lib\ChatThrottleLib.lua" />
 
-	<Script file="Util\ErrorUtil.lua" />
-	<Script file="Util\Constants.lua" />
-	<Script file="Util\ClassicAPI.lua" />
-	<Script file="Util\Enum.lua" />
+	<!-- WotLK fix: ErrorUtil.lua and ClassicAPI.lua served only compatibility
+	     modules that are no longer active. Do not publish dormant CallErrorHandler,
+	     assertsafe, or initialize unused Private helper functions. -->
+	<!-- WotLK fix: the synthetic instance-party category served only the removed
+	     embedded Group.lua and unreachable INSTANCE_CHAT branches. Stock 3.3.5a
+	     has neither contract, so do not publish LE_PARTY_CATEGORY_INSTANCE. -->
+	<!-- WotLK fix: the broad item/profession/inventory Enum tables only served
+	     removed C_Item, PartyUtil, and map compatibility modules. Cell now uses
+	     private/native adapters and publishes no partial Enum namespace. -->
 	<Script file="Util\C_Timer.lua" />
 
-	<Script file="Util\EventHandler.lua" />
+	<!-- WotLK fix: async item and synthetic inspect producers are not embedded,
+	     so do not create the unused permanent EventHandler dispatcher frame. -->
+	<!-- WotLK fix: WidgetAPI is the single owner of proven shared adapters:
+	     FontString line/truncation queries and Button/EditBox/Slider SetEnabled.
+	     It installs only absent methods; Polyfills.lua
+	     no longer creates duplicate widget probes or fallback owners.
+	     2026-08-11: SetShown и SetAtlas отсюда удалены. SetShown прописывался в
+	     метатаблицу ScriptRegion, то есть всем виджетам клиента, ради четырёх
+	     точек вызова - все переведены на нативную пару Show/Hide. SetAtlas читал
+	     _G.C_Texture.AtlasData, которого Cell больше не публикует, и в одиночку
+	     молча не делал ничего; атласов на 3.3.5 нет как системы.
+	     2026-08-16: удалён и SetColorTexture, а с ним конкретный зонд Texture -
+	     WidgetAPI больше вообще не пишет в общую метатаблицу текстур. Метод был
+	     чистым пробросом в нативную числовую форму SetTexture(r, g, b[, a]), все
+	     88 вызовов Cell переведены на неё напрямую. -->
 	<Script file="Util\WidgetAPI.lua"/>
 
-	<Script file="Util\Unit.lua" />
-	<Script file="Util\Cooldown.lua" />
-	<Script file="Util\Group.lua" />
+	<!-- WotLK fix: Cell uses private unit-name, role, range, and phase adapters.
+	     Do not publish the broad dormant Unit.lua global compatibility surface. -->
+	<!-- WotLK fix: native 3.3.5 Cooldown already owns SetCooldown/SetReverse.
+	     Cell keeps its extra cooldown state on Cell-owned instances, so do not
+	     load the global helpers or software-swipe capture backend. -->
+	<!-- WotLK fix: Cell owns its group/leader/assistant adapters privately in
+	     Polyfills.lua. Do not publish later-expansion group globals from the
+	     embedded copy; standalone !!!ClassicAPI/custom cores retain their owners. -->
 	<Script file="Util\HealPrediction.lua" />
-	<Script file="Util\Specialization.lua" />
+	<!-- 2026-08-11: HealPrediction.lua свёлся к одному раннему return и шапке
+	     комментариев - кода в нём не осталось. Прогноз лечения Cell берёт из
+	     LibHealComm приватно в RaidFrames/UnitButton_Cata_Wrath.lua, входящее
+	     воскрешение - из LibResComm приватно в Indicators/StatusIcon.lua, а
+	     поглощение щитов считает своим CLEU/аура-трекером. Глобалов
+	     UnitGetIncomingHeals, UnitHasIncomingResurrection, UnitGetTotalAbsorbs,
+	     UnitGetTotalHealAbsorbs и событий UNIT_HEAL_PREDICTION /
+	     INCOMING_RESURRECT_CHANGED модуль давно не создаёт (кодекс: ни одного из
+	     этих имён на 3.3.5 нет). Файл оставлен в графе как якорь этой записи -
+	     удалять его отдельным шагом смысла нет, парсинг 13 строк комментария
+	     дешевле, чем потеря объяснения. -->
+	<!-- WotLK fix: Cell's LibGroupInfo owns its native INSPECT_TALENT_READY route.
+	     Do not install two permanent global inspect hooks and an unused event frame
+	     solely to synthesize the non-native INSPECT_READY compatibility event. -->
 
-	<Script file="Util\C_CreatureInfo.lua" />
-	<Script file="Util\C_Map.lua" />
-	<Script file="Util\C_PvP.lua" />
-	<Script file="Util\C_Texture.lua" />
-	<Script file="Util\C_ChatInfo.lua" />
-	<Script file="Util\C_SpellBook.lua" />
-	<Script file="Util\C_Spell.lua" />
-	<Script file="Util\C_Item.lua" />
-	<Script file="Util\C_AddOns.lua" />
+	<!-- WotLK fix: Cell builds its Wrath class tuples privately in Polyfills.lua.
+	     Do not publish the broad C_CreatureInfo/GetClassInfo compatibility owner or
+	     its unused, non-localized race table from the embedded copy. -->
+	<!-- WotLK fix: Cell's raid-debuff lookup now reads native legacy zone names.
+	     Do not publish the broad C_Map namespace or scan every continent/zone by
+	     repeatedly changing the global world-map selection for foreign consumers. -->
+	<!-- WotLK fix: Cell reads IsInInstance directly and has no PartyUtil consumer;
+	     do not publish dormant C_PvP/PartyUtil foreign compatibility tables. -->
+	<!-- WotLK fix: Cell's only status-icon atlas consumer now uses native
+	     WorldStateFrame flag textures; no active Cell path requires the broad
+	     retail C_Texture registry. Standalone !!!ClassicAPI remains untouched. -->
+	<!-- WotLK fix: Cell macros use native SendAddonMessage and AceComm owns its
+	     implicit pre-4.1 prefix-registration result privately. Do not publish the
+	     later C_ChatInfo namespace from the embedded compatibility layer. -->
+	<!-- WotLK fix: Polyfills.lua supplies the one legacy spell-book helper used
+	     by Cell; do not publish the unused C_SpellBook namespace and aliases. -->
+	<!-- WotLK fix: Cell needs only a small additive C_Spell surface provided by
+	     Polyfills.lua and no C_Item namespace methods. Do not publish the broad
+	     embedded namespaces, deprecated aliases, tooltip scanner contracts, or
+	     unsupported item-location no-ops solely for unknown foreign consumers. -->
+	<!-- WotLK fix: Cell uses native addon APIs directly. Do not publish C_AddOns,
+	     deprecated aliases, or a non-native enable-state contract for foreigners. -->
 
-	<Script file="Util\Mixin.lua" />
-	<Script file="Util\Pools.lua" />
-	<Script file="Util\Color.lua" />
-	<Script file="Util\ColorUtil.lua" />
-	<Script file="Util\API.lua" />
-	<Script file="Util\AsyncCallbackSystem.lua"/>
-	<Script file="Util\MathUtil.lua" />
-	<Script file="Util\AtlasInfo.lua" />
-	<Script file="Util\PartyUtil.lua" />
+	<!-- WotLK fix: the two active Cell smoothing consumers copy methods from
+	     Cell.SmoothStatusBarMixin directly. Do not publish Mixin/CreateFromMixins
+	     globals solely for embedded Cell; preserve any standalone/foreign owner. -->
+	<!-- WotLK fix: Cell consumers own private pools; do not load/publish the
+	     ClassicAPI pool family or inherit standalone !!!ClassicAPI semantics. -->
+	<!-- WotLK fix: Color.lua/ColorUtil.lua publish retail-style color globals and
+	     mutate every entry of Blizzard's shared RAID_CLASS_COLORS table. Cell uses
+	     the private/additive adapters in Polyfills.lua instead; keeping these two
+	     modules active leaks embedded-library behavior into foreign unit-frame
+	     addons (X-Perl 3.0.9 exposed the coexistence failure through class icons). -->
+	<!-- WotLK fix: API.lua publishes many dormant retail globals and frame helpers.
+	     Polyfills.lua retains only the guarded AnimateTexCoords helper required by
+	     Cell's embedded LibCustomGlow; other active consumers use native APIs. -->
+	<!-- WotLK fix: Cell has no AsyncCallbackSystem consumer and C_Item's load
+	     request is intentionally a no-op. Do not create two unused listener
+	     frames or publish ClassicAPI callback globals from the embedded copy. -->
+	<!-- WotLK fix: the active smoothing, font-line, and PixelPerfect consumers own
+	     their tiny math helpers locally. Do not publish the broad retail MathUtil
+	     function family into the shared Lua global namespace. -->
+	<!-- WotLK fix: AtlasInfo.lua registered only unused summon atlas names.
+	     Cell now uses native texture paths for its only battleground flag case. -->
 	<Script file="Util\PixelUtil.lua" />
-	<Script file="Util\AuraUtil.lua" />
-	<Script file="Util\Aura.lua" />
-	<Script file="Util\NineSlice.lua" />
-	<Script file="Util\TextureUtil.lua" />
+	<!-- WotLK fix: Cell scans native UnitAura privately. Do not build the unused
+	     class aura registry, publish nine foreign-facing aura globals, or expose
+	     AuraUtil.ForEachAura against nonexistent UnitAuraSlots APIs. -->
+	<!-- WotLK fix: no Cell XML template or Lua path consumes NineSliceUtil or
+	     NineSlicePanelMixin. Native 3.3.5 Frame:SetBackdrop remains the owner of
+	     all live Cell backdrop calls, so the retail NineSlice surface stays inert. -->
+	<!-- WotLK fix: TextureUtil.lua publishes a broad retail TextureKit/markup
+	     surface with no active Cell consumer. -->
 	<Script file="Util\SmoothStatusBar.lua" />
-	<Script file="Util\Compatibility.lua" />
+	<!-- WotLK fix: the embedded copy must not erase, snapshot, or later restore
+	     globals around foreign addon loading. Cell does not consume this manager;
+	     standalone !!!ClassicAPI retains its own compatibility policy when loaded. -->
 
-	<!-- Templates -->
-	<Include file="Templates\Load.xml" />
+	<!-- WotLK fix: the embedded retail BackdropTemplate has no inheriting Cell
+	     frame. Stock 3.3.5 already provides Frame:SetBackdrop and related methods;
+	     loading the template only published foreign globals and NineSlice state.
+	     2026-08-08: this claim was false when first written - RaidFrame.lua:13 still
+	     inherited BackDropTemplate and only survived because an external
+	     !!!ClassicAPI supplied it, so Cell's main chunk aborted when loading alone
+	     (P0-B1, GAP-015). The inheritance is now gone from that line and the claim
+	     holds: codex confirms SetBackdrop / SetBackdropColor /
+	     SetBackdropBorderColor / GetBackdrop are native Frame methods on 3.3.5.
+	     2026-08-11: do NOT re-verify by grepping - the GAP-015 site read
+	     "SecureUnitButtonTemplate,BackDropTemplate", i.e. a comma list with a
+	     different letter case, which a plain grep for the published name misses.
+	     Run `python audit/tools/dormant_check.py` instead: it splits template
+	     lists, compares case-insensitively, and checks every claim in this file. -->
 </Ui>

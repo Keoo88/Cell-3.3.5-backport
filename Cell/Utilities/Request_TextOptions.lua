@@ -27,7 +27,11 @@ local function CreatePreviewButton()
     previewButton.widgets.powerBar:SetMinMaxValues(0, 1)
     previewButton.widgets.powerBar:SetValue(1)
 
-    local previewButtonBG = Cell.CreateFrame("CellTextPreviewButton", previewButton)
+    --! WotLK fix: подложка называлась тем же именем, что и сама кнопка предпросмотра
+    --! ("CellTextPreviewButton", строка 14). На 3.3.5 второй фрейм с занятым именем
+    --! глобала не получает вовсе (кодекс, CreateFrame), а его GetName() указывает
+    --! на чужой объект. Апстрим-баг.
+    local previewButtonBG = Cell.CreateFrame("CellTextPreviewButtonBG", previewButton)
     previewButtonBG:SetPoint("TOPLEFT", previewButton, 0, 20)
     previewButtonBG:SetPoint("BOTTOMRIGHT", previewButton, "TOPRIGHT")
     Cell.StylizeFrame(previewButtonBG, {0.1, 0.1, 0.1, 0.77}, {0, 0, 0, 0})

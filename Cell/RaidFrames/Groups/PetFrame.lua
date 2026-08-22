@@ -109,27 +109,37 @@ end
 local header = CreateFrame("Frame", "CellPetFrameHeader", petFrame, "SecureGroupPetHeaderTemplate")
 header:SetAllPoints(petFrame)
 
-header:SetAttribute("initialConfigFunction", [[
-    --! button for pet/vehicle only, toggleForVehicle MUST be false
-    self:SetAttribute("toggleForVehicle", false)
+--! WotLK fix: SecureGroupPetHeader_Update reads
+--! header.initialConfigFunction as a regular Lua function on 3.3.5; the retail
+--! string attribute above was ignored. The _initialAttribute-* / CallMethod
+--! route is not a native WotLK child-initialization mechanism either. Children
+--! are configured and indexed from regular Lua when CollectButtons sees them.
+local pendingPetConfiguration
+local petConfigurationFrame = CreateFrame("Frame")
 
-    -- RegisterUnitWatch(self)
+local function UpdatePetUnitMapping(button, unit)
+    local oldUnit = button._cellPetUnit
+    if oldUnit and Cell.unitButtons.pet.units[oldUnit] == button then
+        Cell.unitButtons.pet.units[oldUnit] = nil
+    end
 
-    -- local header = self:GetParent()
-    -- self:SetWidth(header:GetAttribute("buttonWidth") or 66)
-    -- self:SetHeight(header:GetAttribute("buttonHeight") or 46)
-]])
-
-function header:UpdateButtonUnit(bName, unit)
-    if not unit then return end
-    Cell.unitButtons.pet.units[unit] = _G[bName]
-    _G[bName].isGroupPet = true
+    button._cellPetUnit = type(unit) == "string" and unit or nil
+    if button._cellPetUnit then
+        Cell.unitButtons.pet.units[button._cellPetUnit] = button
+    end
 end
 
-header:SetAttribute("_initialAttributeNames", "refreshUnitChange")
-header:SetAttribute("_initialAttribute-refreshUnitChange", [[
-    self:GetParent():CallMethod("UpdateButtonUnit", self:GetName(), self:GetAttribute("unit"))
-]])
+local function ConfigurePetButton(button)
+    button.isGroupPet = true
+    UpdatePetUnitMapping(button, button:GetAttribute("unit"))
+
+    if InCombatLockdown() then
+        pendingPetConfiguration = true
+        petConfigurationFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+    else
+        button:SetAttribute("toggleForVehicle", false)
+    end
+end
 
 header:SetAttribute("template", "CellUnitButtonTemplate")
 header:SetAttribute("point", "TOP")
@@ -167,10 +177,30 @@ function CollectButtons()
             -- b.type = "pet" -- layout setup
             b:HookScript("OnShow", UpdateAnchor)
             b:HookScript("OnHide", UpdateAnchor)
+            b:HookScript("OnAttributeChanged", function(self, name, value)
+                if name == "unit" then
+                    --! WotLK fix: keep Cell's private unit->pet-button map
+                    --! synchronized when the native secure pet header recycles
+                    --! a child for a different roster unit.
+                    UpdatePetUnitMapping(self, value)
+                end
+            end)
         end
+        ConfigurePetButton(b)
     end
 end
 CollectButtons()
+
+petConfigurationFrame:SetScript("OnEvent", function(self, event)
+    if event ~= "PLAYER_REGEN_ENABLED" then return end
+    self:UnregisterEvent("PLAYER_REGEN_ENABLED")
+    if not pendingPetConfiguration then return end
+    pendingPetConfiguration = nil
+
+    --! WotLK fix: protected child attributes deferred during combat are
+    --! completed once combat lockdown ends.
+    CollectButtons()
+end)
 
 -- update mover
 header:HookScript("OnShow", function()
@@ -277,7 +307,7 @@ local function PetFrame_UpdateLayout(layout, which)
     --! always evaluated "hide" and the detached pet frame NEVER showed
     --! anywhere (5-man pets came from the attached party-frame path).
     if Cell.vars.isHidden then
-        UnregisterAttributeDriver(petFrame, "state-visibility")
+        Cell.UnregisterAttributeDriver(petFrame, "state-visibility")
         petFrame:Hide()
         return
     end
@@ -287,7 +317,7 @@ local function PetFrame_UpdateLayout(layout, which)
     --! group checkboxes off there was nothing to fill it and pet buttons carry no
     --! RegisterUnitWatch, which is where the reported empty panel while solo came
     --! from. Group-only, same as upstream.
-    RegisterAttributeDriver(petFrame, "state-visibility", "[target=raid1,exists] show;[target=party1,exists] show;hide")
+    Cell.RegisterAttributeDriver(petFrame, "state-visibility", "[target=raid1,exists] show;[target=party1,exists] show;hide")
 
     if not which or strfind(which, "size$") or strfind(which, "power$") or which == "barOrientation" then
         local width, height, powerSize

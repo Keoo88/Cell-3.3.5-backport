@@ -1,114 +1,129 @@
---! Cell: private, trimmed fork of Tsoukie's ClassicAPI.
---! Coexistence rules live in Util/Coexist.lua: never bail out, never overwrite a
---! global somebody else owns, keep our own copy in CellClassicAPI.
---! Neither PixelUtil nor GetPhysicalScreenSize is native to 3.3.5a (milkyway-codex),
---! so both are built unconditionally: the globals are only gap-filled, while Cell
---! reads CellClassicAPI.PixelUtil / CellClassicAPI.GetPhysicalScreenSize, whose
---! pixel math is the fixed one (a foreign version may return UI units instead of
---! physical pixels and collapse every pixel-perfect calculation to scale 1).
-local _, Private = ...
+local _, Cell = ...
+_G.Cell = _G.Cell or Cell or {}
+Cell = _G.Cell
 
 local match = string.match
 local tonumber = tonumber
+local floor = math.floor
+local ceil = math.ceil
 local GetScreenResolutions = GetScreenResolutions
 local GetScreenWidth = GetScreenWidth
 local GetScreenHeight = GetScreenHeight
 
-local PixelUtil = {};
+--! WotLK fix: Cell owns its pixel math privately. Standalone !!!ClassicAPI may
+--! publish a global PixelUtil whose resolution lookup is unsafe in windowed
+--! mode; Cell must keep identical layout semantics regardless of load order.
+local PixelUtil = {}
+Cell.PixelUtil = PixelUtil
 
---! WotLK fix: was 'return GetScreenWidth(), GetScreenHeight()' - those return UI UNITS
---! (height is always ~768 regardless of resolution), so P.GetPixelPerfectScale() was
---! always 1 and all pixel-perfect math degenerated to identity. Real physical pixels
---! come from the gxResolution CVar (ElvUI-WotLK technique, Core/Core.lua:65), then from
---! the resolution list, and only then degrade to UI units as a last resort.
-local function GetPhysicalScreenSize()
-	local resolution = GetCVar and GetCVar("gxResolution")
-	if resolution then
-		local w, h = match(resolution, "(%d+)x(%d+)")
-		if w and h then
-			return tonumber(w), tonumber(h)
-		end
-	end
-	local index = GetCurrentResolution and GetCurrentResolution()
-	if index and index > 0 then
-		local w, h = match((({GetScreenResolutions()})[index] or ""), "(%d+).-(%d+)")
-		if w and h then
-			return tonumber(w), tonumber(h)
-		end
-	end
-	return GetScreenWidth(), GetScreenHeight()
+local physicalWidth
+local physicalHeight
+local pixelToUIUnitFactor
+
+local function Round(value)
+    if value >= 0 then
+        return floor(value + 0.5)
+    end
+    return ceil(value - 0.5)
 end
 
---! WotLK fix: was reading GetScreenResolutions()[GetCurrentResolution()] directly and
---! crashed with '768.0 / nil' whenever the lookup failed (GetCurrentResolution can
---! return 0/nil in windowed mode). Call OUR GetPhysicalScreenSize (the local above,
---! never the possibly foreign global) and guard the division.
-function PixelUtil.GetPixelToUIUnitFactor()
-    local _, physicalHeight = GetPhysicalScreenSize();
-    if physicalHeight and physicalHeight > 0 then
-        return 768.0 / physicalHeight;
+local function ReadPhysicalScreenSize()
+    if physicalWidth and physicalHeight then
+        return physicalWidth, physicalHeight
     end
-    return 1;
+
+    local resolution = GetCVar and GetCVar("gxResolution")
+    if resolution then
+        local width, height = match(resolution, "(%d+)x(%d+)")
+        if width and height then
+            physicalWidth = tonumber(width)
+            physicalHeight = tonumber(height)
+        end
+    end
+
+    if not physicalHeight then
+        local index = GetCurrentResolution and GetCurrentResolution()
+        if index and index > 0 then
+            local width, height = match((({GetScreenResolutions()})[index] or ""), "(%d+).-(%d+)")
+            if width and height then
+                physicalWidth = tonumber(width)
+                physicalHeight = tonumber(height)
+            end
+        end
+    end
+
+    if not physicalHeight then
+        physicalWidth = GetScreenWidth()
+        physicalHeight = GetScreenHeight()
+    end
+
+    return physicalWidth, physicalHeight
+end
+
+function PixelUtil.GetPhysicalScreenSize()
+    return ReadPhysicalScreenSize()
+end
+
+function PixelUtil.GetPixelToUIUnitFactor()
+    if not pixelToUIUnitFactor then
+        local _, height = ReadPhysicalScreenSize()
+        pixelToUIUnitFactor = height and height > 0 and 768 / height or 1
+    end
+    return pixelToUIUnitFactor
 end
 
 function PixelUtil.GetNearestPixelSize(uiUnitSize, layoutScale, minPixels)
     if uiUnitSize == 0 and (not minPixels or minPixels == 0) then
-        return 0;
+        return 0
     end
 
-    local uiUnitFactor = PixelUtil.GetPixelToUIUnitFactor();
-    local numPixels = Round((uiUnitSize * layoutScale) / uiUnitFactor);
+    if not layoutScale or layoutScale == 0 then
+        layoutScale = 1
+    end
+
+    local uiUnitFactor = PixelUtil.GetPixelToUIUnitFactor()
+    local numPixels = Round((uiUnitSize * layoutScale) / uiUnitFactor)
     if minPixels then
-        if uiUnitSize < 0.0 then
-            if numPixels > -minPixels then
-                numPixels = -minPixels;
-            end
-        else
-            if numPixels < minPixels then
-                numPixels = minPixels;
-            end
+        if uiUnitSize < 0 then
+            if numPixels > -minPixels then numPixels = -minPixels end
+        elseif numPixels < minPixels then
+            numPixels = minPixels
         end
     end
 
-    return numPixels * uiUnitFactor / layoutScale;
+    return numPixels * uiUnitFactor / layoutScale
 end
 
-function PixelUtil.SetWidth(region, width, minPixels)
-    region:SetWidth(PixelUtil.GetNearestPixelSize(width, region:GetEffectiveScale(), minPixels));
-end
-
-function PixelUtil.SetHeight(region, height, minPixels)
-    region:SetHeight(PixelUtil.GetNearestPixelSize(height, region:GetEffectiveScale(), minPixels));
-end
-
-function PixelUtil.SetSize(region, width, height, minWidthPixels, minHeightPixels)
-    PixelUtil.SetWidth(region, width, minWidthPixels);
-    PixelUtil.SetHeight(region, height, minHeightPixels);
-end
-
+--! WotLK fix: из ретейльного PixelUtil здесь остались только те три функции,
+--! которые Cell реально зовёт: GetPhysicalScreenSize и GetNearestPixelSize
+--! (Libs/PixelPerfect.lua) и SetPoint (8 точек - MainFrame, NPCFrame,
+--! SpotlightFrame, OptionsFrame, Marks, ReadyAndPull, BuffTracker).
+--! SetWidth/SetHeight/SetSize/SetStatusBarValue не звал никто: размеры Cell
+--! считает через свой P.Size/P.Scale в PixelPerfect.lua, а значения баров -
+--! через SmoothStatusBarMixin. Пустые обёртки только висели в таблице.
 function PixelUtil.SetPoint(region, point, relativeTo, relativePoint, offsetX, offsetY, minOffsetXPixels, minOffsetYPixels)
-    region:SetPoint(point, relativeTo, relativePoint,
-        PixelUtil.GetNearestPixelSize(offsetX, region:GetEffectiveScale(), minOffsetXPixels),
-        PixelUtil.GetNearestPixelSize(offsetY, region:GetEffectiveScale(), minOffsetYPixels)
-    );
+    local scale = region:GetEffectiveScale()
+    region:SetPoint(
+        point,
+        relativeTo,
+        relativePoint,
+        PixelUtil.GetNearestPixelSize(offsetX, scale, minOffsetXPixels),
+        PixelUtil.GetNearestPixelSize(offsetY, scale, minOffsetYPixels)
+    )
 end
 
-function PixelUtil.SetStatusBarValue(statusBar, value)
-    local width = statusBar:GetWidth();
-    if width and width > 0.0 then
-        local min, max = statusBar:GetMinMaxValues();
-        local percent = ClampedPercentageBetween(value, min, max);
-        if percent == 0.0 or percent == 1.0 then
-            statusBar:SetValue(value);
-        else
-            local numPixels = PixelUtil.GetNearestPixelSize(statusBar:GetWidth() * percent, statusBar:GetEffectiveScale());
-            local roundedValue = Lerp(min, max, numPixels / width);
-            statusBar:SetValue(roundedValue);
-        end
-    else
-        statusBar:SetValue(value);
-    end
-end
+local eventFrame = CreateFrame("Frame")
+--! WotLK fix: CVAR_UPDATE arg1 is the NAME of a global string on 3.3.5
+--! ("ENABLEBGSOUND" for the SoundEnableSoundWhenGameIsInBG CVar), not the CVar
+--! name itself, so comparing it with "gxResolution" never forms a reliable
+--! invalidation path. DISPLAY_SIZE_CHANGED is the native resolution signal.
+eventFrame:RegisterEvent("DISPLAY_SIZE_CHANGED")
+eventFrame:SetScript("OnEvent", function()
+    physicalWidth = nil
+    physicalHeight = nil
+    pixelToUIUnitFactor = nil
+end)
 
-Private.Provide("GetPhysicalScreenSize", GetPhysicalScreenSize)
-Private.Merge("PixelUtil", PixelUtil)
+--! WotLK fix: Cell.PixelUtil is the only embedded owner. Do not publish
+--! GetPhysicalScreenSize or PixelUtil globals; stock 3.3.5a has neither, and a
+--! standalone !!!ClassicAPI/custom-core implementation must remain untouched.

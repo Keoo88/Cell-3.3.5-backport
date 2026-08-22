@@ -134,63 +134,70 @@ local debuffs = {
         },
     },
 
-    [745] = { -- Naxxramas
+    --! WotLK fix: приватные id 900745 / 901552..901566 вместо 745 / 1552..1566 -
+    --! настоящий 745 в Encounter Journal принадлежит Каражану (RaidDebuffs_TBC.lua:12),
+    --! у Наксрамаса-40 своего id никогда не было. Развёрнуто - в
+    --! ExpansionData/ExpansionData.lua:897.
+    [900745] = { -- Naxxramas (40)
         ["general"] = {
         },
-        [1552] = { -- Anub'Rekhan
+        [901552] = { -- Anub'Rekhan
             28785, -- Locust Swarm
         },
-        [1553] = { -- Grand Widow Faerlina
+        [901553] = { -- Grand Widow Faerlina
             28798, -- Poison Bolt Volley
         },
-        [1554] = { -- Maexxna
+        [901554] = { -- Maexxna
             28622, -- Web Wrap
             28776, -- Necrotic Poison
         },
-        [1555] = { -- Noth the Plaguebringer
+        [901555] = { -- Noth the Plaguebringer
             29212, -- Cripple
             29213, -- Curse of the Plaguebringer
         },
-        [1556] = { -- Heigan the Unclean
+        [901556] = { -- Heigan the Unclean
             29998, -- Decrepit Fever
         },
-        [1557] = { -- Loatheb
+        [901557] = { -- Loatheb
             29185, -- Corrupted Mind
             29234, -- Inevitable Doom
         },
-        [1558] = { -- Instructor Razuvious
+        [901558] = { -- Instructor Razuvious
             28732, -- Unbalancing Strike
         },
-        [1559] = { -- Gothik the Harvester
+        [901559] = { -- Gothik the Harvester
             27825, -- Shadow Mark
             28679, -- Harvest Soul
         },
-        [1560] = { -- Four Horsemen
+        [901560] = { -- Four Horsemen
             28832, -- Mark of Korth'azz
             28833, -- Mark of Blaumeux
             28834, -- Mark of Rivendare
             28835, -- Mark of Zeliek
         },
-        [1561] = { -- Patchwerk
+        [901561] = { -- Patchwerk
             28801, -- Slime
         },
-        [15562] = { -- Grobbulus
+        --! WotLK fix: typo, the boss id is 1562 (Grobbulus) -- ExpansionData.lua:953
+        --! carries 1562 and no button with id 15562 exists anywhere in the UI, so
+        --! this whole block was unreachable and the Grobbulus button was empty.
+        [901562] = { -- Grobbulus
             28158, -- Mutating Injection
             28169, -- Mutating Injection (Fallout)
         },
-        [1563] = { -- Gluth
+        [901563] = { -- Gluth
             29306, -- Infected Wound
             54378, -- Mortal Wound
         },
-        [1564] = { -- Thaddius
+        [901564] = { -- Thaddius
             28059, -- Positive Charge
             28084, -- Negative Charge
         },
-        [1565] = { -- Sapphiron
+        [901565] = { -- Sapphiron
             28522, -- Icebolt
             28547, -- Chill
         },
-        [1566] = { -- Kel'Thuzad
+        [901566] = { -- Kel'Thuzad
             27808, -- Frost Blast
             27819, -- Detonate Mana
             28410, -- Chains of Kel'Thuzad

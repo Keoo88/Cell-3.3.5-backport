@@ -1,4 +1,6 @@
 local _, Cell = ...
+--! WotLK fix: bind Cell timers privately so standalone !!!ClassicAPI cannot change semantics.
+local C_Timer = Cell.C_Timer
 ---@class CellFuncs
 local F = Cell.funcs
 local B = Cell.bFuncs
@@ -8,7 +10,14 @@ local raidFrame = CreateFrame("Frame", "CellRaidFrame", Cell.frames.mainFrame, "
 Cell.frames.raidFrame = raidFrame
 raidFrame:SetAllPoints(Cell.frames.mainFrame)
 
-local npcFrameAnchor = CreateFrame("Frame", "CellNPCFrameAnchor", raidFrame, "SecureFrameTemplate,BackDropTemplate")
+--! WotLK fix: dropped ",BackDropTemplate" from the template list. The retail
+--! backdrop template is not part of 3.3.5 and was only resolvable through an
+--! external compatibility addon, so this line aborted the whole main chunk when
+--! Cell loaded alone (P0-B1 run, GAP-015; the Utils.lua:917 nil-header error was
+--! its cascade). The frame is a pure invisible anchor: its only consumers are
+--! ClearAllPoints/SetPoint/P.Size and the "npcAnchor" frame ref, StylizeFrame is
+--! commented out below, and 3.3.5 frames carry SetBackdrop natively anyway.
+local npcFrameAnchor = CreateFrame("Frame", "CellNPCFrameAnchor", raidFrame, "SecureFrameTemplate")
 raidFrame:SetFrameRef("npcAnchor", npcFrameAnchor)
 -- npcFrameAnchor:Hide()
 -- Cell.StylizeFrame(npcFrameAnchor)
@@ -212,7 +221,8 @@ end)
 
 -- arena pet
 local arenaPetButtons = {}
-for i = 1, (Cell.isRetail and 3 or 5) do
+--! WotLK fix: ретейл-флаг свёрнут в константу 3.3.5 - Cell.is* заданы литералами в Utils.lua.
+for i = 1, 5 do
     arenaPetButtons[i] = CreateFrame("Button", "CellArenaPet"..i, raidFrame, "CellUnitButtonTemplate")
     arenaPetButtons[i]:SetAttribute("unit", "raidpet"..i)
 
@@ -381,7 +391,7 @@ end
 --! silently did nothing. What 3.3.5 DOES support is the "nameList" attribute, and its
 --! fill branch preserves the list order as long as sortMethod is not "NAME"
 --! (SecureTemplates.lua:1004-1021). So: build a role-ordered name list from the raid
---! roster (roles via the Cell_UnitGroupRolesAssigned polyfill -> LibGroupTalents) and
+--! roster (roles via Cell.UnitGroupRolesAssigned -> Cell/Libs/LibGroupInfo.lua) and
 --! feed it to the headers. groupFilter must be cleared while nameList drives a header
 --! (groupFilter takes precedence), and every attribute write happens out of combat
 --! only (roster/role refreshes are deferred to PLAYER_REGEN_ENABLED).
@@ -418,7 +428,7 @@ local function BuildRoleSortedNameList(layout, subgroup)
                 wanted = layout["groupFilter"][sub]
             end
             if wanted then
-                local p = prio[Cell_UnitGroupRolesAssigned("raid"..i)] or 4
+                local p = prio[Cell.UnitGroupRolesAssigned("raid"..i)] or 4
                 tinsert(buckets[p], name)
             end
         end
@@ -440,45 +450,46 @@ end
 
 local function ApplyRoleSort(layout)
     local sortByRole = layout["main"]["sortByRole"]
-    --! WotLK 3.3.5a: role sorting is performed by our SecureGroupHeader_Update override
-    --! (Polyfills.lua), which ONLY runs when groupBy == "ASSIGNEDROLE". The previous
-    --! nameList path set groupBy=nil, so every update fell through to the stock client
-    --! function and the managed raid buttons were never re-sorted. Drive the override
-    --! directly instead: groupBy=ASSIGNEDROLE + groupingOrder (role priority) +
-    --! sortMethod="NAME" (alphabetical within a role, matching upstream).
-    local order = layout["main"]["roleOrder"] or ROLE_ORDER_FALLBACK
-    local groupingOrder = table.concat(order, ",")..",NONE"
 
+    --! WotLK fix: native 3.3.5 SecureGroupHeader_Update supports nameList but
+    --! not groupBy="ASSIGNEDROLE". Keep Blizzard's secure global untouched and
+    --! provide the desired role order as a pre-sorted nameList. groupFilter must
+    --! be nil while nameList owns the header because native FrameXML gives the
+    --! filter branch precedence. INDEX preserves the supplied list order.
     if layout["main"]["combineGroups"] then
-        local shown
-        for i = 1, 8 do
-            if layout["groupFilter"][i] then
-                shown = shown and (shown..","..i) or tostring(i)
-            end
-        end
-        SetHeaderAttribute(combinedHeader, "nameList", nil)
-        SetHeaderAttribute(combinedHeader, "groupFilter", shown or "1,2,3,4,5,6,7,8")
         if sortByRole then
-            SetHeaderAttribute(combinedHeader, "groupBy", "ASSIGNEDROLE")
-            SetHeaderAttribute(combinedHeader, "groupingOrder", groupingOrder)
-            SetHeaderAttribute(combinedHeader, "sortMethod", "NAME")
-        else
             SetHeaderAttribute(combinedHeader, "groupBy", nil)
             SetHeaderAttribute(combinedHeader, "groupingOrder", "")
+            SetHeaderAttribute(combinedHeader, "groupFilter", nil)
+            SetHeaderAttribute(combinedHeader, "nameList", BuildRoleSortedNameList(layout))
+            SetHeaderAttribute(combinedHeader, "sortMethod", "INDEX")
+        else
+            local shown
+            for i = 1, 8 do
+                if layout["groupFilter"][i] then
+                    shown = shown and (shown..","..i) or tostring(i)
+                end
+            end
+            SetHeaderAttribute(combinedHeader, "groupBy", nil)
+            SetHeaderAttribute(combinedHeader, "groupingOrder", "")
+            SetHeaderAttribute(combinedHeader, "nameList", nil)
+            SetHeaderAttribute(combinedHeader, "groupFilter", shown or "1,2,3,4,5,6,7,8")
             SetHeaderAttribute(combinedHeader, "sortMethod", "INDEX")
         end
     else
         for i = 1, 8 do
             if separatedHeaders[i] then
-                SetHeaderAttribute(separatedHeaders[i], "nameList", nil)
-                SetHeaderAttribute(separatedHeaders[i], "groupFilter", tostring(i))
                 if sortByRole then
-                    SetHeaderAttribute(separatedHeaders[i], "groupBy", "ASSIGNEDROLE")
-                    SetHeaderAttribute(separatedHeaders[i], "groupingOrder", groupingOrder)
-                    SetHeaderAttribute(separatedHeaders[i], "sortMethod", "NAME")
+                    SetHeaderAttribute(separatedHeaders[i], "groupBy", nil)
+                    SetHeaderAttribute(separatedHeaders[i], "groupingOrder", "")
+                    SetHeaderAttribute(separatedHeaders[i], "groupFilter", nil)
+                    SetHeaderAttribute(separatedHeaders[i], "nameList", BuildRoleSortedNameList(layout, i))
+                    SetHeaderAttribute(separatedHeaders[i], "sortMethod", "INDEX")
                 else
                     SetHeaderAttribute(separatedHeaders[i], "groupBy", nil)
                     SetHeaderAttribute(separatedHeaders[i], "groupingOrder", "")
+                    SetHeaderAttribute(separatedHeaders[i], "nameList", nil)
+                    SetHeaderAttribute(separatedHeaders[i], "groupFilter", tostring(i))
                     SetHeaderAttribute(separatedHeaders[i], "sortMethod", "INDEX")
                 end
             end
@@ -486,12 +497,15 @@ local function ApplyRoleSort(layout)
     end
 end
 
--- refresh on roster/role changes (roles arrive asynchronously from LibGroupTalents inspects)
+-- refresh on roster/role changes (roles arrive asynchronously from LibGroupInfo inspects)
 local roleSortTimer
 local roleSortFrame = CreateFrame("Frame")
 roleSortFrame:RegisterEvent("RAID_ROSTER_UPDATE")
 roleSortFrame:RegisterEvent("PARTY_MEMBERS_CHANGED")
-roleSortFrame:RegisterEvent("PLAYER_ROLES_ASSIGNED") -- synthetic, ClassicAPI EventHandler
+--! WotLK fix: do not depend on the synthetic PLAYER_ROLES_ASSIGNED event.
+--! With standalone !!!ClassicAPI loaded first, Cell's embedded EventHandler is
+--! not the owner of that route. LibGroupInfo below is Cell-private and reports
+--! the asynchronous inspect/spec updates in both load-order configurations.
 roleSortFrame:SetScript("OnEvent", function(self, event)
     if event == "PLAYER_REGEN_ENABLED" then
         self:UnregisterEvent("PLAYER_REGEN_ENABLED")
@@ -508,7 +522,7 @@ roleSortFrame:SetScript("OnEvent", function(self, event)
 
     -- debounce: roster events arrive in bursts
     if roleSortTimer then roleSortTimer:Cancel() end
-    roleSortTimer = C_Timer.NewTimer(0.2, function()
+    roleSortTimer = Cell.C_Timer.NewTimer(0.2, function()
         roleSortTimer = nil
         local lo = Cell.vars.currentLayoutTable
         if lo and lo["main"] and lo["main"]["sortByRole"]
@@ -522,23 +536,41 @@ roleSortFrame:SetScript("OnEvent", function(self, event)
     end)
 end)
 
+--! WotLK fix: LibGroupInfo is Cell-owned and fires after fresh inspect/spec
+--! data has actually been cached. Refresh role nameLists from that callback
+--! instead of inheriting standalone !!!ClassicAPI's synthetic event ownership.
+do
+    local LGI = LibStub and LibStub:GetLibrary("LibGroupInfo", true)
+    if LGI then
+        LGI.RegisterCallback("CellRaidFrame_RoleSort", "GroupInfo_Update", function()
+            roleSortFrame:GetScript("OnEvent")(roleSortFrame, "GroupInfo_Update")
+        end)
+    end
+end
+
 local function RaidFrame_UpdateLayout(layout, which)
     -- visibility
     if Cell.vars.groupType ~= "raid" or Cell.vars.isHidden then
-        UnregisterAttributeDriver(raidFrame, "state-visibility")
+        Cell.UnregisterAttributeDriver(raidFrame, "state-visibility")
         raidFrame:Hide()
         return
     else
-        RegisterAttributeDriver(raidFrame, "state-visibility", "show")
-        raidFrame:Show()  --! WotLK 3.3.5a: Must explicitly call Show()
+        --! WotLK fix: a constant "show" state driver is polled every 0.2s on
+        --! 3.3.5 and is redundant because Core already defers layout updates
+        --! until combat ends. Show this Cell-owned secure frame directly.
+        Cell.UnregisterAttributeDriver(raidFrame, "state-visibility")
+        raidFrame:Show()
     end
 
     --! WotLK 3.3.5a: Safety check for layout
     if not layout or not CellDB or not CellDB["layouts"] or not CellDB["layouts"][layout] then
         -- Layout not ready yet, retry later
         C_Timer.After(0.5, function()
-            local layoutName = CellDB["general"] and CellDB["general"]["layout"] or "default"
-            Cell.Fire("UpdateLayout", layoutName, which)
+            --! WotLK fix: retry through Core_Wrath so a combat transition is
+            --! queued centrally instead of broadcasting protected header work.
+            if F and F.UpdateLayout then
+                F.UpdateLayout(Cell.vars.raidType or "raid_outdoor")
+            end
         end)
         return
     end
@@ -549,11 +581,11 @@ local function RaidFrame_UpdateLayout(layout, which)
     -- arena pets
     if Cell.vars.inBattleground == 5 and layout["pet"]["partyEnabled"] and not layout["pet"]["partyDetached"] then
         for i, arenaPet in ipairs(arenaPetButtons) do
-            RegisterAttributeDriver(arenaPet, "state-visibility", "[@raidpet"..i..", exists] show;hide")
+            Cell.RegisterAttributeDriver(arenaPet, "state-visibility", "[@raidpet"..i..", exists] show;hide")
         end
     else
         for i, arenaPet in ipairs(arenaPetButtons) do
-            UnregisterAttributeDriver(arenaPet, "state-visibility")
+            Cell.UnregisterAttributeDriver(arenaPet, "state-visibility")
             arenaPet:Hide()
         end
     end
@@ -839,9 +871,9 @@ Cell.RegisterCallback("UpdateLayout", "RaidFrame_UpdateLayout", RaidFrame_Update
 --         UpdateHeadersShowRaidAttribute()
 
 --         if CellDB["general"]["showRaid"] then
---             RegisterAttributeDriver(raidFrame, "state-visibility", "show")
+--             Cell.RegisterAttributeDriver(raidFrame, "state-visibility", "show")
 --         else
---             UnregisterAttributeDriver(raidFrame, "state-visibility")
+--             Cell.UnregisterAttributeDriver(raidFrame, "state-visibility")
 --             raidFrame:Hide()
 --         end
 --     end
@@ -849,42 +881,49 @@ Cell.RegisterCallback("UpdateLayout", "RaidFrame_UpdateLayout", RaidFrame_Update
 -- Cell.RegisterCallback("UpdateVisibility", "RaidFrame_UpdateVisibility", RaidFrame_UpdateVisibility)
 
 -- WotLK Fix: Force update raid buttons when entering raid group type
--- The RegisterAttributeDriver visibility state doesn't always sync properly after leaving BG/raid
+-- The Cell.RegisterAttributeDriver visibility state doesn't always sync properly after leaving BG/raid
 local function RaidFrame_GroupTypeChanged(groupType)
     if groupType == "raid" then
         -- Force update after a delay to ensure frame is visible
         C_Timer.After(1, function()
-            if Cell.vars.groupType == "raid" then
-                -- Force show the frame if not visible
-                if not raidFrame:IsVisible() then
-                    raidFrame:Show()
-                end
-                -- Force update all raid buttons
-                for i = 1, 8 do
-                    local header = separatedHeaders[i]
-                    if header then
-                        for j = 1, 5 do
-                            local button = header[j]
-                            if button and button:IsVisible() then
-                                button._updateRequired = 1
-                                button._powerUpdateRequired = 1
-                                if button._indicatorsReady and Cell.bFuncs and Cell.bFuncs.UpdateAll then
-                                    Cell.bFuncs.UpdateAll(button)
-                                end
-                            end
-                        end
-                    end
-                end
-                -- Also update combined header buttons
-                if combinedHeader then
-                    for i = 1, 40 do
-                        local button = combinedHeader[i]
+            --! WotLK fix: this delayed fallback may fire after another roster
+            --! transition, a hidden layout, or combat lockdown. Never mutate the
+            --! protected raid frame there; Core_Wrath owns the post-combat rebuild.
+            if Cell.vars.groupType ~= "raid" or Cell.vars.isHidden then return end
+            if InCombatLockdown() then
+                F.UpdateLayout(Cell.vars.raidType or "raid_outdoor")
+                return
+            end
+
+            -- Force show the frame if not visible
+            if not raidFrame:IsVisible() then
+                raidFrame:Show()
+            end
+            -- Force update all raid buttons
+            for i = 1, 8 do
+                local header = separatedHeaders[i]
+                if header then
+                    for j = 1, 5 do
+                        local button = header[j]
                         if button and button:IsVisible() then
                             button._updateRequired = 1
                             button._powerUpdateRequired = 1
                             if button._indicatorsReady and Cell.bFuncs and Cell.bFuncs.UpdateAll then
                                 Cell.bFuncs.UpdateAll(button)
                             end
+                        end
+                    end
+                end
+            end
+            -- Also update combined header buttons
+            if combinedHeader then
+                for i = 1, 40 do
+                    local button = combinedHeader[i]
+                    if button and button:IsVisible() then
+                        button._updateRequired = 1
+                        button._powerUpdateRequired = 1
+                        if button._indicatorsReady and Cell.bFuncs and Cell.bFuncs.UpdateAll then
+                            Cell.bFuncs.UpdateAll(button)
                         end
                     end
                 end

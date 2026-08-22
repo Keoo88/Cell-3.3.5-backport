@@ -158,11 +158,11 @@ LoadTextures = function()
         end
 
         -- texture
-        if strfind(strlower(path), "^interface") then
-            b.tex:SetTexture(path)
-        else
-            b.tex:SetAtlas(path)
-        end
+        --! WotLK fix: та же развилка, что в Indicators/Base.lua - убрана по той же
+        --! причине. Пути сюда приходят из CellDB["customTextures"], то есть их
+        --! вводит игрок; атласов на 3.3.5 нет, а удалённый шим SetAtlas на любое
+        --! имя молча не делал ничего, и превью в селекторе было пустым.
+        b.tex:SetTexture(path)
 
         -- onclick
         b:SetScript("OnClick", function(self, button)

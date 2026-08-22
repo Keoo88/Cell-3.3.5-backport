@@ -144,7 +144,6 @@ L["change the order"] = "changer l'ordre"
 L["Check If Exists"] = "Vérifier si cela existe"
 L["Check if your group members need some raid buffs"] = "Vérifier si les membres de votre groupe ont besoin d'améliorations de raid"
 --[[Translation missing --]]
---[[ L["circledStackNums"] = "Circled Stack Numbers"--]]
 L["Class Color"] = "Couleur de classe"
 L["Class Color (dark)"] = "Couleur de classe (sombre)"
 L["Class Filter"] = "Filtre de classe"

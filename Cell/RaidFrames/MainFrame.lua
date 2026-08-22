@@ -1,11 +1,7 @@
 local _, Cell = ...
-
---! WotLK fix (coexistence): our PixelUtil (Cell.PixelUtil, built in Polyfills.lua)
---! is the one whose GetNearestPixelSize/SetPoint use the real gxResolution based
---! screen size. The global may belong to the standalone !!!ClassicAPI, so read ours
---! first and fall back to the global only if Polyfills has not run yet.
-local PixelUtil = (Cell and Cell.PixelUtil) or _G.PixelUtil
-
+--! WotLK fix: bind Cell timers privately so standalone !!!ClassicAPI cannot change semantics.
+local C_Timer = Cell.C_Timer
+local PixelUtil = Cell.PixelUtil
 local L = Cell.L
 local F = Cell.funcs
 local B = Cell.bFuncs
@@ -14,13 +10,13 @@ local P = Cell.pixelPerfectFuncs
 Cell.unitButtons = {
     ["solo"] = {},
     ["party"] = {
-        ["units"] = {}, -- NOTE: update in PartyFrame _initialAttribute-refreshUnitChange
+        ["units"] = {}, -- NOTE: fixed-unit mappings are populated by PartyFrame.lua
     },
     ["raid"] = {
         ["units"] = {}, -- NOTE: update in UnitButton_OnAttributeChanged
     },
     ["pet"] = {
-        ["units"] = {}, -- NOTE: update in _initialAttribute-refreshUnitChange
+        ["units"] = {}, -- NOTE: dynamic pet mappings are maintained by PetFrame.lua
     },
     ["npc"] = {
         ["units"] = {}, -- NOTE: update on creation
@@ -39,7 +35,11 @@ local tooltipPoint, tooltipRelativePoint, tooltipX, tooltipY
 -------------------------------------------------
 local cellMainFrame = CreateFrame("Frame", "CellMainFrame", CellParent, "SecureFrameTemplate")
 Cell.frames.mainFrame = cellMainFrame
--- WotLK Fix: Explicitly show the frame (in WotLK, SecureFrameTemplate frames may start hidden)
+-- WotLK Fix: прежнее объяснение («в WotLK рамки SecureFrameTemplate могут
+-- стартовать скрытыми») неверно: в FrameXML 3.3.5a шаблон объявлен целиком как
+-- <Frame name="SecureFrameTemplate" protected="true" virtual="true"/>
+-- (SecureTemplates.xml:4) - ни hidden, ни скриптов. Вызов идемпотентен и
+-- оставлен как есть; видимость задаёт цепочка родителей (CellParent).
 cellMainFrame:Show()
 
 local hoverFrame = CreateFrame("Frame", "CellMenuHoverDetector", cellMainFrame)
@@ -87,14 +87,22 @@ local function StartMove()
     anchorFrame:SetUserPlaced(false)
 end
 
+local pendingStopMove
 local function StopMove()
-    if not isMoving then return end
+    if not isMoving and not pendingStopMove then return end
     isMoving = false
-    -- Combat fix: ALWAYS stop moving, even in combat. anchorFrame is a plain
-    -- (non-secure) frame, so StopMovingOrSizing is NOT combat-protected. The
-    -- previous InCombatLockdown() early-return meant that if combat started
-    -- mid-drag, releasing the mouse never stopped movement and the frame
-    -- stayed stuck to the cursor until /reload.
+
+    --! WotLK fix: CellAnchorFrame inherits protection from CellMainFrame, its
+    --! SecureFrameTemplate parent. StopMovingOrSizing therefore cannot be
+    --! called after PLAYER_REGEN_DISABLED. Remember the stop request and
+    --! complete it immediately on PLAYER_REGEN_ENABLED instead of tainting or
+    --! leaving the protected frame permanently attached to the cursor.
+    if InCombatLockdown() then
+        pendingStopMove = true
+        return
+    end
+
+    pendingStopMove = nil
     anchorFrame:StopMovingOrSizing()
 
     --! Only treat this as a drag if the anchor really moved. A plain click keeps
@@ -106,16 +114,21 @@ local function StopMove()
         end
     end
 
-    P.SavePosition(anchorFrame, Cell.vars.currentLayoutTable["main"]["position"])
+    if Cell.vars.currentLayoutTable then
+        P.SavePosition(anchorFrame, Cell.vars.currentLayoutTable["main"]["position"])
+    end
 end
 
--- Combat fix: if combat starts while the anchor is being dragged, abort the
--- drag immediately so the frame does not stay stuck to the cursor. OnDragStop
--- only fires on mouse release, which can be much later.
 anchorFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
-anchorFrame:SetScript("OnEvent", function(self)
-    isMoving = false
-    self:StopMovingOrSizing()
+anchorFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+anchorFrame:SetScript("OnEvent", function(self, event)
+    if event == "PLAYER_REGEN_DISABLED" then
+        if isMoving then
+            StopMove()
+        end
+    elseif pendingStopMove then
+        StopMove()
+    end
 end)
 
 local function RegisterButtonEvents(frame)
@@ -211,7 +224,9 @@ local mark = Cell.CreateButton(frame, "", "accent-hover", {20, 20}, false, false
 mark:SetPoint("CENTER")
 mark:SetSize(20, 20)
 mark.texture = mark:CreateTexture(nil, "ARTWORK")
-mark.texture:SetColorTexture(1, 0, 0, 0.4)
+--! WotLK fix: SetColorTexture на 3.3.5 нет - это нативная числовая форма
+--! SetTexture(r, g, b[, a]); шим TextureBase в WidgetAPI удалён.
+mark.texture:SetTexture(1, 0, 0, 0.4)
 mark.texture:SetAllPoints(mark)
 mark:SetAttribute("type", "worldmarker")
 mark:SetAttribute("marker", 1)
@@ -593,6 +608,19 @@ end
 Cell.RegisterCallback("UpdateMenu", "MainFrame_UpdateMenu", UpdateMenu)
 
 local init
+local mainFrameVisible = true
+local function SetMainFrameVisibility(visible)
+    --! WotLK fix: keep the visibility driver only for the user-facing minimap
+    --! toggle. A constant "show" driver is evaluated every 0.2s on 3.3.5.
+    mainFrameVisible = visible and true or false
+    if mainFrameVisible then
+        cellMainFrame:Show()
+    else
+        cellMainFrame:Hide()
+    end
+end
+Cell.SetMainFrameVisibility = SetMainFrameVisibility
+
 local function MainFrame_UpdateLayout(layout, which)
     F.Debug("|cffff0066UpdateLayout:|r layout:", layout, " which:", which)
 
@@ -609,9 +637,10 @@ local function MainFrame_UpdateLayout(layout, which)
     end
 
     if not init then
-        --! NOTE: a reload during pet battle prevents HEADER from CREATING CHILDs (unit buttons), this hide delay is a MUST
-        -- WotLK Fix: Pet battles don't exist in WotLK, so just keep frame visible
-        RegisterStateDriver(cellMainFrame, "visibility", "show")
+        --! WotLK fix: pet battles do not exist on 3.3.5, so no delayed secure
+        --! visibility driver is needed to create header children. A constant
+        --! driver would call Show() every 0.2 seconds for the whole session.
+        SetMainFrameVisibility(mainFrameVisible)
         init = true
     end
 

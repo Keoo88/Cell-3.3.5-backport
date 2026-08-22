@@ -102,6 +102,15 @@ Use `/cell` for more information.
 | --- | --- |
 | `/cell` | Show all available commands |
 | `/cell opt` | Open the options frame |
+| `/cell unlock`, `/cell lock`, `/cell mover` | Show or hide the movers of Marks Bar, Buff Tracker and ReadyCheck/PullTimer buttons (backport addition — the in-options button is unreachable during combat) |
+| `/cell minimap` | Toggle the minimap button (backport addition — middle-clicking the button hides it, and this is the only way to bring it back) |
+| `/cell healers` | Create a "Healers" indicator |
+| `/cell rescale` | Apply the recommended scale for your resolution |
+| `/cell report 0-40` | How many deaths to report per raid encounter (`0` = all) |
+| `/cell reset position`&nbsp;/&nbsp;`layouts`&nbsp;/&nbsp;`clickcastings`&nbsp;/&nbsp;`raiddebuffs`&nbsp;/&nbsp;`snippets`&nbsp;/&nbsp;`all` | Reset the corresponding settings — **for every character on the account** |
+| `/cell debug dump` | Open a copyable diagnostic report — paste it into a bug report (backport addition) |
+| `/cell debug h` | List all diagnostic subcommands (backport addition) |
+| `/cell debug shims` | Show which compatibility globals other addons own on your client (backport addition) |
 
 <a name="installation"></a>
 ### Installation
@@ -209,6 +218,15 @@ Blizzard.
 | --- | --- |
 | `/cell` | Показать все доступные команды |
 | `/cell opt` | Открыть окно настроек |
+| `/cell unlock`, `/cell lock`, `/cell mover` | Показать или скрыть мувер-рамки панели меток, трекера баффов и кнопок готовности/отсчёта (добавлено в бэкпорте — кнопка в настройках в бою недоступна) |
+| `/cell minimap` | Показать или скрыть кнопку у миникарты (добавлено в бэкпорте — щелчок средней кнопкой по ней прячет её, и вернуть можно только этой командой) |
+| `/cell healers` | Создать индикатор «Healers» |
+| `/cell rescale` | Применить рекомендованный масштаб под ваше разрешение |
+| `/cell report 0-40` | Сколько смертей сообщать за бой в рейде (`0` — все) |
+| `/cell reset position`&nbsp;/&nbsp;`layouts`&nbsp;/&nbsp;`clickcastings`&nbsp;/&nbsp;`raiddebuffs`&nbsp;/&nbsp;`snippets`&nbsp;/&nbsp;`all` | Сбросить соответствующие настройки — **у всех персонажей аккаунта** |
+| `/cell debug dump` | Открыть окно с диагностикой, которую можно скопировать и вставить в баг-репорт (добавлено в бэкпорте) |
+| `/cell debug h` | Список всех диагностических подкоманд (добавлено в бэкпорте) |
+| `/cell debug shims` | Показать, какие глобалы совместимости заняты другими аддонами (добавлено в бэкпорте) |
 
 <a name="установка"></a>
 ### Установка

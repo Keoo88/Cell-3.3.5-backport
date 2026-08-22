@@ -117,6 +117,15 @@ local function CreateIndicatorsImportFrame()
                 end
             end
 
+            --! WotLK fix: импорт правит тот же фильтр, что и панель настроек, а
+            --! Cell.Fire("UpdateIndicators") ниже пересобирает только настройки кнопок
+            --! и не трогает таблицу активных кастов - иконки остались бы от старого
+            --! списка (та же причина, что в GAP-029). Сканирование источников только
+            --! когда пришёл сам список: для одного лишь свечения хватит перерисовки.
+            if imported.related["targetedSpellsList"] or imported.related["targetedSpellsGlow"] then
+                I.RefreshTargetedSpells(imported.related["targetedSpellsList"] ~= nil)
+            end
+
             -- fire events
             Cell.Fire("UpdateIndicators", toLayout)
             Cell.Fire("IndicatorsChanged", toLayout)
@@ -236,12 +245,15 @@ local function CreateIndicatorsImportFrame()
     textArea:SetPoint("BOTTOMRIGHT", -5, 5)
 
     -- highlight text
+    --! WotLK fix: the removed OnMouseUp handler tested `isImport`, which is an
+    --! UNDECLARED GLOBAL here - the real local lives in
+    --! Modules/About/ImportExport.lua. Cell must never read a global it does
+    --! not own: nil always meant "highlight", so this box re-selected all of
+    --! its text on every click, and any addon setting _G.isImport would flip
+    --! Cell's behaviour. This frame is import-only, so the export-side
+    --! select-all does not belong here at all (the About import box does not
+    --! have it either).
     textArea.eb:SetScript("OnEditFocusGained", function() textArea.eb:HighlightText() end)
-    textArea.eb:SetScript("OnMouseUp", function()
-        if not isImport then
-            textArea.eb:HighlightText()
-        end
-    end)
 
     -- scripts
     importFrame:SetScript("OnHide", function()
@@ -273,4 +285,13 @@ function F.ShowIndicatorsImportFrame(layout)
     toLayout = layout
     toLayoutName = toLayout == "default" and _G.DEFAULT or toLayout
     title:SetText(L["Import"].." > "..toLayoutName)
+
+    --! WotLK fix: hand keyboard focus to the paste target right away, exactly
+    --! like the About-tab import window does (Modules/About/ImportExport.lua,
+    --! ShowImportFrame). Upstream relied on the user clicking the EditBox, but
+    --! that EditBox is only as tall as its text, so most of the visible black
+    --! area was not clickable - which is why Ctrl+V "did nothing" in this
+    --! window while the About import worked.
+    textArea:SetText("")
+    textArea.eb:SetFocus(true)
 end

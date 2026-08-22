@@ -1,15 +1,14 @@
 local _, Cell = ...
-
---! WotLK fix (coexistence): our PixelUtil (Cell.PixelUtil, built in Polyfills.lua)
---! is the one whose GetNearestPixelSize/SetPoint use the real gxResolution based
---! screen size. The global may belong to the standalone !!!ClassicAPI, so read ours
---! first and fall back to the global only if Polyfills has not run yet.
-local PixelUtil = (Cell and Cell.PixelUtil) or _G.PixelUtil
-
+--! WotLK fix: bind Cell timers privately so standalone !!!ClassicAPI cannot change semantics.
+local C_Timer = Cell.C_Timer
+local PixelUtil = Cell.PixelUtil
 local L = Cell.L
 local F = Cell.funcs
 local P = Cell.pixelPerfectFuncs
 local A = Cell.animations
+--! WotLK fix: consume Cell-private group adapters.
+local IsInRaid = Cell.IsInRaid
+local GetNumGroupMembers = Cell.GetNumGroupMembers
 
 local readyBtn, pullBtn
 
@@ -34,13 +33,24 @@ end)
 -------------------------------------------------
 buttonsFrame.moverText = buttonsFrame:CreateFontString(nil, "OVERLAY", "CELL_FONT_WIDGET")
 buttonsFrame.moverText:SetPoint("TOP", 0, -3)
-buttonsFrame.moverText:SetText(L["Mover"])
+--! WotLK fix: the label is set in ShowMover, not here. Cell's L is an identity fallback
+--! until ns.LoadUserLocale() runs on ADDON_LOADED, and every file has already executed
+--! by then - a FontString filled in the main chunk kept the English key for the whole
+--! session on a non-enUS client. ShowMover fires from the options toggle, long after.
 buttonsFrame.moverText:Hide()
+
+--! WotLK fix: хват за всю площадь в режиме мувера, см. F.CreateMoverOverlay.
+--! Раньше тащить можно было только за полосу над кнопками (~13 экранных пикселей
+--! при масштабе 0.7), а промах по ней запускал ready check или pull timer на рейд.
+local moverOverlay = F.CreateMoverOverlay(buttonsFrame, function()
+    return CellDB["tools"]["readyAndPull"][4]
+end)
 
 local function ShowMover(show)
     if show then
         if not CellDB["tools"]["readyAndPull"][1] then return end
         buttonsFrame:EnableMouse(true)
+        buttonsFrame.moverText:SetText(L["Mover"]) --! WotLK fix: см. выше
         buttonsFrame.moverText:Show()
         Cell.StylizeFrame(buttonsFrame, {0, 1, 0, 0.4}, {0, 0, 0, 0})
         if not F.HasPermission() then -- button not shown
@@ -48,6 +58,7 @@ local function ShowMover(show)
             pullBtn:Show()
         end
         buttonsFrame:SetAlpha(1)
+        moverOverlay:Show()
     else
         buttonsFrame:EnableMouse(false)
         buttonsFrame.moverText:Hide()
@@ -57,6 +68,7 @@ local function ShowMover(show)
             pullBtn:Hide()
         end
         buttonsFrame:SetAlpha(CellDB["tools"]["fadeOut"] and 0 or 1)
+        moverOverlay:Hide()
     end
 end
 Cell.RegisterCallback("ShowMover", "RaidButtons_ShowMover", ShowMover)
@@ -64,7 +76,12 @@ Cell.RegisterCallback("ShowMover", "RaidButtons_ShowMover", ShowMover)
 -------------------------------------------------
 -- pull
 -------------------------------------------------
-pullBtn = Cell.CreateStatusBarButton(buttonsFrame, L["Pull"], {60, 17}, 7, "SecureActionButtonTemplate")
+--! WotLK fix: the label is a placeholder, not a translation - UpdateStyle() sets the real
+--! L["Pull"] on both of its branches and runs from UpdateTools, i.e. at PLAYER_LOGIN,
+--! before the frame is ever shown. It must stay a NON-EMPTY string: Cell.CreateButton
+--! captures b:GetFontString() right after b:SetText(text) and guards all label anchoring
+--! with `if s then`, so nil/"" here would cost the button its FontString for good.
+pullBtn = Cell.CreateStatusBarButton(buttonsFrame, "Pull", {60, 17}, 7, "SecureActionButtonTemplate")
 --! WotLK fix: on 3.3.5 SecureActionButton_OnClick executes the action on BOTH
 --! down and up (the ActionButtonUseKeyDown cvar gating is a later addition),
 --! so registering Up+Down ran the pull macro (e.g. "/dbm pull N") twice per
@@ -150,22 +167,48 @@ end
 -------------------------------------------------
 -- ready
 -------------------------------------------------
-readyBtn = Cell.CreateStatusBarButton(buttonsFrame, L["Ready"], {60, 17}, 35)
+--! WotLK fix: placeholder label, see pullBtn above - UpdateStyle() writes L["Ready"] at
+--! PLAYER_LOGIN, when the locale is finally loaded.
+readyBtn = Cell.CreateStatusBarButton(buttonsFrame, "Ready", {60, 17}, 35)
 -- P.Point(readyBtn, "BOTTOMLEFT", pullBtn, "TOPLEFT", 0, 3)
 readyBtn:Hide()
 
-readyBtn:RegisterForClicks("LeftButtonDown", "RightButtonDown")
+--! WotLK fix: left click only. The right-click branch called InitiateRolePoll, which
+--! exists neither in the codex nor anywhere in FrameXML 3.3.5a - role polls arrived in
+--! 4.0.6, so on this client the branch was unreachable. Worse, it is a rule-3 hazard:
+--! Cell does not own that name, and if some other addon publishes an InitiateRolePoll
+--! of its own, a right-click on Cell's Ready button would call a stranger's function.
+readyBtn:RegisterForClicks("LeftButtonDown")
 readyBtn:SetScript("OnClick", function(self, button)
     if button == "LeftButton" then
         DoReadyCheck()
-    elseif InitiateRolePoll then
-        -- NOTE: InitiateRolePoll does not exist on 3.3.5a (role polls were added in 4.0.6)
-        InitiateRolePoll()
     end
 end)
 
-local ready = {} -- [unitID] = true
-local readyCount = 0
+--! WotLK fix: count the confirmations by re-polling the roster, never from the event
+--! payload. READY_CHECK_CONFIRM arg1 is a NUMBER on 3.3.5 (roster index with no
+--! "raid"/"party" prefix), not a unitID like on retail, and what number the player's
+--! OWN confirmation carries in a party is not derivable at all: the player has no
+--! partyN token, so any prefix..arg1 key either collides with a real party member
+--! (undercount) or invents a slot that is not in the denominator. Stock FrameXML
+--! never reads this payload either: PlayerFrame.lua:377, PartyMemberFrame.lua:289
+--! and Blizzard_RaidUI.lua:313/952 all re-poll GetReadyCheckStatus(unit) on EVERY
+--! confirm event, in every frame, whoever answered - so the client guarantees the
+--! status is already updated by the time the event fires. Same decision as
+--! UnitButton_Cata_Wrath.lua:4071 for the per-unit ready-check icons.
+--! GetReadyCheckStatus returns nil unless the player is leader or raid assistant,
+--! and that is exactly who CheckPermission() shows this button to (F.HasPermission),
+--! so the restriction never bites here.
+local function GetReadyCount()
+    local count = 0
+    for unit in F.IterateGroupMembers() do
+        if GetReadyCheckStatus(unit) == "ready" then
+            count = count + 1
+        end
+    end
+    return count
+end
+
 readyBtn:SetScript("OnEvent", function(self, event, arg1, arg2)
     if event == "READY_CHECK" then
         --! WotLK fix: READY_CHECK carries only the initiator name on 3.3.5;
@@ -174,25 +217,14 @@ readyBtn:SetScript("OnEvent", function(self, event, arg1, arg2)
         --! 35s is the client's fixed ready-check timeout on this build.
         readyBtn:SetMaxValue(arg2 or 35)
         readyBtn:Start()
-        wipe(ready)
-        readyCount = 1 -- self
-        readyBtn:SetText("1 / "..GetNumGroupMembers())
+        readyBtn:SetText(GetReadyCount().." / "..GetNumGroupMembers())
     elseif event == "READY_CHECK_FINISHED" then
         readyBtn:Stop()
         readyBtn:SetText(L["Ready"])
     else
-        if arg2 then -- isReady
-            --! WotLK fix: READY_CHECK_CONFIRM arg1 is a NUMBER (unit index without
-            --! the raid/party prefix) on 3.3.5, not a unitID like on retail.
-            --! string.find(5, "raid") is nil, so the raid counter froze at "1 / N";
-            --! keying a set by unitID also drops duplicate confirmations.
-            local unit = (IsInRaid() and "raid" or "party")..arg1
-            if not ready[unit] then
-                ready[unit] = true
-                readyCount = readyCount + 1
-                readyBtn:SetText(readyCount.." / "..GetNumGroupMembers())
-            end
-        end
+        --! WotLK fix: recount unconditionally - a "notready" answer simply leaves the
+        --! number where it was, and the roster pass is the only authoritative source.
+        readyBtn:SetText(GetReadyCount().." / "..GetNumGroupMembers())
     end
 end)
 
