@@ -8,6 +8,15 @@
 local _, Cell = ...
 local F = Cell.funcs
 
+--! WotLK fix: отсюда удалены 35 записей с id вида 21xxxxx (Ascension: Watery Tomb,
+--! Sludge Nova, Focused Fire, Inner Demon, ... Fel Rage). Это спеллы кастомного
+--! сервера Project Ascension, которых нет в Spell.dbc клиента 3.3.5a: GetSpellInfo
+--! на такой id возвращает nil, F.GetDebuffList отбрасывает запись по `if spellName`,
+--! и в окне «Дебаффы рейда» строка не появлялась НИКОГДА - молча, без ошибки, так что
+--! ни один игровой прогон её найти не мог. Нашёл `dbc_probe.py --sweep` (сверка с
+--! Spell.dbc из patch-enUS-3.MPQ), удаление разрешил владелец 2026-08-24. Пустые
+--! ключи боссов оставлены: они и раньше в этом файле есть (GAP-037), а их удаление -
+--! это уже правка видимого списка, на которую разрешения не было.
 local debuffs = {
     [745] = { -- Karazhan
         ["general"] = {
@@ -66,33 +75,20 @@ local debuffs = {
         },
         [1567] = { -- Hydross
             38246, -- Mark of Hydross
-            2137505, -- Watery Tomb
-            2137509, -- Sludge Nova
         },
         [1568] = { -- Lurker Below
             37850, -- Watery Grave
-            2137622, -- Focused Fire
         },
         [1569] = { -- Leotheras
             37640, -- Whirlwind
-            2137830, -- Inner Demon
-            2137831, -- Chaos Blast
-            2137839, -- Even Out the Odds
         },
         [1570] = { -- Karathress
-            2137918, -- Hurricane
-            2137939, -- Beast Within
         },
         [1571] = { -- Morogrim
             37850, -- Watery Grave
         },
         [1572] = { -- Lady Vashj
             38280, -- Static Charge
-            2138026, -- Siren's Song
-            2138027, -- Parasitic Lashers
-            2138039, -- Static Charge (Ascension)
-            2138044, -- Aimed Shot
-            2138049, -- Envenom
         },
     },
 
@@ -102,15 +98,10 @@ local debuffs = {
         [1573] = { -- 奥
         },
         [1574] = { -- 空灵机甲
-            2135333, -- Dismantle
         },
         [1575] = { -- 大星术师索兰莉安
         },
         [1576] = { -- 凯尔萨斯·逐日者
-            2135337, -- Nether Beam
-            2135350, -- Conflagration
-            2135362, -- Focused Burst
-            2135467, -- Mind Control
         },
     },
 
@@ -118,8 +109,6 @@ local debuffs = {
         ["general"] = {
         },
         [1577] = { -- 雷基·冬寒
-            2140605, -- Winter's Touch
-            2140645, -- Lich Slap
         },
         [1578] = { -- 安纳塞隆
         },
@@ -136,15 +125,11 @@ local debuffs = {
         },
         [1582] = { -- High Warlord Naj'entus
             39837, -- Impaling Spine
-            2142516, -- Barbed Spine
         },
         [1583] = { -- Supremus
             40253, -- Molten Flame
-            2142765, -- Threat Detected
         },
         [1584] = { -- Shade of Akama
-            2142653, -- Poisoned Shiv
-            2142657, -- Deadly Poison
         },
         [1585] = { -- Teron Gorefiend
             40251, -- Shadow of Death
@@ -159,13 +144,52 @@ local debuffs = {
             40823, -- Saber Lash
         },
         [1589] = { -- Illidari Council
-            2144260, -- Death Sentence
-            2144310, -- Empowered Death Sentence
         },
         [1590] = { -- Illidan Stormrage
             41917, -- Parasitic Shadowfiend
-            2144749, -- Parasitic Shadowfiend (Ascension)
-            2144811, -- Flame Barrage
+        },
+    },
+
+    --! WotLK fix: Зул'Аман в дампе отсутствовал целиком - см. блок missingInstances
+    --! в ExpansionData/ExpansionDataOverrides.lua, там же id инстанса и id боссов.
+    --! Каждый id проверен по Spell.dbc клиента (`dbc_probe.py`), подпись рядом - имя
+    --! из самой базы. Принадлежность босса доказана соседством id внутри кластера
+    --! энкаунтера (43143+ Халаззи, 43093..43208 Зул'джин, 42389..42398 Налоракк):
+    --! серверных привязок способностей к NPC ни один офлайновый источник не хранит.
+    --! Мгновенный урон без ауры (43382 Spirit Bolts, 43267 Saber Lash, 42402 Surge,
+    --! 42384 Brutal Swipe, 43121 Cyclone, 43140/43215/43294 Flame Breath) и общие
+    --! имена (Frenzy, Enrage, Bomb, Fire Bomb) не берутся: список дебаффов ключуется
+    --! по ИМЕНИ (F.GetDebuffList), и общее имя поймало бы чужую ауру.
+    [77] = { -- Zul'Aman
+        ["general"] = {
+        },
+        [186] = { -- Akil'zon
+            43622, -- Static Disruption
+            43648, -- Electrical Storm
+            43621, -- Gust of Wind
+        },
+        [187] = { -- Nalorakk
+            42389, -- Mangle
+            42397, -- Rend Flesh
+            42395, -- Lacerating Slash
+            42398, -- Deafening Roar
+        },
+        [188] = { -- Jan'alai
+            43299, -- Flame Buffet
+        },
+        [189] = { -- Halazzi
+            43303, -- Flame Shock
+        },
+        [190] = { -- Hex Lord Malacrass
+            43501, -- Siphon Soul
+            44131, -- Drain Power
+        },
+        [191] = { -- Zul'jin
+            43093, -- Grievous Throw
+            43095, -- Creeping Paralysis
+            43149, -- Claw Rage
+            43153, -- Lynx Rush
+            43208, -- Flame Whirl
         },
     },
 
@@ -178,24 +202,17 @@ local debuffs = {
         [1592] = { -- Brutallus
             45150, -- Meteor Slash
             46394, -- Burn
-            2145719, -- Felfire
         },
         [1593] = { -- Felmyst
             45855, -- Gas Nova
         },
         [1594] = { -- Eredar Twins
             45256, -- Conflagration
-            2146016, -- Fling
         },
         [1595] = { -- M'uru
         },
         [1596] = { -- Kil'jaeden
             45737, -- Flame Dart
-            2146510, -- Legion Lightning
-            2146524, -- Fire Bloom
-            2146673, -- Conflagration
-            2146682, -- Soulbomb
-            2146688, -- Fel Rage
         },
     },
 

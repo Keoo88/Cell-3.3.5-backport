@@ -507,14 +507,17 @@ function I.EnableTargetedSpells(enabled)
         eventFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_UPDATE")
 
         eventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
-        --! WotLK: NAME_PLATE_UNIT_* (7.0) and ENCOUNTER_END (5.4) do not exist on
-        --! 3.3.5 - these registrations were silently inert (casts are still picked up
-        --! via the UNIT_SPELLCAST_* events above). Kept as documentation of intent.
+        --! WotLK: NAME_PLATE_UNIT_* (7.0) do not exist on 3.3.5 - these registrations
+        --! were silently inert (casts are still picked up via the UNIT_SPELLCAST_*
+        --! events above). Kept as documentation of intent.
         -- eventFrame:RegisterEvent("NAME_PLATE_UNIT_ADDED")
         -- eventFrame:RegisterEvent("NAME_PLATE_UNIT_REMOVED")
 
-        -- eventFrame:RegisterEvent("ENCOUNTER_END")
-
+        --! WotLK fix: ENCOUNTER_END does not exist on 3.3.5 either (added 5.4), so the
+        --! list of incoming casts was never cleared when a fight ended - icons from the
+        --! last attempt lingered until the next cast or instance change. Polyfills.lua
+        --! bridges DBM's kill/wipe into Cell's own EncounterEnd callback.
+        Cell.RegisterCallback("EncounterEnd", "TargetedSpells_EncounterEnd", EnterLeaveInstance)
         Cell.RegisterCallback("EnterInstance", "TargetedSpells_EnterInstance", EnterLeaveInstance)
         Cell.RegisterCallback("LeaveInstance", "TargetedSpells_LeaveInstance", EnterLeaveInstance)
     else
@@ -522,6 +525,7 @@ function I.EnableTargetedSpells(enabled)
         eventFrame:Hide()
         eventFrame:UnregisterAllEvents()
 
+        Cell.UnregisterCallback("EncounterEnd", "TargetedSpells_EncounterEnd")
         Cell.UnregisterCallback("EnterInstance", "TargetedSpells_EnterInstance")
         Cell.UnregisterCallback("LeaveInstance", "TargetedSpells_LeaveInstance")
 

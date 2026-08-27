@@ -9,6 +9,7 @@ powerFilters:SetFrameLevel(Cell.frames.layoutsTab:GetFrameLevel() + 50)
 powerFilters:SetPoint("BOTTOMRIGHT", Cell.frames.layoutsTab, "BOTTOMRIGHT", P.Scale(-5), P.Scale(5))
 
 local selectedLayout, selectedLayoutTable
+local filters = {}
 
 -----------------------------------------
 -- power filter
@@ -100,6 +101,11 @@ local function CreatePowerFilter(parent, class, buttons, color, bgColor)
             end
         end
     end
+
+    --! WotLK fix: собираем фильтры списком прямо тут, а не перечислением тринадцати
+    --! локалей ниже: список нужен колбэку смены масштаба (см. конец файла) и должен
+    --! пережить добавление или удаление класса.
+    tinsert(filters, filter)
 
     return filter
 end
@@ -207,3 +213,41 @@ end
 function F.HidePowerFilters()
     powerFilters:Hide()
 end
+
+-------------------------------------------------
+-- pixel perfect
+-------------------------------------------------
+--! WotLK fix: смену масштаба это окно не ловило вовсе - колбэка "UpdatePixelPerfect"
+--! в файле не было ни одного, а единственный powerFilters:UpdatePixelPerfect() стоит
+--! в F.ShowPowerFilters за флагом `init`, то есть срабатывает один раз за сеанс.
+--! Толщина рамки - это P.Scale(1), записанный при создании кадра (Cell.StylizeFrame,
+--! Widgets.lua:383), и после смены масштаба он уже не тот: 0.7111 против 0.8466 при
+--! масштабе 0.84, то есть линия рисуется в 0.84 физического пикселя вместо ровно
+--! одного. Полный разбор формы и всех трёх триггеров смены масштаба - в
+--! Modules/OptionsFrame.lua, колбэк UpdatePixelPerfect. На экране: у окна фильтров
+--! силы рамка акцентного цвета, на ней рассинхрон толщины виден лучше, чем на чёрных,
+--! и держится до /reload.
+--! Своим методом родителя тут не обойтись: powerFilters:UpdatePixelPerfect() зовёт
+--! Cell.StylizeFrame, а тот сбрасывает цвет рамки в чёрный - акцент, который
+--! F.ShowPowerFilters выставляет при первом открытии, пропал бы. P.Reborder снимает и
+--! возвращает оба цвета. Тринадцать полос внутри и их кнопки ролей несут такую же
+--! рамку, поэтому обходим детей, а не только родителя (та же форма, что в
+--! RaidFrames/Groups/SpotlightFrame.lua:1152); кнопке хватает своего
+--! b:UpdatePixelPerfect (Widgets.lua:733). До первого открытия окна полос не
+--! существует - родившись позже, они возьмут уже верный P.Scale(1), поэтому обход
+--! стоит за тем же флагом `init`.
+local function UpdatePixelPerfect()
+    P.Resize(powerFilters)
+    P.Reborder(powerFilters, true)
+
+    if not init then return end
+
+    for _, filter in pairs(filters) do
+        P.Resize(filter)
+        P.Reborder(filter, true)
+        for _, b in pairs(filter.buttons) do
+            b:UpdatePixelPerfect()
+        end
+    end
+end
+Cell.RegisterCallback("UpdatePixelPerfect", "PowerFilters_UpdatePixelPerfect", UpdatePixelPerfect)

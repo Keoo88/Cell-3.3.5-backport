@@ -654,8 +654,32 @@ function Cell.CreateButton(parent, text, buttonColor, size, noBorder, noBackgrou
         b:SetPushedTextOffset(0, 0)
     else
         if not noBackground then
-            local bg = b:CreateTexture()
-            bg:SetDrawLayer("BACKGROUND", -8)
+            --! WotLK fix: the opaque base goes into a child frame one level BELOW the button,
+            --! not into the button's own BACKGROUND layer. Draw order on this client is
+            --! strata -> frame level -> layer -> sublevel, so a lower frame level is the only
+            --! thing that is guaranteed to end up under the button's BACKDROP; layer and
+            --! sublevel only order regions of the SAME frame against each other.
+            --! ("BACKGROUND", -8) works on retail because there the backdrop is the Lua
+            --! BackdropTemplate mixin - textures of the same frame, which sublevels can order.
+            --! On 3.3.5a SetBackdrop is native C and its bgFile is not a region we can sort
+            --! against, so this opaque grey covered the backdrop and swallowed every backdrop
+            --! colour: the accent tint of the selected options tab (Cell.CreateButtonGroup ->
+            --! SetBackdropColor(unpack(b.hoverColor))) and the hover tint of every button with
+            --! a background were invisible, with no Lua error to show it. Only the "transparent"
+            --! branch above, which creates no base at all, kept its hover colour - which is why
+            --! dropdown items always looked right. Lower-frame-level container is the idiom both
+            --! 3.3.5a references use for exactly this (reference/cell_NoM0Re Widgets.lua:615,
+            --! ElvUI 6.09 Skins/Blizzard/Mail.lua:55 and thirteen more sites), and Blizzard
+            --! itself does it on this build (Blizzard_Calendar.lua:1858 and :1883).
+            --! b.bg stays a Texture anchored to b, so Marks.lua:256, Built-in.lua and
+            --! RaidDebuffs_Classic.lua keep recolouring it exactly as before.
+            local bgFrame = CreateFrame("Frame", nil, b)
+            bgFrame:SetFrameLevel(max(b:GetFrameLevel() - 1, 0))
+            bgFrame:SetAllPoints(b)
+            b.bgFrame = bgFrame
+
+            local bg = bgFrame:CreateTexture()
+            bg:SetDrawLayer("BACKGROUND")
             b.bg = bg
             bg:SetAllPoints(b)
             bg:SetTexture(0.115, 0.115, 0.115, 1)

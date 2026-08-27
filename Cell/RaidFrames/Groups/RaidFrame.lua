@@ -455,43 +455,52 @@ local function ApplyRoleSort(layout)
     --! not groupBy="ASSIGNEDROLE". Keep Blizzard's secure global untouched and
     --! provide the desired role order as a pre-sorted nameList. groupFilter must
     --! be nil while nameList owns the header because native FrameXML gives the
-    --! filter branch precedence. INDEX preserves the supplied list order.
-    if layout["main"]["combineGroups"] then
-        if sortByRole then
-            SetHeaderAttribute(combinedHeader, "groupBy", nil)
-            SetHeaderAttribute(combinedHeader, "groupingOrder", "")
-            SetHeaderAttribute(combinedHeader, "groupFilter", nil)
-            SetHeaderAttribute(combinedHeader, "nameList", BuildRoleSortedNameList(layout))
-            SetHeaderAttribute(combinedHeader, "sortMethod", "INDEX")
+    --! filter branch precedence.
+    --! WotLK fix: but a header with BOTH attributes cleared shows the WHOLE raid.
+    --! Native SecureGroupHeader_Update starts with
+    --!     if ( not groupFilter and not nameList ) then groupFilter = "1,2,3,4,5,6,7,8"
+    --! (FrameXML SecureTemplates.lua:922-923), so "no filter" does not mean "empty" -
+    --! it means "everyone". The old code cleared groupFilter for every separated header
+    --! and then handed each one a nameList, but BuildRoleSortedNameList returns nil for a
+    --! subgroup with no members: those headers ended up with nothing set at all and each
+    --! fell back to the entire roster. A 2-man raid with group filters 1-5 enabled thus
+    --! drew 5 identical rows - the duplicate frames reported by testers, and the reason
+    --! turning "Sort By Role" off "fixed" it. So: an empty list never clears the filter,
+    --! it restores it (an empty subgroup must render as empty, not as everyone).
+    --! Write order matters too, because every SetAttribute runs a full header update and
+    --! groupFilter wins over nameList: set the incoming owner FIRST, clear the other
+    --! SECOND, so no intermediate update ever sees both of them missing.
+    local function ApplyToHeader(header, list, filter)
+        SetHeaderAttribute(header, "groupBy", nil)
+        SetHeaderAttribute(header, "groupingOrder", "")
+        if list then
+            SetHeaderAttribute(header, "nameList", list)
+            SetHeaderAttribute(header, "groupFilter", nil)
         else
-            local shown
-            for i = 1, 8 do
-                if layout["groupFilter"][i] then
-                    shown = shown and (shown..","..i) or tostring(i)
-                end
-            end
-            SetHeaderAttribute(combinedHeader, "groupBy", nil)
-            SetHeaderAttribute(combinedHeader, "groupingOrder", "")
-            SetHeaderAttribute(combinedHeader, "nameList", nil)
-            SetHeaderAttribute(combinedHeader, "groupFilter", shown or "1,2,3,4,5,6,7,8")
-            SetHeaderAttribute(combinedHeader, "sortMethod", "INDEX")
+            SetHeaderAttribute(header, "groupFilter", filter)
+            SetHeaderAttribute(header, "nameList", nil)
         end
+        --! INDEX (anything but "NAME") preserves the order of the supplied nameList,
+        --! SecureTemplates.lua:1004-1021.
+        SetHeaderAttribute(header, "sortMethod", "INDEX")
+    end
+
+    if layout["main"]["combineGroups"] then
+        local shown
+        for i = 1, 8 do
+            if layout["groupFilter"][i] then
+                shown = shown and (shown..","..i) or tostring(i)
+            end
+        end
+        ApplyToHeader(combinedHeader,
+                      sortByRole and BuildRoleSortedNameList(layout) or nil,
+                      shown or "1,2,3,4,5,6,7,8")
     else
         for i = 1, 8 do
             if separatedHeaders[i] then
-                if sortByRole then
-                    SetHeaderAttribute(separatedHeaders[i], "groupBy", nil)
-                    SetHeaderAttribute(separatedHeaders[i], "groupingOrder", "")
-                    SetHeaderAttribute(separatedHeaders[i], "groupFilter", nil)
-                    SetHeaderAttribute(separatedHeaders[i], "nameList", BuildRoleSortedNameList(layout, i))
-                    SetHeaderAttribute(separatedHeaders[i], "sortMethod", "INDEX")
-                else
-                    SetHeaderAttribute(separatedHeaders[i], "groupBy", nil)
-                    SetHeaderAttribute(separatedHeaders[i], "groupingOrder", "")
-                    SetHeaderAttribute(separatedHeaders[i], "nameList", nil)
-                    SetHeaderAttribute(separatedHeaders[i], "groupFilter", tostring(i))
-                    SetHeaderAttribute(separatedHeaders[i], "sortMethod", "INDEX")
-                end
+                ApplyToHeader(separatedHeaders[i],
+                              sortByRole and BuildRoleSortedNameList(layout, i) or nil,
+                              tostring(i))
             end
         end
     end

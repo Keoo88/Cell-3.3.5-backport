@@ -13,17 +13,37 @@ Cell_ExpansionData = {
     --! WotLK fix: a compact locale alias file can make native zone-name lookup
     --! functional without duplicating the full retail ExpansionData payload.
     ["instanceLocale"] = "enUS",
-    --! WotLK fix: три записи дампа названы так, как их переименовал ретейл уже
-    --! ПОСЛЕ 3.3.5a, поэтому на английском клиенте зона не находилась вообще:
-    --! GetInstanceInfo возвращает "Hyjal Summit", "The Deadmines" и
-    --! "The Temple of Atal'Hakkar" (заглавная H), а поиск идёт точным ключом.
-    --! Ключи ниже - клиентские имена 3.3.5a, значения - записи дампа. Полные
-    --! локали присваивают свою таблицу поверх, и это верно: на немецком клиенте
-    --! английские ключи не встретятся.
+    --! WotLK fix: часть записей дампа названа так, как их переименовал ретейл уже
+    --! ПОСЛЕ 3.3.5a, поэтому на английском клиенте зона не находилась вообще, а
+    --! поиск идёт точным ключом. Ключи ниже - клиентские имена 3.3.5a, значения -
+    --! записи дампа. Полные локали присваивают свою таблицу поверх, и это верно: на
+    --! немецком клиенте английские ключи не встретятся.
+    --!
+    --! Имён у одного инстанса ДВА, и оба взяты из самого клиента, а не с чужих слов:
+    --! GetInstanceInfo() отдаёт имя КАРТЫ (Map.dbc поле 5), GetRealZoneText() - имя
+    --! ЗОНЫ (AreaTable.dbc поле 11). Первые три ключа - это написания ЗОНЫ, вторые
+    --! пять - написания КАРТЫ, и для одного инстанса нужны оба, потому что внутри
+    --! подземелья Cell спрашивает карту, а снаружи - зону (см. ResolveInstance в
+    --! Modules/RaidDebuffs/RaidDebuffs_Classic.lua). Прежняя редакция этого
+    --! комментария приписывала три нижних написания GetInstanceInfo - это неверно:
+    --! карту клиент зовёт "The Battle for Mount Hyjal", "Deadmines" и
+    --! "Sunken Temple", последнее и добавлено ниже.
+    --!
+    --! Остальные пять - записи, чьё имя клиент не знает ни одной из двух таблиц:
+    --! рейд AQ40 на карте называется "Ahn'Qiraj Temple", The Eye - "Tempest Keep",
+    --! Нижний Пик - "Blackrock Spire" (карта 229 общая с Верхним Пиком, отдельной
+    --! записи для него в дампе нет). Без этих ключей дебаффы там не включались
+    --! молча. Два инстанса дозаполнить нечем: карты 40-местного Наксрамаса на
+    --! 3.3.5a нет вовсе, а "Scarlet Halls" - подземелье Cataclysm.
     ["instanceNameAliases"] = {
         ["Hyjal Summit"] = "The Battle for Mount Hyjal",
         ["The Deadmines"] = "Deadmines",
         ["The Temple of Atal'Hakkar"] = "The Temple of Atal'hakkar",
+        ["Sunken Temple"] = "The Temple of Atal'hakkar",
+        ["Ahn'Qiraj Temple"] = "Temple of Ahn'Qiraj",
+        ["Ahn'Qiraj"] = "Temple of Ahn'Qiraj",
+        ["Tempest Keep"] = "The Eye",
+        ["Blackrock Spire"] = "Lower Blackrock Spire",
     },
     ["expansions"] = {},
     ["data"] = {},

@@ -261,22 +261,46 @@ function P.Resize(frame)
 end
 
 function P.Reborder(frame, ignoreSnippetVar)
-    if not frame.backdropInfo then return end
+    --! WotLK fix: было `if not frame.backdropInfo then return end` + `frame:ApplyBackdrop()`.
+    --! Оба - ретейл: `backdropInfo` кладёт себе BackdropTemplate, а `ApplyBackdrop` это его
+    --! метод (кодекс 3.3.5a на него отвечает НЕТ). В бэкпорте `backdropInfo` не выставляет
+    --! никто - поиск по Cell/ находит его только в этой функции, - поэтому вся функция
+    --! молча выходила первой же строкой. Замерено прибором 1.9.13 в прогонах 22 и 23.08:
+    --! `backdropInfo` нет ни у одного из шести осмотренных кадров, `ApplyBackdrop` тоже,
+    --! `reborderIsNoOp = true`. Наружу это выходило так: сменил масштаб интерфейса - рамка
+    --! окна настроек Cell осталась прежней толщины (1.0667 вместо нужных 1.3333 при
+    --! масштабе 0.8) до перезахода в игру; подсказка Cell и кнопки NPC считаются другим
+    --! путём и отставали не они.
+    --! Нативная замена обоим: `GetBackdrop()` отдаёт таблицу описания, `SetBackdrop(tbl)`
+    --! применяет её заново. Круг проверен тем же прибором на живом кадре - файл фона, файл
+    --! края, толщина края и отступы переживают его целиком.
+    local backdrop = frame:GetBackdrop()
+    if not backdrop then return end
 
     local _r, _g, _b, _a = frame:GetBackdropColor()
     local r, g, b, a = frame:GetBackdropBorderColor()
 
     if ignoreSnippetVar then
-        frame.backdropInfo.edgeSize = P.Scale(1)
+        backdrop.edgeSize = P.Scale(1)
     else
         if CELL_BORDER_SIZE == 0 then
-            frame.backdropInfo.edgeFile = nil
-            frame.backdropInfo.edgeSize = nil
+            --! WotLK fix: раньше сюда не доходило (функция выходила первой строкой), а
+            --! теперь доходит - и обнулённый edgeFile был бы дверью в одну сторону: сниппет
+            --! CELL_BORDER_SIZE можно запустить повторно без перезахода, и рамка после
+            --! 0 -> 1 уже не вернулась бы. Поэтому файл края запоминается на кадре. Кадрам,
+            --! созданным вообще без края (их в Cell хватает - только bgFile), запоминать
+            --! нечего, так что рамку они не отрастят.
+            frame._cellBorderEdgeFile = frame._cellBorderEdgeFile or backdrop.edgeFile
+            backdrop.edgeFile = nil
+            backdrop.edgeSize = nil
         else
-            frame.backdropInfo.edgeSize = P.Scale(CELL_BORDER_SIZE or 1)
+            backdrop.edgeFile = backdrop.edgeFile or frame._cellBorderEdgeFile
+            backdrop.edgeSize = P.Scale(CELL_BORDER_SIZE or 1)
         end
     end
-    frame:ApplyBackdrop()
+    --! SetBackdrop сбрасывает цвета в белый, поэтому снятые выше возвращаются ниже -
+    --! ровно та же последовательность, что была вокруг ApplyBackdrop.
+    frame:SetBackdrop(backdrop)
 
     if _r then frame:SetBackdropColor(_r, _g, _b, _a) end
     if r then frame:SetBackdropBorderColor(r, g, b, a) end

@@ -139,9 +139,10 @@ function npcFrame:UpdateSeparateAnchor()
         dumb:Show()
         if CellDB["general"]["fadeOut"] then
             if hoverFrame:IsMouseOver() then
-                separateAnchor.fadeIn:Play()
+                separateAnchor:MenuFadeIn()
             else
-                separateAnchor.fadeOut:GetScript("OnFinished")(separateAnchor.fadeOut)
+                --! WotLK fix: instant apply, see PetFrame's UpdateAnchor.
+                separateAnchor:MenuFadeOut(true)
             end
         end
     else
@@ -548,10 +549,11 @@ local function UpdateMenu(which)
     end
 
     if not which or which == "fadeOut" then
+        --! WotLK fix: apply at once, see A.ApplyFadeInOutToMenu.
         if CellDB["general"]["fadeOut"] then
-            separateAnchor.fadeOut:Play()
+            separateAnchor:MenuFadeOut(true)
         else
-            separateAnchor.fadeIn:Play()
+            separateAnchor:MenuFadeIn(true)
         end
     end
 

@@ -57,6 +57,14 @@ Cell_ExpansionData.instanceNameAliases = {
     ["El Ojo"] = "The Eye",
     ["Cima Hyjal"] = "The Battle for Mount Hyjal",
     ["El Templo Oscuro"] = "Black Temple",
+    --! WotLK fix: Зул'Аман и Зул'Гуруб дозаполнены аддитивно (missingInstances в
+    --! ExpansionDataOverrides.lua), поэтому и в карту псевдонимов их надо дописать
+    --! руками - остальные 74 строки сгенерированы из дампа, где этих рейдов нет.
+    --! На испанском клиенте оба названия не переводятся (WeakAuras-WotLK,
+    --! Locales/esES.lua:1267 и esMX.lua:1267: L["Zul'Gurub"] = "Zul'Gurub"), но
+    --! запись всё равно обязательна: ResolveInstance ищет имя зоны в этой карте, а
+    --! не сравнивает его с английским списком напрямую.
+    ["Zul'Aman"] = "Zul'Aman",
     ["Meseta de la Fuente del Sol"] = "Sunwell Plateau",
     ["Criptas Auchenai"] = "Auchenai Crypts",
     ["Murallas del Fuego Infernal"] = "Hellfire Ramparts",
@@ -77,6 +85,7 @@ Cell_ExpansionData.instanceNameAliases = {
     -- Classic
     ["Núcleo de Magma"] = "Molten Core",
     ["Guarida Alanegra"] = "Blackwing Lair",
+    ["Zul'Gurub"] = "Zul'Gurub",
     ["Ruinas de Ahn'Qiraj"] = "Ruins of Ahn'Qiraj",
     ["El Templo de Ahn'Qiraj"] = "Temple of Ahn'Qiraj",
     ["Cavernas de Brazanegra"] = "Blackfathom Deeps",

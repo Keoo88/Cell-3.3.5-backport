@@ -2729,8 +2729,15 @@ function F.Revise()
             end
             for i = 1, maxKey do
                 if i <= Cell.defaults.builtIns then
-                    if not temp[i] or i ~= Cell.defaults.indicatorIndices[temp[i]["indicatorName"]] then
-                        F.Debug(layoutName, "RESET_WRONG", i, name)
+                    --! WotLK fix: `name` здесь был ГЛОБАЛОМ - оба цикла выше свои локалы уже
+                    --! закрыли, а FrameXML засоряет _G.name (AlertFrames и ещё четыре файла),
+                    --! из-за чего global_reads молчит: в отладку уходило чужое значение вместо
+                    --! имени индикатора. Имя берём из самой записи - так же сделано в форке
+                    --! Cell-WotLK-r279 (Revise.lua:3392), заодно условие честно ловит запись
+                    --! без поля indicatorName.
+                    local indicatorName = temp[i] and temp[i]["indicatorName"]
+                    if not indicatorName or i ~= Cell.defaults.indicatorIndices[indicatorName] then
+                        F.Debug(layoutName, "RESET_WRONG", i, indicatorName)
                         temp[i] = F.Copy(Cell.defaults.layout.indicators[i])
                     end
                 else
@@ -2775,14 +2782,14 @@ function F.Revise()
     end
 
     --! Backfill missing built-in indicator colors.
-    --! Older backport DBs lack ["color"] on aoeHealing/targetCounter: the
-    --! indicator is then never colored at init (stays white) and the options
-    --! color picker errors out on a nil colorTable BEFORE saving/firing, so
-    --! changing the color silently does nothing, while height keeps working
-    --! because ["height"] exists in old DBs. Idempotent, runs every load.
+    --! Older backport DBs lack ["color"] on aoeHealing: the indicator is then never
+    --! colored at init (stays white) and the options color picker errors out on a nil
+    --! colorTable BEFORE saving/firing, so changing the color silently does nothing,
+    --! while height keeps working because ["height"] exists in old DBs.
+    --! Idempotent, runs every load.
+    --! (targetCounter is gone from here along with the indicator itself - GAP-081.)
     local builtInColorDefaults = {
         ["aoeHealing"] = {1, 1, 0},
-        ["targetCounter"] = {1, 0.1, 0.1},
     }
     if type(CellDB["layouts"]) == "table" then
         for _, layout in pairs(CellDB["layouts"]) do
@@ -2791,6 +2798,29 @@ function F.Revise()
                     local default = builtInColorDefaults[t["indicatorName"]]
                     if default and t["color"] == nil then
                         t["color"] = {default[1], default[2], default[3]}
+                    end
+                end
+            end
+        end
+    end
+
+    --! WotLK fix: drop the record of the deleted "Target Counter" indicator from
+    --! already-saved layouts (GAP-081). The stock repair-layout-from-defaults pass lives
+    --! below under `CellDB["revise"] ~= Cell.version`, and the toc version is frozen at
+    --! r277-release - so for anyone who has already run this backport it will never fire
+    --! again, and the dead record would stay in the DB forever. It cannot be allowed to:
+    --! builtIns is now 28, and the custom-indicator loop in Custom_Classic.lua runs from
+    --! builtIns+1 to #indicators, i.e. it would take the 29th record for a user-made
+    --! indicator and reach for fields it does not have. Walk bottom-up so tremove cannot
+    --! shift elements we have not looked at yet (and so a duplicate, if one somehow got
+    --! in there, is removed too). Idempotent, runs every load.
+    if type(CellDB["layouts"]) == "table" then
+        for _, layout in pairs(CellDB["layouts"]) do
+            if type(layout) == "table" and type(layout["indicators"]) == "table" then
+                for i = #layout["indicators"], 1, -1 do
+                    local t = layout["indicators"][i]
+                    if type(t) == "table" and t["indicatorName"] == "targetCounter" then
+                        tremove(layout["indicators"], i)
                     end
                 end
             end

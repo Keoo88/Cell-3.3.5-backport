@@ -9,8 +9,25 @@ local _, Cell = ...
 local F = Cell.funcs
 
 local debuffs = {
+    --! WotLK fix: the last three Molten Core encounters shipped empty, and several
+    --! of the others were missing most of what actually lands on the raid. Filled in
+    --! from the fan fork (reference/cell_NoM0Re) after checking every id against the
+    --! client's own Spell.dbc (`dbc_probe.py`) - the label next to each id is the name
+    --! the client returns, not a retelling.
+    --! Two rules decided what is NOT here, both of them consequences of how the list
+    --! is consumed: F.GetDebuffList matches a bare id BY NAME, so a second id sharing
+    --! a name already in the list is dead weight (20294 Immolate next to 15732), and a
+    --! boss self-buff can never appear on a player at all. The fork's 47836 Seed of
+    --! Corruption and 55360 Living Bomb are dropped for a third reason: those are the
+    --! WotLK warlock and mage player spells, not anything Majordomo casts.
+    --! A leading minus means "listed in the options, unchecked by default" (upstream's
+    --! own convention, see RaidDebuffs_WotLK.lua). Used for the melee filler that sits
+    --! on the tank permanently - having Sunder Armor light up the raid-debuff icon for
+    --! the whole instance is worse than not having it.
     [741] = { -- Molten Core
         ["general"] = {
+            19366, -- Cauterizing Flames
+            15732, -- Immolate
         },
         [1519] = { -- Lucifron
             19702, -- Impending Doom
@@ -19,11 +36,16 @@ local debuffs = {
         },
         [1520] = { -- Magmadar
             19408, -- Panic
-            19451, -- Magma Splash
+            19451, -- Enrage
+            19428, -- Conflagration
+            19450, -- Magma Spit
         },
         [1521] = { -- Gehennas
             19716, -- Gehennas' Curse
             20277, -- Fist of Ragnaros
+            19717, -- Rain of Fire
+            -15502, -- Sunder Armor
+            -19730, -- Strike
         },
         [1522] = { -- Garr
             19496, -- Magma Shackles
@@ -41,10 +63,22 @@ local debuffs = {
         [1525] = { -- Sulfuron Harbinger
             19779, -- Inspire
             19780, -- Hand of Ragnaros
+            -19777, -- Dark Strike
         },
         [1526] = { -- Golemagg the Incinerator
+            13880, -- Magma Splash
+            19820, -- Mangle
+            20228, -- Pyroblast
         },
         [1527] = { -- 管理者埃克索图斯
+            20229, -- Blast Wave
+            19369, -- Ancient Despair
+            19365, -- Ancient Dread
+            19372, -- Ancient Hysteria
+            19367, -- Withering Heat
+            19635, -- Incite Flames
+            19776, -- Shadow Word: Pain
+            19393, -- Soul Burn
         },
         [1528] = { -- 拉格纳罗斯
         },
@@ -82,6 +116,104 @@ local debuffs = {
         [1536] = { -- Nefarian
             22667, -- Shadow Flame
             22686, -- Bellowing Roar
+        },
+    },
+
+    --! WotLK fix: Зул'Гуруб в дампе отсутствовал целиком - см. блок missingInstances
+    --! в ExpansionData/ExpansionDataOverrides.lua, там же id инстанса и id боссов.
+    --! Каждый id ниже проверен по Spell.dbc клиента (`dbc_probe.py`), подпись рядом -
+    --! имя из самой базы, а не пересказ. Принадлежность босса доказана соседством id
+    --! с его собственным *Transform-заклинанием (23849 Веноксис, 23966 Джеклик,
+    --! 24084 Мар'ли, 24169 Текал, 24190 Арлокк): серверные привязки способностей к
+    --! NPC на 3.3.5a не лежат ни в одном офлайновом источнике, а нумерация внутри
+    --! патча идёт кластерами по энкаунтеру. Мгновенный урон без ауры (24326 Slam
+    --! Газ'ранки, 24189 Force Punch, 24649 Thousand Blades) и общие имена (Frenzy,
+    --! Enrage, Whirlwind) не берутся: отслеживать нечего, а общее имя поймало бы
+    --! чужую ауру - список дебаффов ключуется по ИМЕНИ (F.GetDebuffList).
+    --! WotLK fix: filled out from the fan fork (reference/cell_NoM0Re) on 2026-08-27,
+    --! same two filters as Molten Core above - one entry per NAME, and nothing that
+    --! only ever sits on the boss. That is why the fork's *Transform and Aspect of *
+    --! ids are not here (Hakkar's Aspects are his own buffs, not raid debuffs), why
+    --! Frenzy / Avatar / Enlarge / Vanish / Renew are gone, and why the second id of
+    --! every doubled name was dropped: 24003 next to 24002 Tranquilizing Poison,
+    --! 24011 next to 23862 Venom Spit, 24840 next to 23861 Poison Cloud, 24321 and
+    --! 24327 already present under Hakkar, 24322/24324 next to 24323 Blood Siphon,
+    --! 16856 next to 24573 Mortal Strike, 17172 next to 24053 Hex, 24333 next to
+    --! 24213 Ravage, 23952 next to 24212 Shadow Word: Pain, 24300 next to 24618
+    --! Drain Life, 24664/24004 next to 24778 Sleep, 12540 next to 24698 Gouge.
+    --! The fork keys this instance [309] (the map id) with its bosses renumbered
+    --! 784-793; ours keeps the Encounter Journal ids the file is documented to use,
+    --! so each of the fork's lists was matched to our boss key by boss identity.
+    [76] = { -- Zul'Gurub
+        ["general"] = {
+            23931, -- Thunderclap
+            24002, -- Tranquilizing Poison
+            24063, -- Disease Cloud
+            24778, -- Sleep
+            24818, -- Noxious Breath
+            24839, -- Acid Breath
+        },
+        [175] = { -- High Priest Venoxis
+            23862, -- Venom Spit
+            23861, -- Poison Cloud
+            23860, -- Holy Fire
+            23865, -- Parasitic Serpent
+        },
+        [784] = { -- High Priestess Jeklik
+            23918, -- Sonic Burst
+            23919, -- Swoop
+            24437, -- Blood Leech
+            22884, -- Psychic Scream
+            23953, -- Mind Flay
+        },
+        [785] = { -- High Priest Mar'li
+            24110, -- Enveloping Webs
+            24111, -- Corrosive Poison
+            24099, -- Poison Bolt Volley
+            24097, -- Poison
+        },
+        [176] = { -- Bloodlord Mandokir
+            24314, -- Threatening Gaze
+            24573, -- Mortal Strike
+            -24317, -- Sunder Armor
+        },
+        [786] = { -- Edge of Madness
+            24157, -- Hoodoo Hex
+            24388, -- Brain Damage
+            24415, -- Slow
+            24674, -- Veil of Shadow
+            24683, -- Lightning Cloud
+        },
+        [787] = { -- High Priest Thekal
+            24192, -- Speed Slash
+            24193, -- Charge
+            24698, -- Gouge
+            21060, -- Blind
+        },
+        [788] = { -- Gahz'ranka
+            16099, -- Frost Breath
+        },
+        [789] = { -- High Priestess Arlokk
+            24210, -- Mark of Arlokk
+            24213, -- Ravage
+            24212, -- Shadow Word: Pain
+            24339, -- Infected Bite
+            -24331, -- Rake
+        },
+        [185] = { -- Jin'do the Hexxer
+            24053, -- Hex
+            24306, -- Delusions of Jin'do
+            24261, -- Brain Wash
+            24600, -- Web Spin
+            24618, -- Drain Life
+        },
+        [790] = { -- Hakkar
+            24323, -- Blood Siphon
+            24321, -- Poisonous Blood
+            24327, -- Cause Insanity
+            24328, -- Corrupted Blood
+            24178, -- Will of Hakkar
+            24673, -- Curse of Blood
         },
     },
 

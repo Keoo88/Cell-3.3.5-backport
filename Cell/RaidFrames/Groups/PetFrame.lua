@@ -92,9 +92,13 @@ local function UpdateAnchor()
         dumb:Show()
         if CellDB["general"]["fadeOut"] then
             if hoverFrame:IsMouseOver() then
-                anchorFrame.fadeIn:Play()
+                anchorFrame:MenuFadeIn()
             else
-                anchorFrame.fadeOut:GetScript("OnFinished")(anchorFrame.fadeOut)
+                --! WotLK fix: this used to reach into the animation group and
+                --! call its OnFinished handler by hand, because playing the fade
+                --! here does not reliably reach the end state. The fader now
+                --! takes an "instant" flag for exactly that.
+                anchorFrame:MenuFadeOut(true)
             end
         end
     else
@@ -284,10 +288,11 @@ local function UpdateMenu(which)
     end
 
     if not which or which == "fadeOut" then
+        --! WotLK fix: apply at once, see A.ApplyFadeInOutToMenu.
         if CellDB["general"]["fadeOut"] then
-            anchorFrame.fadeOut:Play()
+            anchorFrame:MenuFadeOut(true)
         else
-            anchorFrame.fadeIn:Play()
+            anchorFrame:MenuFadeIn(true)
         end
     end
 

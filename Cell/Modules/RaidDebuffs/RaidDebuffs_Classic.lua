@@ -103,6 +103,40 @@ local function LoadList()
     end
 end
 
+--! WotLK fix: клиент 3.3.5a знает про один и тот же инстанс ДВА разных имени, а
+--! ключ дампа совпадает в лучшем случае с одним из них. GetInstanceInfo() отдаёт
+--! имя КАРТЫ (Map.dbc), GetRealZoneText() — имя ЗОНЫ (AreaTable.dbc), и для 20 из
+--! 74 записей они расходятся: карту Оплота Чести клиент зовёт "Violet Hold", а ключ
+--! дампа — "The Violet Hold" (23 дебаффа), все 18 подземелий TBC идут с префиксом
+--! крыла ("Coilfang: The Steamvault" против ключа "The Steamvault"), Стража Штормграда
+--! на карте — "Stormwind Stockade" против ключа "The Stockade". Что источники именно
+--! такие, измерено по самому клиенту (Map.dbc поле 5 против AreaTable.dbc поле 11,
+--! связка через Map.dbc поле 22 = AreaTableID) и подтверждено дампами прогонов: вне
+--! инстанса GetInstanceInfo даёт "Northrend"/"Eastern Kingdoms" — это имена карт, —
+--! тогда как GetRealZoneText в тот же момент даёт "Dalaran"/"Elwynn Forest".
+--! F.GetInstanceName внутри инстанса возвращает имя КАРТЫ (там GetInstanceInfo
+--! никогда не nil, ветка GetRealZoneText недостижима), поэтому поиск точным ключом
+--! промахивался и дебаффы не включались МОЛЧА: ни ошибки, ни пустого окна — просто
+--! в подземелье нет ни одной рамки дебаффа, и понять это можно только зная, что они
+--! там должны быть. Поэтому: не нашли по переданному имени — пробуем второе имя ТОЙ
+--! ЖЕ зоны. Условие "переданное имя равно GetInstanceInfo()" обязательно, а не для
+--! красоты: F.GetInstanceAndBossId зовёт ещё и Comm.lua:396 с именем из ЧУЖОГО
+--! присланного списка, и подстановка своей зоны применила бы принятый список не к
+--! тому инстансу. Цена — один C-вызов на промах, то есть на смену большой зоны.
+local function ResolveInstance(instanceName)
+    if not instanceName then return end
+
+    local target = instanceNameMapping[instanceName]
+    if target then return target end
+
+    if instanceName ~= GetInstanceInfo() then return end
+
+    local zone = GetRealZoneText()
+    if zone and zone ~= "" and zone ~= instanceName then
+        return instanceNameMapping[zone]
+    end
+end
+
 local LoadExpansion = function(eName)
     if loadedExpansion == eName then return end
     loadedExpansion = eName
@@ -273,9 +307,13 @@ Cell.RegisterCallback("UpdateRaidDebuffs", "RaidDebuffsTab_UpdateRaidDebuffs", U
 local expansionDropdown, showCurrentBtn
 
 local function OpenInstanceBoss(instanceName, bossName)
-    if not instanceName or not instanceNameMapping[instanceName] then return end
+    --! WotLK fix: через ResolveInstance, а не прямым instanceNameMapping[...] —
+    --! кнопка «показать текущий инстанс» (:374 ниже) передаёт сюда именно
+    --! GetInstanceInfo(), то есть имя карты, которое для 20 записей дампа не ключ.
+    local resolved = instanceName and ResolveInstance(instanceName)
+    if not resolved then return end
 
-    local eName, iIndex, iId = F.SplitToNumber(":", instanceNameMapping[instanceName])
+    local eName, iIndex, iId = F.SplitToNumber(":", resolved)
     expansionDropdown:SetSelected(eName)
     LoadExpansion(eName)
     if loadedInstance == iId and not bossName then
@@ -424,7 +462,13 @@ local fallbackTexture = "Interface\\Icons\\INV_Misc_QuestionMark"
 local instanceTexCoord = {0.015, 0.666, 0.03, 0.72}
 local portraitTexCoord = {0.08, 0.92, 0.08, 0.92}
 local textureDebug, textureDebugLimit = false, 0
--- instanceId -> ordered list of texture paths known to exist on 3.3.5a (loading screens, etc.)
+-- instanceId -> ordered list of loading-screen paths, first hit wins (TryApplyCandidates)
+--! WotLK fix: порядок в каждом списке значащий, и первым стоит имя, существование
+--! которого доказано пробой по хеш-таблицам MPQ (audit/tools/mpq_probe.py). Прежние
+--! имена оставлены следом как фолбэк: они пришли из ретейла, но на чужой сборке
+--! клиента могут и оказаться на месте, а лишняя попытка стоит один SetTexture.
+--! Добавляя сюда путь, сначала прогони пробу: SetTexture на несуществующий файл
+--! молча гасит текстуру, ошибки в !BugGrabber при этом нет (см. GAP-063).
 local instanceTextureCandidates = {
     -- WotLK raids
     [759] = { -- Ulduar
@@ -432,6 +476,11 @@ local instanceTextureCandidates = {
         "Interface\\GLUES\\LoadingScreens\\LoadScreenUlduar",
     },
     [757] = { -- Trial of the Crusader
+        --! WotLK fix: оба прежних имени (ArgentTournament, CrusadersColiseum) в
+        --! клиенте 3.3.5a отсутствуют - список промахивался целиком, и инстанс
+        --! получал знак вопроса. Живое имя нашла проба по хеш-таблицам MPQ
+        --! (audit/tools/mpq_probe.py): LoadScreenArgentRaid, PRESENT в patch-enUS.
+        "Interface\\GLUES\\LoadingScreens\\LoadScreenArgentRaid",
         "Interface\\GLUES\\LoadingScreens\\LoadScreenArgentTournament",
         "Interface\\GLUES\\LoadingScreens\\LoadScreenCrusadersColiseum",
     },
@@ -440,9 +489,18 @@ local instanceTextureCandidates = {
         "Interface\\GLUES\\LoadingScreens\\LoadScreenIcecrownCitadelRaid",
     },
     [755] = { -- Obsidian Sanctum
+        --! WotLK fix: единственное имя в списке (ObsidianSanctum) в клиенте 3.3.5a
+        --! отсутствует - фолбэку было некуда падать, и инстанс получал знак вопроса.
+        --! Клиент называет этот экран по чертогу чёрного дракона в Чертогах Аспектов:
+        --! LoadScreenChamberBlack, PRESENT в locale-enUS (проба mpq_probe.py).
+        "Interface\\GLUES\\LoadingScreens\\LoadScreenChamberBlack",
         "Interface\\GLUES\\LoadingScreens\\LoadScreenObsidianSanctum",
     },
     [756] = { -- Eye of Eternity
+        --! WotLK fix: оба прежних имени (EyeOfEternity, TheEyeOfEternity) в клиенте
+        --! 3.3.5a отсутствуют - список промахивался целиком. Клиент называет экран
+        --! по боссу: LoadScreenMalygos, PRESENT в lichking-locale-enUS (mpq_probe.py).
+        "Interface\\GLUES\\LoadingScreens\\LoadScreenMalygos",
         "Interface\\GLUES\\LoadingScreens\\LoadScreenEyeOfEternity",
         "Interface\\GLUES\\LoadingScreens\\LoadScreenTheEyeOfEternity",
     },
@@ -451,10 +509,21 @@ local instanceTextureCandidates = {
         "Interface\\GLUES\\LoadingScreens\\LoadScreenNaxxramasRaid",
     },
     [753] = { -- Vault of Archavon
-        "Interface\\GLUES\\LoadingScreens\\LoadScreenVaultofArchavon",
+        --! WotLK fix: имена переставлены. VaultofArchavon в клиенте 3.3.5a нет, а
+        --! LoadScreenWintergrasp есть - это и есть тот экран, который клиент сам
+        --! показывает на входе в Архавон, потому что рейд лежит в Вечной Битве.
+        --! Фолбэк работал и до правки, теперь без промаха на первой попытке.
         "Interface\\GLUES\\LoadingScreens\\LoadScreenWintergrasp",
+        "Interface\\GLUES\\LoadingScreens\\LoadScreenVaultofArchavon",
     },
     [760] = { -- Onyxia
+        --! WotLK fix: оба прежних имени (OnyxiasLair, Onyxia) в клиенте 3.3.5a
+        --! отсутствуют, и своего экрана у логова Ониксии здесь нет вовсе - проверены
+        --! ещё восемь написаний, все ABSENT (mpq_probe.py). Поэтому первым стоит
+        --! общий рейдовый экран LoadScreenRaid (PRESENT в locale-enUS): картинка
+        --! вместо знака вопроса, и это ровно то, что показывает сам клиент, когда
+        --! у инстанса нет собственного экрана.
+        "Interface\\GLUES\\LoadingScreens\\LoadScreenRaid",
         "Interface\\GLUES\\LoadingScreens\\LoadScreenOnyxiasLair",
         "Interface\\GLUES\\LoadingScreens\\LoadScreenOnyxia",
     },
@@ -2190,7 +2259,9 @@ end
 -------------------------------------------------
 function F.GetDebuffList(instanceName)
     local list = {}
-    local eName, iIndex, iId = F.SplitToNumber(":", instanceNameMapping[instanceName])
+    --! WotLK fix: см. ResolveInstance — единственный звонящий (Built-in.lua:848)
+    --! передаёт сюда F.GetInstanceName(), то есть имя карты, пока игрок в инстансе.
+    local eName, iIndex, iId = F.SplitToNumber(":", ResolveInstance(instanceName))
 
     if iId and loadedDebuffs[iId] then
         local n = 0
@@ -2240,7 +2311,10 @@ end
 -- sharing functions
 -------------------------------------------------
 function F.GetInstanceAndBossId(instanceName, bossName)
-    local result = instanceNameMapping[instanceName]
+    --! WotLK fix: см. ResolveInstance. Здесь фолбэк защищён сравнением с
+    --! GetInstanceInfo() именно потому, что сюда приходят и ЧУЖИЕ имена — из
+    --! присланного списка (Comm.lua:396) и из окна отладки (Debug_Wrath.lua:1415).
+    local result = ResolveInstance(instanceName)
     if not result then return end
 
     -- instance found

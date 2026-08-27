@@ -145,13 +145,40 @@ local function Stop()
     end
 end
 
+--! WotLK fix: listen for DBMv4-PT as well - that is the prefix the DBM of this era
+--! actually puts on the wire. Upstream knows only "D4", which arrived with DBM 5.x on
+--! Mists; the build Warmane raiders run derives every prefix from `local DBMPrefix =
+--! "DBMv4"` (DBM-Core.lua:43, sent at :669) and its Pull() emits
+--! sendSync("DBMv4-PT", timer.."\t"..area) (modules/Commands.lua:34) - the string "D4"
+--! does not occur anywhere in that addon. So the D4-only branch ignored every pull timer
+--! on this client, including the ones Cell itself caused: the "dbm" tool mode clicks the
+--! macro /dbm pull N, DBM broadcasts DBMv4-PT, and CHAT_MSG_ADDON delivers a copy to the
+--! sender too ("The local client receives any messages it sends"), so the bar can follow
+--! DBM's own countdown while DBM does the announcing. Payload: the first tab field is the
+--! timer in seconds and 0 means cancel (DBM-Core.lua:3646 - "/dbm pull 0 will strictly be
+--! used to cancel the pull timer").
+--! strsplit must be assigned before tonumber, never nested: it returns every field, and
+--! in a tail position those become tonumber's extra arguments, where field two is read as
+--! the numeric base - tonumber("30", "Icecrown") is a hard error. Both branches also
+--! require a number now, because tonumber of a junk field is nil and `nil > 0` throws.
 function pullBtn:CHAT_MSG_ADDON(prefix, text)
-    if prefix == "D4" then -- DBM
+    if prefix == "D4" then -- DBM 5.x and later ports
         local pre, sec = strsplit("\t", text)
         sec = tonumber(sec)
-        if pre == "PT" and sec > 0 then -- start
+        if pre == "PT" and sec then
+            if sec > 0 then -- start
+                Start(sec)
+            elseif sec == 0 then -- cancel
+                Stop()
+            end
+        end
+
+    elseif prefix == "DBMv4-PT" then -- DBM on 3.3.5a
+        local sec = strsplit("\t", text)
+        sec = tonumber(sec)
+        if sec and sec > 0 then -- start
             Start(sec)
-        elseif pre == "PT" and sec  == 0 then -- cancel
+        elseif sec == 0 then -- cancel
             Stop()
         end
 

@@ -1,7 +1,13 @@
 local addonName, Cell = ...
 
 -- number of built-in indicators
-Cell.defaults.builtIns = 29
+--! WotLK fix: was 29. The "Target Counter" indicator is deleted outright (GAP-081): it
+--! counted how many enemies target a unit by reading the names off nameplates
+--! (C_NamePlate), which does not exist on 3.3.5 in any form - on this client its engine
+--! was a stub and the options checkbox switched nothing on. The checkbox is gone too;
+--! the indices below shifted, and the record left in already-saved layouts is cleaned
+--! out by Revise.lua.
+Cell.defaults.builtIns = 28
 
 Cell.defaults.indicatorIndices = {
     ["nameText"] = 1,
@@ -29,10 +35,9 @@ Cell.defaults.indicatorIndices = {
     ["debuffs"] = 23,
     ["raidDebuffs"] = 24,
     ["targetedSpells"] = 25,
-    ["targetCounter"] = 26,
-    ["crowdControls"] = 27,
-    ["actions"] = 28,
-    ["missingBuffs"] = 29,
+    ["crowdControls"] = 26,
+    ["actions"] = 27,
+    ["missingBuffs"] = 28,
 }
 
 Cell.defaults.layout = {
@@ -482,21 +487,6 @@ Cell.defaults.layout = {
             ["orientation"] = "left-to-right",
         }, -- 25
         {
-            ["name"] = "Target Counter",
-            ["indicatorName"] = "targetCounter",
-            ["type"] = "built-in",
-            ["enabled"] = false,
-            ["position"] = {"TOP", "button", "TOP", 0, 5},
-            ["frameLevel"] = 15,
-            ["font"] = {"Cell ".._G.DEFAULT, 15, "Outline", false},
-            ["color"] = {1, 0.1, 0.1},
-            ["filters"] = {
-                ["outdoor"] = false,
-                ["pve"] = false,
-                ["pvp"] = true,
-            },
-        }, -- 26
-        {
             ["name"] = "Crowd Controls",
             ["indicatorName"] = "crowdControls",
             ["type"] = "built-in",
@@ -512,14 +502,14 @@ Cell.defaults.layout = {
                 {"Cell ".._G.DEFAULT, 11, "Outline", false, "BOTTOMRIGHT", 2, -1, {1, 1, 1}},
             },
             ["orientation"] = "left-to-right",
-        }, -- 27
+        }, -- 26
         {
             ["name"] = "Actions",
             ["indicatorName"] = "actions",
             ["type"] = "built-in",
             ["enabled"] = true,
             ["speed"] = 1,
-        }, -- 28
+        }, -- 27
         {
             ["name"] = "Missing Buffs",
             ["indicatorName"] = "missingBuffs",
@@ -533,7 +523,7 @@ Cell.defaults.layout = {
             --! было раньше, чтобы обновление ничего не меняло молча; существующим
             --! базам ключ доберёт RepairAgainstDefaults в Revise.
             ["showGlow"] = true,
-        }, -- 29
+        }, -- 28
     },
 }
 

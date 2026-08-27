@@ -80,6 +80,38 @@ CreateTooltip("CellTooltip")
 CreateTooltip("CellSpellTooltip", true)
 -- CreateTooltip("CellScanningTooltip")
 
+--! WotLK fix: "ANCHOR_CURSOR_LEFT" на 3.3.5a не существует. В строковой таблице
+--! клиента лежат ровно 12 типов привязки подсказки (ANCHOR_TOP/BOTTOM/LEFT/RIGHT и
+--! их углы, ANCHOR_NONE, ANCHOR_PRESERVE, ANCHOR_CURSOR, ANCHOR_CURSOR_RIGHT) -
+--! варианта с _LEFT среди них нет, тогда как ANCHOR_CURSOR_RIGHT Blizzard зовёт сама
+--! (FrameXML 3.3.5a WorldMapFrame.lua:1868). То есть пункт "Курсор: слева" в
+--! «Опции» → «Подсказки» → «Привязать к» не давал обещанного места вообще.
+--! Эмулируем его невидимой рамкой 1x1 в точке курсора и цепляем подсказку правым
+--! краем к её левому. Только этот пункт: "Курсор" и "Курсор: справа" остаются на
+--! родной привязке клиента - она следит за курсором в C и не стоит ничего.
+--! OnUpdate живёт лишь пока подсказка на экране: рамка сама прячется, когда
+--! GameTooltip скрыт (тот же приём самоочистки, что у CellCooldown_OnUpdate
+--! в Indicators/Base.lua).
+local cursorAnchor = CreateFrame("Frame", nil, UIParent)
+cursorAnchor:SetSize(1, 1)
+cursorAnchor:EnableMouse(false)
+cursorAnchor:Hide()
+
+local function PositionCursorAnchor(self)
+    local scale = UIParent:GetEffectiveScale()
+    local x, y = GetCursorPosition()
+    self:ClearAllPoints()
+    self:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", x / scale, y / scale)
+end
+
+cursorAnchor:SetScript("OnUpdate", function(self)
+    if GameTooltip:IsShown() then
+        PositionCursorAnchor(self)
+    else
+        self:Hide()
+    end
+end)
+
 function F.ShowSpellTooltips(tooltip, spellID)
     --! WotLK fix: CreateBaseTooltipInfo/ProcessInfo are retail 10.x tooltip-data
     --! API and do not exist on 3.3.5. The function is currently unreferenced,
@@ -93,6 +125,10 @@ end
 function F.ShowTooltips(anchor, tooltipType, unit, aura, filter)
     if not CellDB["general"]["enableTooltips"] or (tooltipType == "unit" and CellDB["general"]["hideTooltipsInCombat"] and InCombatLockdown()) then return end
 
+    --! WotLK fix: снять рамку курсора, если игрок сменил пункт привязки, пока
+    --! подсказка была на экране - иначе её OnUpdate остался бы висеть.
+    cursorAnchor:Hide()
+
     if CellDB["general"]["tooltipsPosition"][2] == "Default" then
         GameTooltip_SetDefaultAnchor(GameTooltip, anchor)
     elseif CellDB["general"]["tooltipsPosition"][2] == "Cell" then
@@ -104,7 +140,10 @@ function F.ShowTooltips(anchor, tooltipType, unit, aura, filter)
     elseif CellDB["general"]["tooltipsPosition"][2] == "Cursor" then
         GameTooltip:SetOwner(anchor, "ANCHOR_CURSOR")
     elseif CellDB["general"]["tooltipsPosition"][2] == "Cursor Left" then
-        GameTooltip:SetOwner(anchor, "ANCHOR_CURSOR_LEFT", CellDB["general"]["tooltipsPosition"][4], CellDB["general"]["tooltipsPosition"][5])
+        PositionCursorAnchor(cursorAnchor)
+        cursorAnchor:Show()
+        GameTooltip:SetOwner(anchor, "ANCHOR_NONE")
+        GameTooltip:SetPoint("BOTTOMRIGHT", cursorAnchor, "BOTTOMLEFT", CellDB["general"]["tooltipsPosition"][4], CellDB["general"]["tooltipsPosition"][5])
     elseif CellDB["general"]["tooltipsPosition"][2] == "Cursor Right" then
         GameTooltip:SetOwner(anchor, "ANCHOR_CURSOR_RIGHT", CellDB["general"]["tooltipsPosition"][4], CellDB["general"]["tooltipsPosition"][5])
     end

@@ -611,7 +611,16 @@ end
 -------------------------------------------------
 -- NOTE: the global UnitAura override was removed on purpose.
 -- Overriding globals affects every addon and adds overhead to a hot path.
--- Cell code goes through private Cell.UnitBuff/Cell.UnitDebuff adapters below.
+--! WotLK fix: здесь стояло «Cell code goes through private Cell.UnitBuff/
+--! Cell.UnitDebuff adapters below» - это уже неправда. Все шесть живых
+--! сайтов аур зовут нативные UnitBuff/UnitDebuff напрямую
+--! (UnitButton_Cata_Wrath.lua:1494, 1642, 1708, 1721, 1831, 3322), а у самих
+--! адаптеров ниже потребителей нет ни одного: сплошной скан 2026-08-25 по
+--! всему дереву Cell/ (включая Libs), по прибору CellAuditHarness и по
+--! upstream Cell-retail нашёл только определение и два объясняющих
+--! комментария. Сами адаптеры оставлены намеренно - GAP-008, fix «Не делать»;
+--! правится описание, а не код, иначе следующий читатель поверит, будто
+--! горячий путь идёт через обёртку, и станет «оптимизировать» уже нативное.
 -------------------------------------------------
 
 -------------------------------------------------
@@ -687,7 +696,17 @@ do
         IG_MAINMENU_OPTION_CHECKBOX_OFF = "igMainMenuOptionCheckBoxOff",
         IG_MAINMENU_OPEN = "igMainMenuOpen",
         IG_MAINMENU_CLOSE = "igMainMenuClose",
-        IG_ABILITY_PAGE_TURN = "igAbilityPageTurn",
+        --! WotLK fix: the 3.3.5a sound is spelled "igAbiliityPageTurn" - with
+        --! Blizzard's own double-i typo. Verified twice over: the name
+        --! "igAbilityPageTurn" appears in NO row of the client's
+        --! DBFilesClient\SoundEntries.dbc (12941 rows, 12804 distinct names,
+        --! name is field 2, from patch-enUS-3.MPQ), and FrameXML 3.3.5a itself
+        --! calls the typo'd form - SpellBookFrame.lua:525, MailFrame.lua:67,
+        --! Blizzard_Calendar.lua:1799. PlaySound on a name the client does not
+        --! know plays nothing, so this default was silently dead; no Cell call
+        --! site uses this key, but Cell PUBLISHES SOUNDKIT as a gap-fill, and a
+        --! foreign addon reading it must not get a dead name.
+        IG_ABILITY_PAGE_TURN = "igAbiliityPageTurn",
         IG_CHARACTER_INFO_TAB = "igCharacterInfoTab",
         IG_BACKPACK_OPEN = "igBackPackOpen",
         IG_BACKPACK_CLOSE = "igBackPackClose",
@@ -702,8 +721,8 @@ end
 --! C_SpecializationInfo consumer. Do not publish partial modern talent/spec
 --! namespaces that can make foreign addons choose unsupported retail paths.
 
---! WotLK fix: the unsupported TargetCounter engine is already disabled on
---! Wrath and has no active C_NamePlate consumer. Do not publish an empty modern
+--! WotLK fix: Cell has no C_NamePlate consumer at all - the TargetCounter
+--! indicator, its only user, is deleted (GAP-081). Do not publish an empty modern
 --! namespace or allocate a fresh table on every foreign GetNamePlates call.
 
 --! WotLK fix: SecureHandlerStateTemplate already owns native SetFrameRef.
@@ -776,14 +795,119 @@ end
 --! WotLK fix: preserve a real custom-core/foreign implementation when present,
 --! but keep stock fallback semantics private to Cell. Publishing a global that
 --! always returns false makes other addons believe encounter state is supported.
+--! WotLK feature: ENCOUNTER_START/ENCOUNTER_END arrived in 5.4, so on stock
+--! 3.3.5a nothing ever told Cell a boss fight had begun - the flag stayed false
+--! forever and three consumers were inert: the death-report cap that keeps a
+--! wipe from spamming 25 lines into /raid (DeathReport.lua:74), the dispel-request
+--! glow reset (Request_Show.lua) and the targeted-spells reset
+--! (TargetedSpells.lua). DBM is the only source of that state on this client and
+--! it already broadcasts DBM_Pull/DBM_Kill/DBM_Wipe through its own callback
+--! registry. Read it, never write it: DBM is a foreign addon (CLAUDE.md rule 3),
+--! so this bridge only subscribes and re-fires the state through Cell's private
+--! callback system under the upstream event names. With no DBM installed nothing
+--! changes: the flag stays false and nothing fires.
 do
     local nativeIsEncounterInProgress = IsEncounterInProgress
+    local encounterInProgress = false
+    local attachedRevision -- nil = not attached
+
+    --! Only DBM_Pull carries "in progress"; both endings clear it.
+    local DBM_EVENTS = {
+        DBM_Pull = {"EncounterStart", nil, true},
+        DBM_Kill = {"EncounterEnd", 1, false},
+        DBM_Wipe = {"EncounterEnd", 0, false},
+    }
+
+    --! DBM only started exposing mod.encounterId in this revision. Older builds
+    --! (every 3.3.5a port) simply report 0 - no consumer in Cell reads the id, so
+    --! the bridge must not refuse to attach over it. Note Revision may be a
+    --! string on old DBM ports, hence tonumber() rather than a type check.
+    local ENCOUNTER_ID_REVISION = 20250929200404
+
     function Cell.IsEncounterInProgress()
         if type(nativeIsEncounterInProgress) == "function" then
             return not not nativeIsEncounterInProgress()
         end
-        return false
+        return encounterInProgress
     end
+
+    --! For /cell debug env: says whether the bridge actually found DBM. A silent
+    --! no-op is exactly the failure this project cannot detect from a game run.
+    function Cell.GetEncounterBridgeState()
+        return attachedRevision ~= nil, attachedRevision
+    end
+
+    local function OnDBMEvent(dbmEvent, ...)
+        local spec = DBM_EVENTS[dbmEvent]
+        if not spec then return end
+
+        --! Do not trust argument order: DBM ports differ on whether the callback
+        --! receives (event, mod) or just (mod). Take the first table argument.
+        local mod
+        for i = 1, select("#", ...) do
+            local v = select(i, ...)
+            if type(v) == "table" then mod = v break end
+        end
+
+        local id = 0
+        local name = ""
+        if mod then
+            if attachedRevision and attachedRevision >= ENCOUNTER_ID_REVISION then
+                id = tonumber(mod.encounterId) or 0
+            end
+            --! combatInfo is absent on some mods; indexing it blind would throw
+            --! mid-fight, which is the worst possible moment for an error.
+            local info = mod.combatInfo
+            if type(info) == "table" and type(info.name) == "string" then
+                name = info.name
+            end
+        end
+
+        local _, _, difficulty, _, maxPlayers = GetInstanceInfo()
+        encounterInProgress = spec[3]
+        Cell.Fire(spec[1], id, name, difficulty or 0, maxPlayers or 0, spec[2])
+    end
+
+    local tracker = CreateFrame("Frame")
+
+    local function Attach()
+        if attachedRevision then return true end
+
+        local dbm = DBM
+        if type(dbm) ~= "table" or type(dbm.RegisterCallback) ~= "function" then
+            return false
+        end
+
+        attachedRevision = tonumber(dbm.Revision) or 0
+        --! One closure per event: the DBM event name comes from the closure, so a
+        --! port that omits the event argument still lands in the right branch.
+        for dbmEvent in pairs(DBM_EVENTS) do
+            dbm:RegisterCallback(dbmEvent, function(...)
+                OnDBMEvent(dbmEvent, ...)
+            end)
+        end
+
+        tracker:UnregisterEvent("ADDON_LOADED")
+        return true
+    end
+
+    tracker:SetScript("OnEvent", function(_, event, arg1)
+        if event == "ADDON_LOADED" then
+            if arg1 == "DBM-Core" then Attach() end
+        elseif encounterInProgress then
+            --! Anti-stick guard the fork lacks: leaving the instance (hearthstone,
+            --! logout, disconnect mid-pull) means DBM never sends Kill or Wipe, and
+            --! a stuck flag would cap death reports and freeze the mouseover status
+            --! text for the rest of the session.
+            encounterInProgress = false
+            Cell.Fire("EncounterEnd", 0, "", 0, 0, 0)
+        end
+    end)
+    tracker:RegisterEvent("ADDON_LOADED")
+    tracker:RegisterEvent("PLAYER_ENTERING_WORLD")
+
+    --! DBM may already be loaded (it sorts before Cell for most managers).
+    Attach()
 end
 
 --! WotLK fix: modern group helpers do not exist in stock 3.3.5a. Keep Cell's
@@ -807,28 +931,33 @@ do
         return partyMembers > 0 and partyMembers + 1 or 0
     end
 
-    local function GetUnitRaidRank(unit)
-        local raidIndex = UnitInRaid(unit)
-        if raidIndex then
-            local _, rank = GetRaidRosterInfo(raidIndex + 1)
-            return rank
-        end
-    end
+    --! WotLK perf: 3.3.5a answers both questions with one-value native calls, so
+    --! derive the private contract straight from them instead of reading the roster
+    --! row. The previous shape went through GetRaidRosterInfo, which hands back eleven
+    --! values including five freshly built strings (name, class, fileName, zone, role)
+    --! just to look at the rank number. UnitButton_UpdateLeader calls both of these
+    --! once per button on every roster or leader change, so a 25-man threw away well
+    --! over a hundred strings per event on Lua 5.1 without a JIT.
+    --! Shape taken from the two implementations that are known to work on this client:
+    --! Blizzard's TargetFrame.lua pairs UnitIsPartyLeader with UnitInRaid, which is the
+    --! proof that the "party" in its name covers raids too, and oUF under ElvUI 6.09
+    --! writes the assistant test as `UnitIsRaidOfficer(unit) and not
+    --! UnitIsPartyLeader(unit)`. That second half is not decoration: it is what keeps
+    --! the two states mutually exclusive the way the old rank 2 / rank 1 split did,
+    --! because on 3.3.5a the raid leader also answers yes to UnitIsRaidOfficer.
+    --! The group guard on the leader test keeps a solo player from being called leader;
+    --! GetNumRaidMembers/GetNumPartyMembers return plain numbers and allocate nothing.
+    --! Both natives are 1/nil, normalised to a boolean here because states.isLeader and
+    --! grid.isLeader are stored and read back elsewhere.
+    local UnitIsPartyLeader = UnitIsPartyLeader
+    local UnitIsRaidOfficer = UnitIsRaidOfficer
 
     function Cell.UnitIsGroupLeader(unit)
-        if Cell.IsInRaid() then
-            return GetUnitRaidRank(unit) == 2
-        end
-        if GetNumPartyMembers() <= 0 then return false end
-        if UnitIsUnit(unit, "player") then
-            return IsPartyLeader("player") and true or false
-        end
-        local leaderIndex = GetPartyLeaderIndex()
-        return leaderIndex > 0 and UnitIsUnit(unit, "party"..leaderIndex) or false
+        return (Cell.IsInGroup() and UnitIsPartyLeader(unit)) and true or false
     end
 
     function Cell.UnitIsGroupAssistant(unit)
-        return GetUnitRaidRank(unit) == 1
+        return (UnitIsRaidOfficer(unit) and not UnitIsPartyLeader(unit)) and true or false
     end
 
     local everyoneAssistant, assistantTicker

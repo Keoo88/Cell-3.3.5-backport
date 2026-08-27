@@ -41,54 +41,41 @@ bleedList = {
     [772] = true, [6546] = true, [6547] = true, [6548] = true, [11572] = true, [11573] = true, [11574] = true, [25208] = true, [46845] = true, [47465] = true,
     -- WARRIOR: Deep Wounds (applied debuff)
     [12721] = true,
-    [99100] = true, -- 裂伤 - Mangle
-    [98282] = true, -- 小型撕裂 - Tiny Rend
-    [97357] = true, -- 裂伤 - Gaping Wound
-    [96700] = true, -- 毁灭 - Ravage
-    [96592] = true, -- 毁灭 - Ravage
-    [96570] = true, -- 裂伤 - Gaping Wound
-    [95334] = true, -- Elementium Spike Shield - Elementium Spike Shield
-    [93675] = true, -- 重伤 - Mortal Wound
-    [93587] = true, -- 血祭 - Ritual of Bloodletting
-    [91348] = true, -- 嫩化 - Tenderize
-    [90098] = true, -- 劈头斧 - Axe to the Head
-    [89212] = true, -- 鹰爪 - Eagle Claw
-    [87395] = true, -- 锯齿劈斩 - Serrated Slash
-    [87337] = true, -- 恶意切割 - Vicious Slice
-    [86738] = true, -- 深度瘀伤 - Deep Bruise
-    [86604] = true, -- 恶意切割 - Vicious Slice
-    [85415] = true, -- 裂伤 - Mangle
-    [84642] = true, -- 刺破 - Puncture
-    [83783] = true, -- 穿刺 - Impale
-    [82766] = true, -- 凿眼 - Eye Gouge
-    [82753] = true, -- 血祭 - Ritual of Bloodletting
-    [81690] = true, -- 血之气息 - Scent of Blood
-    [81569] = true, -- 旋风劈砍 - Spinning Slash
-    [81568] = true, -- 旋风劈砍 - Spinning Slash
-    [81087] = true, -- 穿刺之伤 - Puncture Wound
-    [81043] = true, -- 利刃切割 - Razor Slice
-    [80051] = true, -- 重伤 - Grievous Wound
-    [80028] = true, -- 岩石钻孔 - Rock Bore
-    [79829] = true, -- 割裂 - Rip
-    [79828] = true, -- 裂伤 - Mangle
-    [79444] = true, -- 穿刺 - Impale
-    [78859] = true, -- 源质刺盾 - Elementium Spike Shield
-    [78842] = true, -- 血肉撕咬 - Carnivorous Bite
-    [76594] = true, -- 撕裂 - Rend
-    [76524] = true, -- 痛苦旋风 - Grievous Whirl
-    [76507] = true, -- 穿刺爪击 - Claw Puncture
-    [75930] = true, -- 裂伤 - Mangle
-    [75388] = true, -- 钝击 - Rusty Cut
+
+    --! ==========================================================================
+    --! WotLK fix: the remaining bleeds this client actually has. Produced by running
+    --! the very methodology described above against DBFilesClient\Spell.dbc of the
+    --! 3.3.5a client itself (audit/tools/dbc_probe.py, 2026-08-26): Mechanic == 15
+    --! or any EffectMechanic[1..3] == 15, crossreferenced with any Effect[1..3] == 6.
+    --! The client holds 232 such spells and 19 of them were absent here, so
+    --! CheckDebuffType kept returning the aura's own empty debuffType instead of
+    --! "Bleed" - no pink Bleed colour on the raid frame for any of them.
+    --! Removed in the same pass (owner's decision, 2026-08-26): 41 Cataclysm ids
+    --! that do not exist in this client at all, plus 59023 "Puncturing Strike",
+    --! which the client does not flag as a bleed (Mechanic 0, EffectMechanic all 0).
+    --! ==========================================================================
+    -- HUNTER PET (cat): Rake, ranks 2-6 (rank 1 is 59881, in the list below)
+    [59882] = true, [59883] = true, [59884] = true, [59885] = true, [59886] = true,
+    -- HUNTER PET (raptor): Savage Rend, all ranks
+    [50498] = true, [53578] = true, [53579] = true, [53580] = true, [53581] = true, [53582] = true,
+    -- DRUID: Glyph of Rake
+    [54820] = true,
+    -- Second variant of bleeds already listed below (other raid difficulty)
+    [67679] = true, -- Old Wounds     (pairs with 66620)
+    [67811] = true, -- Dagger Throw   (pairs with 67280)
+    [70279] = true, -- Puncture Wound (pairs with 70278)
+    -- Creature bleeds the upstream list never carried
+    [4102]  = true, -- Gore
+    [4244]  = true, -- Open Wound Effect
+    [36054] = true, -- Deathblow      (pairs with 36023)
+    [39164] = true, -- Mangle
     [75161] = true, -- 旋转掠杀 - Spinning Rake
     [75160] = true, -- 血腥撕裂 - Bloody Rip
-    [74846] = true, -- 溢血之伤 - Bleeding Wound
     [71926] = true, -- 割裂 - Rip
     [70278] = true, -- 穿刺之伤 - Puncture Wound
-    [69203] = true, -- 恶毒之咬 - Vicious Bite
     [69065] = true, -- 穿刺 - Impaled
     [67280] = true, -- 匕首投掷 - Dagger Throw
     [66620] = true, -- 旧患 - Old Wounds
-    [65406] = true, -- 斜掠 - Rake
     [65033] = true, -- 收缩撕裂 - Constricting Rend
     [64666] = true, -- 野蛮突袭 - Savage Pounce
     [64374] = true, -- 野蛮突袭 - Savage Pounce
@@ -114,7 +101,6 @@ bleedList = {
     [59262] = true, -- 重伤 - Grievous Wound
     [59256] = true, -- 穿刺 - Impale
     [59239] = true, -- 撕裂 - Rend
-    [59023] = true, -- 穿透打击 - Puncturing Strike
     [59007] = true, -- 血肉腐烂 - Flesh Rot
     [58978] = true, -- 穿刺 - Impale
     [58830] = true, -- 致伤打击 - Wounding Strike

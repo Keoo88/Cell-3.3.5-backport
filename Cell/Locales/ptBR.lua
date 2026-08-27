@@ -340,7 +340,13 @@ L["Layout added: %s."] = "Layout adicionado: %s."
 L["Layout Auto Switch"] = "Troca Automática de Layout"
 L["Layout deleted: %s."] = "Layout deletado: %s."
 L["Layout imported: %s."] = "Layout importado: %s."
-L["Layout renamed: %s to %s."] = "Layout renomeado: %s."
+--! WotLK fix: в переводе был один `%s` вместо двух, а зовут строку через :format
+--! с двумя аргументами (Modules/Layouts/Layouts.lua: старое имя, новое имя).
+--! Lua 5.1 лишний аргумент молча отбрасывает - ошибки нет, но в чате оставалось
+--! только старое имя макета, новое исчезало. Ни один прогон это не поймал бы.
+--! Слов не придумано: второй плейсхолдер соединён знаком `>`, как это сделал сам
+--! переводчик koKR для этой же строки ("배치 이름 변경: %s > %s.").
+L["Layout renamed: %s to %s."] = "Layout renomeado: %s > %s."
 L["Layout Setup"] = "Setup de Layout"
 L["Layouts"] = "Layouts"
 L["Leader Icon"] = "Ícone de Líder"

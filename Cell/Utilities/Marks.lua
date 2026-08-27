@@ -117,20 +117,75 @@ marks = Cell.CreateFrame("CellRaidMarksFrame_Marks", marksFrame, 196, 20, true)
 marks:SetPoint("BOTTOMLEFT")
 marks:Hide()
 
-local function RemoveRaidTargets()
-    -- Always try to clear specific units that might be marked
-    SetRaidTarget("player", 0)
-    if UnitExists("target") then SetRaidTarget("target", 0) end
+--! WotLK fix: ClearRaidMarkers does not exist on 3.3.5 (codex: NO, added in 5.x), so
+--! "clear all marks" takes the marks down by hand - and in two parts, because looping
+--! over the group is not enough: it cannot reach a mark placed on a MOB at all, and in
+--! a raid that is exactly why the button gets pressed (GAP-082).
+--!  1) Addressable group units - people are cleared within the same frame. The
+--!     GetRaidTargetIndex pre-check is not cosmetic: without it every press sent 42
+--!     SetRaidTarget packets, 40 of them for units like "raid37" that are not in the
+--!     group. An unmarked or nonexistent unit returns nil, not 0 (codex: "nil - No
+--!     marker"; the client itself reads it that way - FrameXML 3.3.5a
+--!     FocusFrame.lua:168).
+--!  2) Mark stealing - the only way available to take a mark off a mob. A raid mark in
+--!     WoW belongs to exactly one unit: setting mark j on ourselves takes it away from
+--!     whoever held it, whatever that was. We walk all eight over ourselves; a unit
+--!     holds only one mark, so only the eighth stays on the player, and that one is
+--!     cleared on a delay - not in the same frame, the server processes the eight
+--!     packets one after another.
+local clearButton
+local clearing
 
+local function RemoveRaidTargets()
+    if clearing then return end
+
+    local inGroup
     if GetNumRaidMembers() > 0 then
+        inGroup = true
         for i = 1, 40 do
-            SetRaidTarget("raid"..i, 0)
+            local unit = "raid"..i
+            if GetRaidTargetIndex(unit) then SetRaidTarget(unit, 0) end
         end
     elseif GetNumPartyMembers() > 0 then
+        inGroup = true
         for i = 1, 4 do
-            SetRaidTarget("party"..i, 0)
+            local unit = "party"..i
+            if GetRaidTargetIndex(unit) then SetRaidTarget(unit, 0) end
         end
     end
+
+    if GetRaidTargetIndex("player") then SetRaidTarget("player", 0) end
+    if UnitExists("target") and GetRaidTargetIndex("target") then SetRaidTarget("target", 0) end
+
+    --! Outside a group marks do not work at all: the server rejects SetRaidTarget, and
+    --! the steal would desaturate the button for half a second for nothing.
+    if not inGroup then return end
+
+    clearing = true
+    --! SetEnabled exists on no 3.3.5 widget (that is why setenabled_check.py exists), so
+    --! the button is held by the `clearing` flag while the player is shown what Disable
+    --! would have shown: a desaturated icon for the duration of the operation.
+    if clearButton then clearButton.texture:SetDesaturated(true) end
+
+    for j = 1, 8 do
+        SetRaidTarget("player", j)
+    end
+
+    C_Timer.After(0.5, function()
+        clearing = false
+        SetRaidTarget("player", 0)
+        if clearButton then clearButton.texture:SetDesaturated(false) end
+
+        --! Insurance against the only visible failure mode: if the last packet was not
+        --! accepted the player would be left wearing the skull. We compare against 8
+        --! exactly - the mark we set ourselves - so that a mark just restored by a lock
+        --! is not torn off (right-clicking a mark keeps it via a 1.5s ticker).
+        C_Timer.After(1, function()
+            if GetRaidTargetIndex("player") == 8 then
+                SetRaidTarget("player", 0)
+            end
+        end)
+    end)
 end
 
 local ticker
@@ -143,19 +198,10 @@ for i = 1, 9 do
 
     if i == 9 then
         -- clear all marks
+        clearButton = markButtons[i] --! WotLK fix: see RemoveRaidTargets
         markButtons[i].texture:SetTexture("Interface\\Buttons\\UI-GroupLoot-Pass-Up")
         markButtons[i]:SetScript("OnClick", function()
             RemoveRaidTargets()
-            -- markButtons[i]:SetEnabled(false)
-            -- markButtons[i].texture:SetDesaturated(true)
-            -- for j = 1, 8 do
-            --     SetRaidTarget("player", j)
-            -- end
-            -- C_Timer.After(0.5, function()
-            --     SetRaidTarget("player", 0)
-            --     markButtons[i]:SetEnabled(true)
-            --     markButtons[i].texture:SetDesaturated(false)
-            -- end)
         end)
     else
         markButtons[i].texture:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcons")

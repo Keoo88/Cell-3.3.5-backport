@@ -1,8 +1,22 @@
---! Cell: this is a private, trimmed fork of Tsoukie's ClassicAPI.
---! If the standalone !!!ClassicAPI addon is installed (Gladdy requires it), it
---! loads first and owns these globals. Overwriting them with this older subset
---! mixes two incompatible halves of the same library, so bail out instead.
-if IsAddOnLoaded and IsAddOnLoaded("!!!ClassicAPI") then return end
+--! Cell: this file ships inside a private, trimmed fork of Tsoukie's ClassicAPI,
+--! but ChatThrottleLib itself is Mikk's standalone library with its own version
+--! contract - it is not part of the ClassicAPI surface.
+--! WotLK fix: the `if IsAddOnLoaded("!!!ClassicAPI") then return end` guard that
+--! used to stand here is gone (same class as Util\WidgetAPI.lua, CLAUDE.md rule 3).
+--! Two reasons, both measured on 2026-08-26:
+--!   * the old comment claimed this was an "older subset" of the standalone copy.
+--!     It is not: diff against libs 3.3.5\!!!ClassicAPI\Lib\ChatThrottleLib.lua is
+--!     empty apart from our own two edits - both are CTL_VERSION 25, byte-identical
+--!     otherwise. So the guard never protected anything;
+--!   * this is now the ONLY ChatThrottleLib in the addon (GAP-061 removed the copies
+--!     embedded in AceComm-3.0 and LibHealComm-4.0), and AceComm-3.0.lua:21 takes it
+--!     through `assert(ChatThrottleLib, "AceComm-3.0 requires ChatThrottleLib")`.
+--!     Load order is Cell.toc:18 (this file) before Cell.toc:22 (AceComm), so an
+--!     early return here on a client whose !!!ClassicAPI build ships no CTL module
+--!     left _G.ChatThrottleLib nil and Cell failed to load at all.
+--! The version guard below is the correct owner test and needs no help: it yields to
+--! an equal-or-newer foreign copy (the standalone addon's v25 wins exactly as before)
+--! and takes over an older one, which is that library's own documented handover.
 
 --
 -- ChatThrottleLib by Mikk

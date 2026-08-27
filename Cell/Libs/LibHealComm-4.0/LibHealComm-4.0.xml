@@ -1,5 +1,11 @@
 <Ui xmlns="http://www.blizzard.com/wow/ui/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.blizzard.com/wow/ui/
 ..\FrameXML\UI.xsd">
-	<Script file="ChatThrottleLib.lua"/>
+	<!--! WotLK fix: своя копия ChatThrottleLib (v24) удалена — GAP-061. Грузилась после
+	     Libs\ClassicAPI\Load.xml (Cell.toc:18 против :24), где уже стоит v25, и целиком
+	     выходила на страже версии: 524 строки компилировались и выбрасывались каждый
+	     вход в игру. LibHealComm-4.0.lua:2110 берёт троттл из глобала
+	     (local CTL = _G.ChatThrottleLib) и проверяет его на nil перед отправкой.
+	     ВАЖНО: не удалять Libs\ClassicAPI\Lib\ChatThrottleLib.lua — троттл в аддоне
+	     остался один. -->
 	<Script file="LibHealComm-4.0.lua"/>
 </Ui>

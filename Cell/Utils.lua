@@ -1673,6 +1673,15 @@ end
 Cell.vars.texture = "Interface\\AddOns\\Cell\\Media\\statusbar.tga"
 Cell.vars.emptyTexture = "Interface\\AddOns\\Cell\\Media\\empty.tga"
 Cell.vars.whiteTexture = "Interface\\AddOns\\Cell\\Media\\white.tga"
+--! WotLK fix: иконка воскрешения. Ретейл и Cata берут "Interface\RaidFrame\Raid-Icon-Rez"
+--! из клиента, но на 3.3.5a этого ассета нет вовсе (он появился в 4.x compact-raidframe).
+--! SetTexture на несуществующий путь молча гасит текстуру: :Show() проходит, ошибки в
+--! BugGrabber нет, на экране пусто - ровно поэтому иконка Revive у друида не появлялась.
+--! Возим собственную копию файла в Cell/Media (тот же приём, что у ElvUI-WotLK:
+--! ElvUI\media\textures\Raid-Icon-Rez.blp). Путь - один владелец, отсюда его читают оба
+--! потребителя (Indicators\StatusIcon.lua и Modules\Indicators\Indicators.lua). Зависеть
+--! от копии в стороннем !!!ClassicAPI нельзя (правило 3: Cell не владеет чужими файлами).
+Cell.vars.resurrectionTexture = "Interface\\AddOns\\Cell\\Media\\Raid-Icon-Rez"
 
 --! WotLK fix: Cell embeds a WotLK-safe LSM fallback but remains fetch-only.
 local LSM = LibStub and LibStub("LibSharedMedia-3.0", true) or nil

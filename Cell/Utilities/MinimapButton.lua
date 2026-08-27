@@ -10,10 +10,11 @@ local F = Cell.funcs
 --! (Cell ships neither). Visuals follow the classic LibDBIcon look (31px button,
 --! 53px tracking border overlay, icon centered), positioning is the classic
 --! angle-around-the-minimap math with the angle persisted in CellDB.
---!   Left-Click   - hide/show all Cell frames (out of combat only)
---!   Right-Click  - open the Cell options frame
---!   Middle-Click - hide this button (restore with /cell minimap)
---!   Left-Drag    - move the button around the minimap
+--!   Left-Click       - hide/show all Cell frames (out of combat only)
+--!   Right-Click      - unlock/lock the tool movers (same as /cell unlock, /cell lock)
+--!   Shift+Right-Click- open the Cell options frame
+--!   Middle-Click     - hide this button (restore with /cell minimap)
+--!   Left-Drag        - move the button around the minimap
 
 local button = CreateFrame("Button", "CellMinimapButton", Minimap)
 button:SetFrameStrata("MEDIUM")
@@ -92,12 +93,36 @@ local function ToggleCellFrames()
     end
 end
 
+--! WotLK feature: правый клик - тумблер режима мувера, то же самое, что
+--! /cell unlock и /cell lock. Единственный вход - U.SetMoverShown (см. RaidTools),
+--! без аргумента он сам переключает Cell.vars.showMover и печатает в чат, что
+--! включилось. Работает и в бою: protected-состояние тут не трогается, показываются
+--! только зелёные рамки Marks Bar / ReadyCheck-PullTimer / Buff Tracker.
+--! Открытие опций не потеряно - переехало на Shift+правый клик и подписано в тултипе.
+local function ToggleMover()
+    if Cell.uFuncs and Cell.uFuncs.SetMoverShown then
+        Cell.uFuncs.SetMoverShown() --! nil -> toggle
+    else
+        F.Print("Raid Tools module not loaded.")
+    end
+end
+
 button:SetScript("OnClick", function(self, b)
     if b == "LeftButton" then
         -- hide/show all Cell frames (raid/party/solo/pets/npc/spotlight share mainFrame)
         ToggleCellFrames()
     elseif b == "RightButton" then
-        F.ShowOptionsFrame()
+        if IsShiftKeyDown() then
+            F.ShowOptionsFrame()
+        else
+            ToggleMover()
+            --! WotLK feature: тултип открыт под курсором и подпись в нём только что
+            --! устарела - перерисовываем его тем же обработчиком, иначе игрок видит
+            --! "Разблокировать" на уже разблокированном мувере до ухода курсора.
+            if GameTooltip:IsOwned(self) then
+                self:GetScript("OnEnter")(self)
+            end
+        end
     elseif b == "MiddleButton" then
         local db = GetDB()
         if db then db["shown"] = false end
@@ -111,7 +136,11 @@ button:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_LEFT")
     GameTooltip:AddLine("|cFFFF3030Cell|r")
     GameTooltip:AddLine(L["Left-Click"]..": "..L["hide/show all Cell frames"], 1, 1, 1)
-    GameTooltip:AddLine(L["Right-Click"]..": "..L["show Cell options frame"], 1, 1, 1)
+    --! WotLK feature: подпись правого клика показывает, что произойдёт по нажатию,
+    --! а не название режима: мувер выключен - "Разблокировать", включён - "Заблокировать".
+    --! Ключи L["Unlock"]/L["Lock"] уже переведены (кнопка в Raid Tools), новых нет.
+    GameTooltip:AddLine(L["Right-Click"]..": "..((Cell.vars and Cell.vars.showMover) and L["Lock"] or L["Unlock"]), 1, 1, 1)
+    GameTooltip:AddLine("Shift+"..L["Right-Click"]..": "..L["show Cell options frame"], 1, 1, 1)
     GameTooltip:AddLine(L["Middle-Click"]..": "..L["hide this button"], 1, 1, 1)
     GameTooltip:Show()
 end)

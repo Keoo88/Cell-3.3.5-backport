@@ -6111,52 +6111,11 @@ local function CreateSetting_Tips(parent, text)
     return widget
 end
 
-local function CreateSetting_TargetCounterFilters(parent)
-    local widget
-
-    if not settingWidgets["targetCounterFilters"] then
-        widget = Cell.CreateFrame("CellIndicatorSettings_TargetCounterFilters", parent, 240, 74)
-        settingWidgets["targetCounterFilters"] = widget
-
-        widget.outdoor = Cell.CreateCheckButton(widget, L["Outdoor"])
-        widget.outdoor:SetPoint("TOPLEFT", 5, -8)
-
-        widget.pve = Cell.CreateCheckButton(widget, "PvE")
-        widget.pve:SetPoint("TOPLEFT", widget.outdoor, "BOTTOMLEFT", 0, -8)
-
-        widget.pvp = Cell.CreateCheckButton(widget, "PvP")
-        widget.pvp:SetPoint("TOPLEFT", widget.pve, "BOTTOMLEFT", 0, -8)
-
-        -- callback
-        function widget:SetFunc(func)
-            widget.outdoor.onClick = function(checked)
-                widget.filters.outdoor = checked
-                func()
-            end
-            widget.pve.onClick = function(checked)
-                widget.filters.pve = checked
-                func()
-            end
-            widget.pvp.onClick = function(checked)
-                widget.filters.pvp = checked
-                func()
-            end
-        end
-
-        -- show db value
-        function widget:SetDBValue(filters)
-            widget.filters = filters
-            widget.outdoor:SetChecked(filters["outdoor"])
-            widget.pve:SetChecked(filters["pve"])
-            widget.pvp:SetChecked(filters["pvp"])
-        end
-    else
-        widget = settingWidgets["targetCounterFilters"]
-    end
-
-    widget:Show()
-    return widget
-end
+--! WotLK fix: CreateSetting_TargetCounterFilters is cut along with the "Target Counter"
+--! indicator (GAP-081): its three checkboxes (Outside dungeons / PvE / PvP) configured
+--! where to show the count of enemies targeting a unit, and the counter itself never
+--! worked on 3.3.5 - it could only count off nameplates via C_NamePlate, which this
+--! client does not have. That indicator was the widget's only consumer.
 
 local function CreateSetting_DispelFilters(parent)
     local widget
@@ -6812,7 +6771,7 @@ local builders = {
     --! полосы (powerWordShield:SetShape давно был пустышкой). Ни один settingsTable
     --! этих ключей не содержал, то есть панель настроек их не показывала никогда:
     --! ~135 строк мёртвого кода в файле, который целиком грузится при старте.
-    ["targetCounterFilters"] = CreateSetting_TargetCounterFilters,
+    --! ["targetCounterFilters"] is gone where the indicator itself went (GAP-081).
     ["dispelFilters"] = CreateSetting_DispelFilters,
     ["castBy"] = CreateSetting_CastBy,
     -- ["showOn"] = CreateSetting_ShowOn,

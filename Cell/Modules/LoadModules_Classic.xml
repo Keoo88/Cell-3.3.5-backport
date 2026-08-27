@@ -28,5 +28,6 @@
     <!-- About -->
     <Script file="About\About.lua"/>
     <Script file="About\ImportExport.lua"/>
+    <Script file="About\Backup.lua"/>
     <Script file="About\CodeSnippets.lua"/>
 </Ui>

@@ -9,8 +9,9 @@ local UnitIsFeignDeath = UnitIsFeignDeath
 local IsInGroup = Cell.IsInGroup
 local IsInRaid = Cell.IsInRaid
 --! WotLK fix: убран `local IsEncounterInProgress = IsEncounterInProgress`. Функции на
---! 3.3.5 нет (добавлена в 5.0), так что локал всегда был nil, и оба места в файле (:70,
---! :162) и без него зовут приватный Cell.IsEncounterInProgress из Polyfills.lua:767.
+--! 3.3.5 нет (добавлена в 5.0), так что локал всегда был nil, и оба места в файле
+--! (Report и GroupRosterUpdate) и без него зовут приватный Cell.IsEncounterInProgress
+--! из Polyfills.lua, который теперь получает состояние боя от DBM.
 --! Мёртвая привязка опасна тем, что читает чужой глобал: аддон, объявивший своё
 --! IsEncounterInProgress, подсунул бы Cell чужую реализацию (CLAUDE.md §3).
 --! WotLK fix: bind the native 3.3.5 spell-link API directly; do not require a
@@ -43,6 +44,31 @@ else
     absorbedFormat = strlower(string.gsub(_G.TEXT_MODE_A_STRING_RESULT_ABSORB, "[()]", ""))
     criticalText = strlower(string.gsub(_G.TEXT_MODE_A_STRING_RESULT_CRITICAL, "[()]", ""))
 end
+
+--! WotLK fix: on 3.3.5a these combat-text globals carry %d, not %s -- the client
+--! ships TEXT_MODE_A_STRING_RESULT_OVERKILLING = "(%d Overkill)" (read out of
+--! patch-enUS-3.MPQ, Interface\FrameXML\GlobalStrings.lua; likewise ABSORB, BLOCK
+--! and RESIST). But the only caller feeds F.FormatNumber(), which returns a NUMBER
+--! below 1000 and a STRING above it ("12.4K", "1.2M" -- Utils.lua:439).
+--! string.format("%d overkill", "12.4K") is a hard error under Lua 5.1, "bad
+--! argument #2 to 'format' (number expected, got string)", verified on lupa.lua51;
+--! "999" coerces fine, which is exactly why the defect hides outside raids. In a
+--! raid overkill above 1000 is the norm (Icehowl's charge, Blood Boil, Soul
+--! Reaper), so the death report dies on the first real death and keeps dying.
+--! Widening %d to %s is safe in both directions: %s prints the number just as %d
+--! did. The positional form is covered too, because %1$d is native GlobalStrings
+--! syntax on 3.3.5a and this client's locale MPQ cannot be assumed to be enUS --
+--! the capture keeps the index, so %1$d becomes %1$s rather than being mangled.
+--! Only overkillFormat has a live call site today (the resisted/blocked/absorbed
+--! lines are commented out upstream), but all four are widened so that re-enabling
+--! one cannot resurrect the crash. criticalText carries no placeholder at all.
+local function WidenToString(fmt)
+    return (string.gsub(fmt, "(%%%d*%$?)d", "%1s"))
+end
+overkillFormat = WidenToString(overkillFormat)
+resistedFormat = WidenToString(resistedFormat)
+blockedFormat = WidenToString(blockedFormat)
+absorbedFormat = WidenToString(absorbedFormat)
 
 ----------------------------------------------------
 -- functions
@@ -135,11 +161,35 @@ end
 local frame = CreateFrame("Frame")
 -- frame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
 
+--! WotLK fix: ENCOUNTER_START/END do not exist on 3.3.5 (added 5.4), so these two
+--! handlers used to be unreachable and the report cap below never engaged - every
+--! death of a 25-man wipe went to /raid. Polyfills.lua now bridges DBM's
+--! DBM_Pull/DBM_Kill/DBM_Wipe into Cell's own EncounterStart/EncounterEnd
+--! callbacks, so subscribe to those instead of to the missing frame events.
+local function EncounterStart()
+    count = 0
+end
+
+local function EncounterEnd()
+    frame:GroupRosterUpdate()
+end
+
+local function RegisterEncounterCallbacks()
+    Cell.RegisterCallback("EncounterStart", "DeathReport_EncounterStart", EncounterStart)
+    Cell.RegisterCallback("EncounterEnd", "DeathReport_EncounterEnd", EncounterEnd)
+end
+
+local function UnregisterEncounterCallbacks()
+    Cell.UnregisterCallback("EncounterStart", "DeathReport_EncounterStart")
+    Cell.UnregisterCallback("EncounterEnd", "DeathReport_EncounterEnd")
+end
+
 function frame:PLAYER_ENTERING_WORLD()
     local isIn, iType = IsInInstance()
     instanceType = iType
 
     if instanceType == "pvp" or instanceType == "arena" then
+        UnregisterEncounterCallbacks()
         frame:UnregisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
         return
     end
@@ -148,12 +198,15 @@ function frame:PLAYER_ENTERING_WORLD()
     if isIn then
         inInstance = true
         if instanceType == "raid" then
-            -- frame:RegisterEvent("ENCOUNTER_START") --! WotLK: event does not exist on 3.3.5 (added 5.4) - was silently inert; the count reset below still happens on entering a raid instance
+            RegisterEncounterCallbacks()
             count = 0
+        else
+            UnregisterEncounterCallbacks()
         end
     elseif inInstance then -- left insntance
         inInstance = false
         wipe(deathLogs)
+        UnregisterEncounterCallbacks()
     end
     -- texplore(deathLogs)
 end
@@ -163,9 +216,9 @@ local timer
 --! non-native GROUP_ROSTER_UPDATE frame event.
 function frame:GroupRosterUpdate()
     if IsInGroup() then
-        if Cell.IsEncounterInProgress() then
-            -- frame:RegisterEvent("ENCOUNTER_END") --! WotLK: event does not exist on 3.3.5 (added 5.4) - was silently inert; priority re-check simply waits for the next roster update
-        else
+        --! During a boss fight the priority re-check simply waits: EncounterEnd
+        --! above runs this same function once the fight is over.
+        if not Cell.IsEncounterInProgress() then
             if timer then timer:Cancel() end
             timer = C_Timer.NewTimer(7, function()
                 F.CheckPriority()

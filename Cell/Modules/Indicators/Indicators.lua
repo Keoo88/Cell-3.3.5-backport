@@ -239,7 +239,9 @@ local function InitIndicator(indicatorName)
         end)
 
     elseif indicatorName == "statusIcon" then
-        indicator:SetTexture("Interface\\RaidFrame\\Raid-Icon-Rez")
+        --! WotLK fix: превью индикатора в опциях - своя копия иконки вместо
+        --! клиентского Raid-Icon-Rez, которого на 3.3.5 нет (путь - Utils.lua).
+        indicator:SetTexture(Cell.vars.resurrectionTexture)
 
     elseif indicatorName == "roleIcon" then
         -- texture type cannot glow by LCG
@@ -479,9 +481,6 @@ local function InitIndicator(indicatorName)
             end)
         end
 
-    elseif indicatorName == "targetCounter" then
-        indicator:SetCount(3)
-
     elseif indicatorName == "crowdControls" then
         indicator.isCrowdControls = true
         local spells = {
@@ -504,7 +503,15 @@ local function InitIndicator(indicatorName)
         end
 
     elseif indicatorName == "externalCooldowns" then
-        local icons = {"Interface\\Icons\\Spell_Holy_GuardianSpirit", "Interface\\Icons\\Spell_Holy_PowerInfusion", "Interface\\Icons\\Spell_Holy_PainSupression", "Interface\\Icons\\Spell_Holy_DivineProtection", "Interface\\Icons\\Spell_Holy_Renew"}
+        --! WotLK fix: четвёртая иконка была "Spell_Holy_DivineProtection" - файла с таким
+        --! именем в клиенте 3.3.5a нет (проверено по хеш-таблицам MPQ:
+        --! audit/tools/mpq_probe.py, ABSENT во всех 23 архивах; отсутствует и вариант
+        --! Spell_Holy_DivineShield). SetTexture на несуществующий путь молча гасит
+        --! текстуру - в предпросмотре индикатора "Внешние кулдауны" четвёртая клетка
+        --! была пустой, и ошибки в BugGrabber при этом нет. Заменено на иконку Hand of
+        --! Protection (Spell_Holy_SealOfProtection, PRESENT) - это и есть внешний кулдаун
+        --! той же роли, что и остальные четыре в этом наборе.
+        local icons = {"Interface\\Icons\\Spell_Holy_GuardianSpirit", "Interface\\Icons\\Spell_Holy_PowerInfusion", "Interface\\Icons\\Spell_Holy_PainSupression", "Interface\\Icons\\Spell_Holy_SealOfProtection", "Interface\\Icons\\Spell_Holy_Renew"}
         for i = 1, 5 do
             SetOnUpdate(indicator[i], nil, icons[i], 0)
         end
@@ -1578,7 +1585,11 @@ indicatorSettings = {
 ["powerText"] = {"enabled", "color-power", "powerFormat", "powerTextFilters", "checkbutton:hideIfEmptyOrFull", "position", "frameLevel", "font-noOffset"},
 ["statusIcon"] = {
     "|TInterface\\LFGFrame\\LFG-Eye:18:18:0:0:512:256:72:120:72:120|t "..
-    "|TInterface\\RaidFrame\\Raid-Icon-Rez:18:18|t "..
+    --! WotLK fix: своя копия иконки воскрешения вместо клиентского
+    --! Raid-Icon-Rez, которого на 3.3.5 нет (владелец пути - Utils.lua).
+    --! Utils.lua грузится в toc раньше этого файла, значит на момент сборки
+    --! таблицы Cell.vars.resurrectionTexture уже выставлен.
+    "|T"..Cell.vars.resurrectionTexture..":18:18|t "..
     "|TInterface\\TargetingFrame\\UI-PhasingIcon:18:18:0:0:31:31:3:28:3:28|t "..
     --! WotLK fix: |A atlas escapes are unsupported by the 3.3.5 text renderer.
     --! These native MPQ textures match the status-icon runtime fallback.
@@ -1606,7 +1617,9 @@ indicatorSettings = {
 ["debuffs"] = {"enabled", "checkbutton:dispellableByMe", "debuffBlacklist", "bigDebuffs", "durationVisibility", "checkbutton2:showAnimation", "checkbutton3:showTooltip:"..DEBUFFS_TOOLTIP1, "checkbutton4:enableBlacklistShortcut:"..DEBUFFS_TOOLTIP2, "size-normal-big", "num:10", "orientation", "position", "frameLevel", "font1:stackFont", "font2:durationFont"},
 ["raidDebuffs"] = {"|cffb7b7b7"..L["You can config debuffs in %s"]:format(Cell.GetAccentColorString()..L["Raid Debuffs"].."|r"), "enabled", "checkbutton:onlyShowTopGlow", "durationVisibility", "checkbutton2:showTooltip:"..DEBUFFS_TOOLTIP1, "size-border", "num:3", "orientation", "position", "frameLevel", "font1:stackFont", "font2:durationFont"},
 ["targetedSpells"] = {"enabled", "checkbutton:showAllSpells:"..L["Glow is only available to the spells in the list below"], "targetedSpellsList", "targetedSpellsGlow", "size-border", "num:3", "orientation", "position", "frameLevel", "font"},
-["targetCounter"] = {"|cffff2727"..L["HIGH CPU USAGE"].."!|r |cffb7b7b7"..L["Check all visible enemy nameplates."], "enabled", "targetCounterFilters", "color", "position", "frameLevel", "font-noOffset"},
+--! WotLK fix: the "targetCounter" row is deleted along with the indicator (GAP-081) -
+--! counting the enemies that target a unit was only ever possible off nameplates via
+--! C_NamePlate, which does not exist on 3.3.5; the options checkbox switched nothing on.
 ["actions"] = {"|cffb7b7b7"..L["Play animation when the unit uses a specific spell/item. The list is global shared, not layout-specific."], "enabled", "actionsPreview", "actionsList"},
 ["crowdControls"] = {"enabled", "builtInCrowdControls", "customCrowdControls", "durationVisibility", "size-border", "num:3", "orientation", "position", "frameLevel", "font1:stackFont", "font2:durationFont"},
 ["healthThresholds"] = {"enabled", "thresholds", "thickness"},
@@ -1994,8 +2007,9 @@ local function ShowIndicatorSettings(id)
                 Cell.Fire("UpdateIndicators", notifiedLayout, indicatorName, "frameLevel", value)
             end)
 
-        -- targetCounterFilters / dispelFilters
-        elseif currentSetting == "targetCounterFilters" or currentSetting == "dispelFilters"
+        -- dispelFilters / powerTextFilters
+        --! WotLK fix: the targetCounterFilters branch is gone with the indicator (GAP-081).
+        elseif currentSetting == "dispelFilters"
         or currentSetting == "powerTextFilters" then
             w:SetDBValue(indicatorTable["filters"])
             w:SetFunc(function()

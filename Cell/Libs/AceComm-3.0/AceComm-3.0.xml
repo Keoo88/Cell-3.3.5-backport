@@ -1,5 +1,11 @@
 <Ui xmlns="http://www.blizzard.com/wow/ui/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.blizzard.com/wow/ui/
 ..\FrameXML\UI.xsd">
-	<Script file="ChatThrottleLib.lua"/>
+	<!--! WotLK fix: своя копия ChatThrottleLib (v21) удалена — GAP-061. Она грузилась
+	     после Libs\ClassicAPI\Load.xml (Cell.toc:18 против :24), где уже стоит v25, и
+	     целиком выходила на страже версии: 504 строки компилировались и выбрасывались
+	     каждый вход в игру. AceComm-3.0.lua:21 берёт троттл из глобала
+	     (assert(ChatThrottleLib)), подпись SendAddonMessage у v25 та же.
+	     ВАЖНО: не удалять Libs\ClassicAPI\Lib\ChatThrottleLib.lua — теперь троттл
+	     в аддоне только один, и AceComm без него упадёт на assert при загрузке. -->
 	<Script file="AceComm-3.0.lua"/>
 </Ui>

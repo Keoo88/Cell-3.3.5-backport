@@ -153,10 +153,13 @@ local function CreateImportExportPane()
     exportBtn:SetScript("OnClick", F.ShowExportFrame)
     exportBtn:SetTexture("Interface\\AddOns\\Cell\\Media\\Icons\\export", {16, 16}, {"LEFT", 2, 0})
 
-    -- local backupBtn = Cell.CreateButton(iePane, L["Backups"], "accent-hover", {134, 20})
-    -- backupBtn:SetPoint("TOPLEFT", exportBtn, "TOPRIGHT", 5, 0)
-    -- backupBtn:SetScript("OnClick", F.ShowBackupFrame)
-    -- backupBtn:SetTexture("Interface\\AddOns\\Cell\\Media\\Icons\\backup", {16, 16}, {"LEFT", 2, 0})
+    --! WotLK feature: кнопка «Резервные копии» возвращена вместе с
+    --! About\Backup.lua - SavedVariable CellDBBackup и локали всё это время были
+    --! на месте, не было только самой панели.
+    local backupBtn = Cell.CreateButton(iePane, L["Backups"], "accent-hover", {134, 20})
+    backupBtn:SetPoint("TOPLEFT", exportBtn, "TOPRIGHT", 5, 0)
+    backupBtn:SetScript("OnClick", F.ShowBackupFrame)
+    backupBtn:SetTexture("Interface\\AddOns\\Cell\\Media\\Icons\\backup", {16, 16}, {"LEFT", 2, 0})
 end
 
 -------------------------------------------------

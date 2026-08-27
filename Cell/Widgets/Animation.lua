@@ -342,62 +342,77 @@ end
 -----------------------------------------
 -- apply fade in/out to menu
 -----------------------------------------
+--! WotLK fix: the menu fade used to be two AnimationGroups plus four booleans
+--! (fadingIn / fadedIn / fadingOut / fadedOut) that decided whether a hover
+--! event is allowed to start a fade. Every one of those booleans is a latch: it
+--! is cleared only from an OnFinished handler, so if a group is asked to play
+--! and never reaches OnFinished, the latch stays set and the anchor is stuck
+--! forever - OnLeave keeps seeing `not (fadingOut or fadedOut)` as false and
+--! refuses to retry for the rest of the session. On 3.3.5a there are two ways
+--! to lose that OnFinished:
+--!   * an AnimationGroup attached to a frame that is not visible does not tick,
+--!     and Cell.Fire("UpdateMenu") is issued once at login (Core_Wrath.lua),
+--!     while the raid frames are still hidden;
+--!   * :Finish() called from inside the *other* group's OnPlay re-enters that
+--!     group's OnFinished, which may in turn call Play() on the very group the
+--!     engine is currently starting.
+--! Pet and NPC anchors survive this because their UpdateAnchor/UpdateSeparateAnchor
+--! invokes the fade-out OnFinished handler by hand instead of playing it, and the
+--! main panel survives because MainFrame.lua drives its own alpha and never used
+--! this helper at all. The spotlight anchor has no updater, so it was the one
+--! menu button that stayed at full alpha no matter what - reported by testers as
+--! "the other buttons hide, this one still does not".
+--! Drive the alpha directly instead: the target alpha IS the state, so there is
+--! no latch left to get stuck, SetAlpha works on a frame that is not visible,
+--! and the absolute-alpha shim above is no longer in the hot path for menus.
+--! This mirrors MainFrame.lua's own fader, i.e. the menu button that works.
+local MENU_FADE_DURATION = 0.5
+
+local function MenuFade_OnUpdate(self, elapsed)
+    local step = elapsed / MENU_FADE_DURATION
+    local alpha = self._cellMenuAlphaTarget == 1 and self:GetAlpha() + step
+                                                  or self:GetAlpha() - step
+    if alpha >= 1 or alpha <= 0 then
+        alpha = self._cellMenuAlphaTarget
+        self:SetScript("OnUpdate", nil)
+    end
+    self:SetAlpha(alpha)
+end
+
+local function MenuFadeTo(anchorFrame, target, instant)
+    anchorFrame._cellMenuAlphaTarget = target
+    --! An instant apply is not an optimisation, it is the only thing that works
+    --! while the frame is hidden: OnUpdate does not run there either.
+    if instant or anchorFrame:GetAlpha() == target then
+        anchorFrame:SetScript("OnUpdate", nil)
+        anchorFrame:SetAlpha(target)
+    else
+        anchorFrame:SetScript("OnUpdate", MenuFade_OnUpdate)
+    end
+end
+
 function A.ApplyFadeInOutToMenu(anchorFrame, hoverFrame)
-    local fadingIn, fadedIn, fadingOut, fadedOut
-    anchorFrame.fadeIn = anchorFrame:CreateAnimationGroup()
-    anchorFrame.fadeIn.alpha = anchorFrame.fadeIn:CreateAnimation("alpha")
-    A.SetAbsoluteAlpha(anchorFrame.fadeIn.alpha, 0, 1)
-    anchorFrame.fadeIn.alpha:SetDuration(0.5)
-    anchorFrame.fadeIn.alpha:SetSmoothing("OUT")
-    anchorFrame.fadeIn:SetScript("OnPlay", function()
-        anchorFrame.fadeOut:Finish()
-        fadingIn = true
-    end)
-    anchorFrame.fadeIn:SetScript("OnFinished", function()
-        fadingIn = false
-        fadingOut = false
-        fadedIn = true
-        fadedOut = false
-        anchorFrame:SetAlpha(1)
+    anchorFrame._cellMenuAlphaTarget = 1
 
-        if CellDB["general"]["fadeOut"] and not hoverFrame:IsMouseOver() then
-            anchorFrame.fadeOut:Play()
-        end
-    end)
+    --! Kept as methods (not as .fadeIn/.fadeOut animation groups) so that a
+    --! caller cannot go behind the state again the way UpdateAnchor used to,
+    --! by reaching for :GetScript("OnFinished") and calling it by hand.
+    function anchorFrame:MenuFadeIn(instant)
+        MenuFadeTo(self, 1, instant)
+    end
 
-    anchorFrame.fadeOut = anchorFrame:CreateAnimationGroup()
-    anchorFrame.fadeOut.alpha = anchorFrame.fadeOut:CreateAnimation("alpha")
-    A.SetAbsoluteAlpha(anchorFrame.fadeOut.alpha, 1, 0)
-    anchorFrame.fadeOut.alpha:SetDuration(0.5)
-    anchorFrame.fadeOut.alpha:SetSmoothing("OUT")
-    anchorFrame.fadeOut:SetScript("OnPlay", function()
-        anchorFrame.fadeIn:Finish()
-        fadingOut = true
-    end)
-    anchorFrame.fadeOut:SetScript("OnFinished", function()
-        fadingIn = false
-        fadingOut = false
-        fadedIn = false
-        fadedOut = true
-        anchorFrame:SetAlpha(0)
-
-        if hoverFrame:IsMouseOver() then
-            anchorFrame.fadeIn:Play()
-        end
-    end)
+    function anchorFrame:MenuFadeOut(instant)
+        MenuFadeTo(self, 0, instant)
+    end
 
     hoverFrame:SetScript("OnEnter", function()
         if not CellDB["general"]["fadeOut"] then return end
-        if not (fadingIn or fadedIn) then
-            anchorFrame.fadeIn:Play()
-        end
+        MenuFadeTo(anchorFrame, 1)
     end)
     hoverFrame:SetScript("OnLeave", function()
         if not CellDB["general"]["fadeOut"] then return end
         if hoverFrame:IsMouseOver() then return end
-        if not (fadingOut or fadedOut) then
-            anchorFrame.fadeOut:Play()
-        end
+        MenuFadeTo(anchorFrame, 0)
     end)
 end
 

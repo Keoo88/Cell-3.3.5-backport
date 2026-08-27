@@ -724,20 +724,43 @@ end
 --! any client and cheaper than a restricted-environment round trip. In combat the
 --! placeholder is implicitly protected (child of the SecureFrameTemplate
 --! spotlightFrame), so there the snippets stay the only writer, as before.
-local function ApplyPlaceholderVisibility()
-    if InCombatLockdown() then return end
+local function UpdatePlaceholder(i)
+    --! currentLayoutTable does not exist yet while the buttons are being built,
+    --! and these run from OnShow/OnHide hooks, so the guard is not decoration.
+    if InCombatLockdown() or not Cell.vars.currentLayoutTable then return end
 
-    local hide = Cell.vars.currentLayoutTable["spotlight"]["hidePlaceholder"]
-
-    for i = 1, 15 do
-        local b = Cell.unitButtons.spotlight[i]
-        -- mirrors the OnAttributeChanged snippet's condition exactly
-        if not hide and not b:IsShown() and (b:GetAttribute("unit") or b:GetAttribute("specialUnit")) then
-            placeholders[i]:Show()
-        else
-            placeholders[i]:Hide()
-        end
+    local b = Cell.unitButtons.spotlight[i]
+    -- mirrors the OnAttributeChanged snippet's condition exactly
+    if not Cell.vars.currentLayoutTable["spotlight"]["hidePlaceholder"]
+       and not b:IsShown()
+       and (b:GetAttribute("unit") or b:GetAttribute("specialUnit")) then
+        placeholders[i]:Show()
+    else
+        placeholders[i]:Hide()
     end
+end
+
+local function ApplyPlaceholderVisibility()
+    for i = 1, 15 do
+        UpdatePlaceholder(i)
+    end
+end
+
+--! WotLK fix: applying the option once is not enough, because the secure OnHide
+--! snippet keeps re-showing the placeholder afterwards. RegisterUnitWatch is
+--! re-issued for all 15 slots on every spotlight update (see UpdateLayout), and
+--! the state-driver manager then hides every slot whose unit is gone on its next
+--! 0.2s tick - each of those Hides runs the snippet, which shows the placeholder
+--! back. Testers saw exactly that: ticking "Hide Placeholder Frames" made them
+--! vanish and about a second later they were all back.
+--! The option lives in the layout table, i.e. on the insecure side, so give the
+--! insecure side the last word: a wrapped script runs BEFORE the frame's own
+--! handlers, so these hooks fire after the snippet and overrule it. In combat we
+--! bail out and the snippet stays the only writer, exactly as described above.
+for i = 1, 15 do
+    local b = Cell.unitButtons.spotlight[i]
+    b:HookScript("OnShow", function() UpdatePlaceholder(i) end)
+    b:HookScript("OnHide", function() UpdatePlaceholder(i) end)
 end
 
 local timer
@@ -916,10 +939,14 @@ local function UpdateMenu(which)
     end
 
     if not which or which == "fadeOut" then
+        --! WotLK fix: apply the new state at once instead of playing a fade.
+        --! This runs from the login-time Cell.Fire("UpdateMenu") as well, when
+        --! the spotlight frame is still hidden and nothing would tick - see
+        --! A.ApplyFadeInOutToMenu for why the animated path never finished here.
         if CellDB["general"]["fadeOut"] then
-            anchorFrame.fadeOut:Play()
+            anchorFrame:MenuFadeOut(true)
         else
-            anchorFrame.fadeIn:Play()
+            anchorFrame:MenuFadeIn(true)
         end
     end
 

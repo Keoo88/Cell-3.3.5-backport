@@ -1031,7 +1031,12 @@ if( playerClass == "DRUID" ) then
 				local playerGroup = guidToGroup[playerGUID]
 
 				for groupGUID, id in pairs(guidToGroup) do
-					if( id == playerGroup and playerGUID ~= groupGUID and not UnitHasVehicleUI(guidToUnit[groupID]) and IsSpellInRange(MarkoftheWild, guidToUnit[groupGUID]) == 1 ) then
+					--! WotLK fix: upstream typo — the vehicle check indexed guidToUnit with
+					--! groupID, a name that exists nowhere in this file. Lua read it as a
+					--! global, got nil, and UnitHasVehicleUI never saw a unit, so the check
+					--! silently passed for everyone. The unit meant here is the same one the
+					--! range check uses two terms later: guidToUnit[groupGUID].
+					if( id == playerGroup and playerGUID ~= groupGUID and not UnitHasVehicleUI(guidToUnit[groupGUID]) and IsSpellInRange(MarkoftheWild, guidToUnit[groupGUID]) == 1 ) then
 						targets = targets .. "," .. compressGUID[groupGUID]
 					end
 				end

@@ -110,19 +110,64 @@ function I.RemoveIndicator(parent, indicatorName, auraType)
 end
 
 -- used for switching to a new layout
-function I.RemoveAllCustomIndicators(parent)
+--! WotLK perf: a frame can never be destroyed on 3.3.5a -- SetParent(nil) only
+--! orphans it, the client keeps it in its own frame list forever. Upstream drops
+--! every custom indicator here and HandleIndicators then rebuilds each one through
+--! `b.indicators[name] or I.CreateIndicator(b, t)` (UnitButton_Cata_Wrath.lua),
+--! and because this loop has just nil'ed the table entry the `or` branch always
+--! wins: a brand-new anonymous frame per custom indicator per button on every
+--! layout or group-type switch, with the previous set leaked. It fires more often
+--! than "switching to a new layout" suggests -- solo to party to raid counts, and
+--! so does every 10/25 change, i.e. several times per raid night. With the second
+--! argument the caller can hand over the incoming layout table; anything whose
+--! indicatorName AND type both survive the switch is kept and reused, so nothing
+--! is created and nothing is leaked. Name alone is not enough: the same
+--! indicatorName may come back as a different type, and that frame really does
+--! have to be replaced. Without the argument the old behaviour is unchanged,
+--! which is what the preview button in Indicators.lua wants.
+function I.RemoveAllCustomIndicators(parent, indicatorTables)
     -- if parent ~= CellIndicatorsPreviewButton then
     --     wipe(enabledIndicators)
     --     wipe(customIndicators["buff"])
     --     wipe(customIndicators["debuff"])
     -- end
 
+    local reusable
+    if indicatorTables then
+        reusable = {}
+        --! Custom indicators live in the tail past the built-in block; that is the
+        --! same convention I.ResetCustomIndicatorTables uses below, and Revise.lua
+        --! keeps the block at exactly builtIns records on every load.
+        for i = Cell.defaults.builtIns + 1, #indicatorTables do
+            local t = indicatorTables[i]
+            if t and t["indicatorName"] then
+                reusable[t["indicatorName"]] = t["type"]
+            end
+        end
+    end
+
     for indicatorName, indicator in pairs(parent.indicators) do
         if string.find(indicatorName, "^indicator") then
-            indicator:ClearAllPoints()
-            indicator:Hide()
-            indicator:SetParent(nil)
-            parent.indicators[indicatorName] = nil
+            --! Both halves must be present, not just equal: a nil == nil match would
+            --! keep an indicator that the incoming layout does not contain at all.
+            local wantedType = reusable and reusable[indicatorName]
+            if wantedType and wantedType == (indicator.configs and indicator.configs["type"]) then
+                --! Keep the frame, but put it back into the state a freshly created
+                --! one would be in: hidden, children hidden too (Hide(true) reaches
+                --! them on icons/bars/blocks). HandleIndicators re-applies every
+                --! setting from the new layout right after this, and the aura pass
+                --! that follows re-shows whatever should be visible. Without this a
+                --! custom indicator disabled in the incoming layout would keep
+                --! hanging on the frame with its last aura frozen in place: nothing
+                --! downstream touches it any more, since ResetCustomIndicatorTables
+                --! has just dropped it from enabledIndicators.
+                indicator:Hide(true)
+            else
+                indicator:ClearAllPoints()
+                indicator:Hide()
+                indicator:SetParent(nil)
+                parent.indicators[indicatorName] = nil
+            end
         end
     end
 end

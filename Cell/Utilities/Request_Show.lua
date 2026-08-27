@@ -471,12 +471,17 @@ local function DR_UpdateRequests(which)
             drDisplayType = CellDB["dispelRequest"]["type"]
 
             DR:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
-            --! WotLK: ENCOUNTER_START/END do not exist on 3.3.5 (added 5.4) - the
-            --! registrations were silently inert. Kept as documentation of intent.
-            -- DR:RegisterEvent("ENCOUNTER_START")
-            -- DR:RegisterEvent("ENCOUNTER_END")
+            --! WotLK fix: ENCOUNTER_START/END do not exist on 3.3.5 (added 5.4), so
+            --! these registrations were silently inert and a dispel-request glow left
+            --! over from the previous attempt survived the next pull and the wipe.
+            --! Polyfills.lua bridges DBM's pull/kill/wipe into Cell's own
+            --! EncounterStart/EncounterEnd callbacks - subscribe to those instead.
+            Cell.RegisterCallback("EncounterStart", "DispelRequest_EncounterStart", HideAllDRGlows)
+            Cell.RegisterCallback("EncounterEnd", "DispelRequest_EncounterEnd", HideAllDRGlows)
         else
             DR:UnregisterAllEvents()
+            Cell.UnregisterCallback("EncounterStart", "DispelRequest_EncounterStart")
+            Cell.UnregisterCallback("EncounterEnd", "DispelRequest_EncounterEnd")
         end
         -- texplore(drUnits)
         -- texplore(drDebuffs)

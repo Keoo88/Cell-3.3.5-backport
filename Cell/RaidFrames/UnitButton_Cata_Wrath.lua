@@ -337,10 +337,7 @@ local function ResetIndicators()
         elseif t["indicatorName"] == "aoeHealing" then
             I.EnableAoEHealing(t["enabled"])
 
-        -- update targetCounter
-        elseif t["indicatorName"] == "targetCounter" then
-            I.UpdateTargetCounterFilters(t["filters"], true)
-            I.EnableTargetCounter(t["enabled"])
+        --! WotLK fix: the targetCounter branch is gone with the indicator (GAP-081).
 
         -- update targetedSpells
         elseif t["indicatorName"] == "targetedSpells" then
@@ -421,7 +418,14 @@ local function HandleIndicators(b)
     end
 
     -- NOTE: Remove old
-    I.RemoveAllCustomIndicators(b)
+    --! WotLK perf: hand the incoming layout table over so custom indicators whose
+    --! name and type both survive the switch are kept instead of orphaned and
+    --! rebuilt. Frames cannot be freed on 3.3.5a, so each rebuild leaked one frame
+    --! per custom indicator per button, and this path runs on every layout change
+    --! and every group-type change (solo/party/raid, 10/25). The type check reads
+    --! indicator.configs, which still holds the PREVIOUS layout entry here -- the
+    --! loop below overwrites it at `indicator.configs = t`.
+    I.RemoveAllCustomIndicators(b, b._config)
 
     for _, t in next, b._config do
         local indicator = b.indicators[t["indicatorName"]] or I.CreateIndicator(b, t)
@@ -830,8 +834,6 @@ local function UpdateIndicators(layout, indicatorName, setting, value, value2)
                 end, true)
             elseif indicatorName == "aoeHealing" then
                 I.EnableAoEHealing(value)
-            elseif indicatorName == "targetCounter" then
-                I.EnableTargetCounter(value)
             elseif indicatorName == "targetedSpells" then
                 I.EnableTargetedSpells(value)
             elseif indicatorName == "actions" then
@@ -1113,8 +1115,6 @@ local function UpdateIndicators(layout, indicatorName, setting, value, value2)
                     b.indicators[indicatorName]:Hide()
                 end
             end, true)
-        elseif setting == "targetCounterFilters" then
-            I.UpdateTargetCounterFilters()
         elseif setting == "maxValue" then
             F.IterateAllUnitButtons(function(b)
                 b.indicators[indicatorName]:SetMaxValue(value)
@@ -2050,8 +2050,17 @@ local function UnitButton_UpdateHealthStates(self, diff)
     else
         states.totalAbsorbs = 0
     end
-    -- WotLK 3.3.5a: Heal absorbs don't exist in WotLK (added in Cataclysm+)
-    -- Only shield absorbs (like PW:S) exist, so healAbsorbs should always be 0
+    --! WotLK fix: the comment that used to stand here claimed heal absorbs "don't
+    --! exist in WotLK (added in Cataclysm+)". That is false, and the client says so:
+    --! Spell.dbc carries aura 301 (SCHOOL_HEAL_ABSORB) on exactly ten spells of two
+    --! mechanics - Incinerate Flesh (66236/66237/67049/67050/67051, Trial of the
+    --! Crusader) and Necrotic Strike (70659/71951/72490/72491/72492, Icecrown), the
+    --! latter described as "negates the next $s2 healing received". The combat log
+    --! can even be made to follow them: SPELL_HEAL and SPELL_PERIODIC_HEAL both carry
+    --! an `absorbed` field on 3.3.5. So the zero below is a DECISION, not a fact about
+    --! the client: the owner declined the feature on 2026-08-26 (see GAP-079), so
+    --! absorbsBar, overAbsorbGlow, the healAbsorb colour option and the `effective`
+    --! health text stay dormant by design. Do not re-derive this - measure once.
     --! WotLK perf: обе ветви писали в states.healAbsorbs один и тот же ноль -
     --! запись вынесена за if. Значение и порядок относительно остальных записей
     --! сохранены, между ветвями и этой строкой ничего не читает healAbsorbs.
@@ -3959,7 +3968,18 @@ local function UnitButton_OnEvent(self, event, unit, ...)
     --! states.unit and states.displayedUnit already cover the owner and its
     --! active vehicle/pet alias; UnitIsUnit here multiplied a C call by every
     --! mismatched button and every UNIT_* event.
-    if type(unit) == "string" and (self.states.displayedUnit == unit or self.states.unit == unit) then
+    --! WotLK perf: this line runs more often than any other in the addon - about
+    --! thirty unit events registered per button, times every shown button, and only
+    --! one of them owns the unit. So it holds nothing but the test. The opening
+    --! `type(unit) == "string"` is gone: it was a GETGLOBAL plus a C call here (the
+    --! file localizes its hot API but never localized `type`), and plain `unit` is
+    --! provably the same test. That guard exists only so a non-unit event, whose
+    --! arg1 is nil, cannot match an unassigned button whose states are also nil;
+    --! both states hold a string or nil, so arg1 of any other type fails both
+    --! comparisons on its own. `states` is hoisted for the same reason as P-1/P-28:
+    --! in the overwhelmingly common miss the old form indexed `self.states` twice.
+    local states = self.states
+    if unit and (states.displayedUnit == unit or states.unit == unit) then
         --! WotLK perf: the branches below are ordered by how often 3.3.5 actually
         --! fires them, not by topic. Because there is no RegisterUnitEvent here,
         --! every UNIT_* event walks this chain once per registered button - and
@@ -4061,7 +4081,7 @@ local function UnitButton_OnEvent(self, event, unit, ...)
         --     UnitButton_UpdateStatusIcon(self)
 
         elseif event == "UNIT_PORTRAIT_UPDATE" then -- pet summoned far away
-            if self.states.healthMax == 0 then
+            if states.healthMax == 0 then
                 self._updateRequired = 1
                 self._powerUpdateRequired = 1
             end
@@ -4390,9 +4410,41 @@ local function UnitButton_OnTick(self)
         self._updateRequired = nil
         UnitButton_UpdateAll(self)
         self._loggedPendingUpdate = nil
-    elseif self._updateRequired and not self._loggedPendingUpdate then
-        self._loggedPendingUpdate = true
-        F.Debug("Pending update but indicators not ready:", self:GetName(), "unit", states.unit or "nil", "guid", states.guid or "nil")
+    elseif self._updateRequired then
+        if not self._loggedPendingUpdate then
+            self._loggedPendingUpdate = true
+            F.Debug("Pending update but indicators not ready:", self:GetName(), "unit", states.unit or "nil", "guid", states.guid or "nil")
+        end
+        --! WotLK fix: this branch is the addon's own detector of a dead button - shown,
+        --! carrying a pending full update (OnShow sets _updateRequired), and still
+        --! without indicators - and until now it only wrote a debug line. Repair it.
+        --! The state is reachable because indicator creation lives exclusively in the
+        --! init queue, and the queue is fed from exactly one place: the UpdateIndicators
+        --! layout pass. A button the secure header materializes outside that pass is
+        --! never enqueued (3.3.5 runs configureChildren on its own schedule, and the
+        --! pass itself returns early while Cell.vars.isHidden), so _indicatorsReady
+        --! stays nil - and that one flag gates EVERY update path there is
+        --! (UnitButton_UpdateAuras, the health poll above, UpdateAll here,
+        --! Custom_Classic's UpdateCustomIndicators). The player sees a frame that draws
+        --! a name and an empty bar and then never changes again: no health, no auras, no
+        --! range fade. Three guards, each load-bearing:
+        --!   * `queue[self]` - during a normal layout apply the queue legitimately
+        --!     drains two buttons per frame, so a tail button of a 40-man raid is "not
+        --!     ready" for dozens of ticks. Those must not be re-enqueued;
+        --!   * `_forcedIndicatorInit` - once per button per session. HandleIndicators
+        --!     sets _indicatorsReady only at its very end, so an error thrown inside it
+        --!     would otherwise re-arm this enqueue every 0.25s forever;
+        --!   * `currentLayoutTable` - AddToInitQueue reads its ["indicators"] subtable.
+        if not self._forcedIndicatorInit and not queue[self]
+        and Cell.vars.currentLayoutTable and Cell.vars.currentLayoutTable["indicators"] then
+            self._forcedIndicatorInit = true
+            AddToInitQueue(self)
+            --! Show() fires the hooksecurefunc that recomputes CellLoadingBar's total,
+            --! so calling it on an already-visible updater would jerk the bar backwards
+            --! mid-drain. An updater that is already running picks this button up on its
+            --! next OnUpdate anyway.
+            if not updater:IsShown() then updater:Show() end
+        end
     end
 
     --! for Xtarget
@@ -5409,7 +5461,6 @@ function CellUnitButton_OnLoad(button)
     -- I.CreateDebuffs(button)
     I.CreateDispels(button)
     I.CreateRaidDebuffs(button)
-    I.CreateTargetCounter(button)
     I.CreateTargetedSpells(button)
     I.CreateActions(button)
     I.CreateMissingBuffs(button)

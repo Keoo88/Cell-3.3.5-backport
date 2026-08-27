@@ -643,8 +643,13 @@ function eventFrame:ADDON_LOADED(arg1)
         Cell.versionNum = tonumber(string.match(Cell.version, "%d+"))
         if not CellDB["revise"] then CellDB["firstRun"] = true end
         F.Revise()
-        -- changelogs auto-popup disabled (empty on the backport); still available via About tab
-        CellDB["changelogsViewed"] = Cell.version
+        --! WotLK fix: здесь писался CellDB["changelogsViewed"] = Cell.version - ключ,
+        --! который в сборке никто не читает: окна «Что нового» нет вообще (файл
+        --! Modules/About/Changelogs.lua удалён вместе с авто-попапом F.CheckWhatsNew,
+        --! а кнопку «Журнал изменений», которая в upstream стоит в «О Cell»
+        --! (Cell-retail/Modules/About/About.lua:23-27), мы не переносили). По решению
+        --! владельца удалены и запись ключа, и 130 КБ текста журнала в Locales/enUS.lua
+        --! и Locales/zhCN.lua. См. GAP-087.
         F.RunSnippets()
 
         -- validation -----------------------------------------------------------------------------
@@ -1381,7 +1386,14 @@ function SlashCmdList.CELL(msg, editbox)
         end
 
     elseif command == "report" then
-        rest = tonumber(rest:format("%d"))
+        --! WotLK fix: the argument tail was fed to string.format as the FORMAT
+        --! string (rest:format("%d") means format(rest, "%d")), so any '%' the
+        --! player types throws straight out of SlashCmdList: "/cell report 50%"
+        --! gives "invalid option '%' to 'format'", "/cell report %d" gives
+        --! "bad argument #1 to 'format' (number expected, got string)" — both
+        --! verified under Lua 5.1. For a plain number the call returned the
+        --! string unchanged, i.e. it never did anything. tonumber is what was meant.
+        rest = tonumber(rest)
         if rest and rest >= 0 and rest <= 40 then
             if rest == 0 then
                 F.Print(L["Cell will report all deaths during a raid encounter."])

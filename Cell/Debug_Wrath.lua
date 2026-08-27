@@ -506,9 +506,20 @@ local function BuildEnvLines(lines)
         tostring(_G.PixelUtil),
         ownPixel and "наш приватный" or ("ЧУЖОЙ — " .. tostring(_G.PixelUtil))))
 
+    --! WotLK fix: encounter state has no native source on 3.3.5a (ENCOUNTER_START/END
+    --! arrived in 5.4). Polyfills.lua bridges DBM instead, and a bridge that quietly
+    --! failed to attach would look exactly like the old always-false behaviour - so
+    --! report it here, where it also lands in the harness dump.
+    if Cell.GetEncounterBridgeState then
+        local attached, revision = Cell.GetEncounterBridgeState()
+        add(string.format("  encounter   : %s   IsEncounterInProgress()=%s",
+            attached and ("мост DBM подключён (Revision " .. tostring(revision) .. ")")
+                or "DBM не найден — состояние боя всегда false",
+            tostring(Cell.IsEncounterInProgress())))
+    end
+
     -- LCG (Cell fork)
-    local lcg = LibStub and LibStub("LibCustomGlow-1.0-Cell", true)
-    if lcg then
+    local lcg = LibStub and LibStub("LibCustomGlow-1.0-Cell", true)    if lcg then
         add(string.format("  LCG         : LibCustomGlow-1.0-Cell minor=%s  GlowFramePool=%d ButtonGlowPool=%d ProcGlowPool=%d",
             tostring(lcg.minor or lcg.version or "?"),
             lcg.GlowFramePool and lcg.GlowFramePool.count or -1,
@@ -1192,11 +1203,25 @@ end
 --! WotLK fix: данные Raid Debuffs собраны на ретейл-клиенте, где GetSpellInfo знает
 --! id всех эпох. На 3.3.5 незнакомый id выпадает МОЛЧА: F.GetDebuffList проверяет
 --! `if spellName then`, поэтому мёртвая запись не ломает аддон, но и не работает,
---! и в списке опций её не видно. Статически это не проверить - базы заклинаний нет
---! ни в кодексе (он документирует API, не Spell.dbc), ни в FrameXML. Спрашиваем
---! сам клиент.
+--! и в списке опций её не видно.
 --!
---! Второй вопрос канала - ПОЛНОТА. Опорных списков два, оба обкатаны на 3.3.5a:
+--! ПЕРВЫЙ вопрос канала - живы ли id - с 2026-08-24 решён статически и здесь больше
+--! не главный: база заклинаний лежит в самом клиенте, `DBFilesClient\Spell.dbc`
+--! внутри MPQ, и её читает `audit/tools/dbc_probe.py --sweep` (1499 сайтов за 1,6 с,
+--! входит в gates.py). Ответ на 3.3.5a: в данных WotLK мёртвых нет ни одного, все
+--! 662 id живы; мёртвыми были 5 записей в Смертельных копях версии Cataclysm и 35
+--! кастомных id сервера Ascension в данных TBC - последние 35 удалены 2026-08-24 с
+--! разрешения владельца, пять катаклизменных он оставил. Прежняя фраза «статически это
+--! не проверить, базы заклинаний нет ни в кодексе, ни в FrameXML» была верна лишь про
+--! кодекс и FrameXML - про клиент она была неверна.
+--!
+--! Канал оставлен, потому что отвечает на ТРЕТИЙ вопрос, который статикой не берётся, -
+--! жив ли АКТИВНЫЙ список текущей зоны. Он строится в рантайме из имени зоны, которое
+--! приходит от клиента, поэтому проверяется только в игре (см. ниже про
+--! GetCurrentAreaDebuffs и instanceNameAliases). Первые два вопроса - живы ли id и
+--! чего в данных нет вовсе - с 2026-08-24 решены статически.
+--!
+--! ВТОРОЙ вопрос - ПОЛНОТА. Опорных списков два, оба обкатаны на 3.3.5a:
 --!   [E] ElvUI 6.09, reference/ElvUI-master/ElvUI/Settings/Filters/UnitFrame.lua,
 --!       G.unitframe.aurafilters.RaidDebuffs - 97 записей, только рейды;
 --!       58 из них лежат в данных Cell тем же id, 39 - нет.
@@ -1205,14 +1230,17 @@ end
 --!       раскладка по боссам - в HealBot_Data.lua. По WotLK у него 58 записей,
 --!       29 совпадают с Cell по id, 29 - нет. Ценность этого эталона в том, что
 --!       его id заведомо существуют на данном клиенте: аддон под него и написан.
---! Объединение расхождений - RD_PROBE (61 запись). На бумаге разница ничего не
---! доказывает: Cell по умолчанию ищет дебафф ПО ИМЕНИ, а у одного дебаффа WotLK
---! свой id на каждую сложность, так что «у Cell нет 71218» ещё не значит «не
---! поймает Vile Gas». Ответ даёт только GetSpellInfo на живом клиенте.
+--! Объединение расхождений - RD_PROBE (61 запись). Разница по id сама по себе ничего
+--! не доказывала: Cell по умолчанию ищет дебафф ПО ИМЕНИ, а у одного дебаффа WotLK свой
+--! id на каждую сложность, так что «у Cell нет 71218» ещё не значит «не поймает Vile
+--! Gas». Раньше это упиралось в имя, а имя давал только GetSpellInfo в игре - теперь
+--! его даёт Spell.dbc, и `dbc_probe.py --coverage` повторяет разбор F.GetDebuffList
+--! один в один. Ответ на 3.3.5a: из 61 эталонной записи 42 покрыты по имени (ложная
+--! тревога) и 19 - настоящие дыры в данных. Их список печатает сам инструмент.
 --!
---! Сверка по именам-комментариям статически невозможна: в данных Cell WotLK часть
---! комментариев китайские (аддон китайского автора), поэтому «нет по имени» в
---! статике означало бы только «комментарий не по-английски».
+--! Сверка по именам-комментариям статически по-прежнему невозможна - в данных Cell
+--! WotLK часть комментариев китайские, - но она больше и не нужна: имена берутся не
+--! из комментариев, а из клиента.
 local RD_LISTS = {"enabled", "disabled"}
 
 local RD_PROBE = {
@@ -1224,7 +1252,12 @@ local RD_PROBE = {
     {29998, "Decrepit Fever", 754, "E"},
     -- Ulduar
     {63024, "Gravity Bomb", 759, "E"},
-    {63018, "Light Bomb", 759, "EH"},
+    --! WotLK fix: у ElvUI эта запись подписана «Light Bomb» - так дебафф зовут игроки,
+    --! но клиент 3.3.5a называет 63018 Searing Light, а «Light Bomb» носит совсем другой
+    --! id (65598). Метка тут не украшение: канал печатает её оператору, и он пошёл бы
+    --! искать в игре имя, которого нет. Расхождение нашёл `dbc_probe.py --coverage`,
+    --! он же теперь краснеет на любую такую подпись.
+    {63018, "Searing Light", 759, "EH"},
     {61903, "Fusion Punch", 759, "E"},
     {61912, "Static Disruption", 759, "E"},
     {64290, "Stone Grip", 759, "E"},

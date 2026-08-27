@@ -39,6 +39,10 @@ end
 -- button group
 -------------------------------------------------
 local generalBtn, appearanceBtn, clickCastingsBtn, aboutBtn, layoutsBtn, indicatorsBtn, debuffsBtn, utilitiesBtn, closeBtn
+--! WotLK fix: все девять кнопок заголовка одним списком - его обходит колбэк смены
+--! масштаба (см. UpdatePixelPerfect ниже). В группу переключения идут только восемь:
+--! closeBtn ничего не выбирает, но рамку пересчитывать ему надо так же.
+local tabButtons
 
 local function CreateTabButtons()
     generalBtn = Cell.CreateButton(optionsFrame, L["General"], "accent-hover", {105, 20}, false, false, "CELL_FONT_WIDGET_TITLE", "CELL_FONT_WIDGET_TITLE_DISABLE")
@@ -131,6 +135,7 @@ local function CreateTabButtons()
         end
     end
 
+    tabButtons = {generalBtn, appearanceBtn, layoutsBtn, clickCastingsBtn, indicatorsBtn, debuffsBtn, utilitiesBtn, aboutBtn, closeBtn}
     Cell.CreateButtonGroup({generalBtn, appearanceBtn, layoutsBtn, clickCastingsBtn, indicatorsBtn, debuffsBtn, utilitiesBtn, aboutBtn}, ShowTab, nil, nil, OnEnter, OnLeave)
 end
 
@@ -250,5 +255,44 @@ end)
 -------------------------------------------------
 local function UpdatePixelPerfect()
     P.Resize(optionsFrame)
+    --! WotLK fix: размер тут пересчитывался, а рамка - нет. Толщина рамки это P.Scale(1),
+    --! записанный Cell.StylizeFrame при СОЗДАНИИ кадра, когда у CellParent масштаба ещё нет
+    --! (effective 1 -> 768/1080 = 0.7111); свой масштаб Cell ставит позже, в PLAYER_LOGIN
+    --! (Core_Wrath.lua:1130 -> Appearance.lua:1867), а этот колбэк идёт следующей строкой
+    --! (Core_Wrath.lua:1153) - то есть масштаб на этот момент уже верный и одного P.Reborder
+    --! хватает. Дальше сюда же приходят все три триггера смены масштаба: ползунок Cell
+    --! (Appearance.lua:31), ползунок масштаба в настройках видео Blizzard
+    --! (hooksecurefunc("SetCVar"), Core_Wrath.lua:1191) и смена разрешения или размера окна
+    --! (DISPLAY_SIZE_CHANGED, Core_Wrath.lua:1177). Единственный P.Reborder этого окна стоял
+    --! в Init(), а тот за флагом `init` срабатывает один раз за сеанс. На экране: рамка окна
+    --! настроек не совпадает по толщине с остальными рамками аддона и остаётся такой до
+    --! /reload. Замерено прибором 1.9.16 в прогоне 2026-08-24: из шести осмотренных кадров
+    --! дрейфовал ровно один, это окно - edgeSize 0.7111 против 0.8466 при масштабе 0.84
+    --! (снимки zone_enter и stable, до первого открытия окна). В пикселях: edgeSize V даёт
+    --! V * effectiveScale / (768/высота экрана) физических пикселей, то есть 0.7111 при
+    --! масштабе 0.84 рисуется в 0.84 пикселя вместо ровно одного - линия тусклая и рваная.
+    --! Вторая половина GAP-053: там починена сама P.Reborder, здесь - её отсутствующий вызов.
+    --! Аргумент true такой же, как в Init(): снипет CELL_BORDER_SIZE правит рамки юнит-кнопок,
+    --! а не это окно. Метод самого кадра (optionsFrame:UpdatePixelPerfect из Cell.CreateFrame)
+    --! не годится - он зовёт Cell.StylizeFrame, а тот сбрасывает цвета фона и рамки в
+    --! умолчания; P.Reborder снимает и возвращает оба цвета.
+    P.Reborder(optionsFrame, true)
+
+    --! WotLK fix: кнопок заголовка это касается ровно так же. Cell.CreateButton кладёт
+    --! каждой кнопке бэкдроп с `edgeSize = P.Scale(1)` и такими же insets
+    --! (Widgets.lua:643) и метод `b:UpdatePixelPerfect` (Widgets.lua:733), который
+    --! пересобирает бэкдроп под текущий масштаб и возвращает оба цвета. Метод есть у
+    --! каждой кнопки аддона, а звать его для этих девяти было некому - смену масштаба
+    --! ловит только этот колбэк. На экране: рамка окна сходится (строка выше), а
+    --! восемь вкладок и крестик остаются в прежней толщине - шов вдоль всего заголовка,
+    --! заметнее, чем сама рамка. Обход детей, а не только родителя, - та же форма, что
+    --! в RaidFrames/Groups/SpotlightFrame.lua:1152 и RaidFrames/MainFrame.lua:673.
+    --! Список пуст до Init(): кнопки создаются при первом открытии окна, а до него
+    --! пересчитывать нечего - родившись позже, они возьмут уже верный P.Scale(1).
+    if tabButtons then
+        for _, b in pairs(tabButtons) do
+            b:UpdatePixelPerfect()
+        end
+    end
 end
 Cell.RegisterCallback("UpdatePixelPerfect", "OptionsFrame_UpdatePixelPerfect", UpdatePixelPerfect)

@@ -223,55 +223,84 @@ function I.CreateStatusIcon(parent)
     resurrectionIcon.tex:SetAllPoints(resurrectionIcon)
     -- 3.3.5: SetTexture resets desaturation state (see WeakAuras-WotLK
     -- FixTextureDesaturation), so SetTexture must come BEFORE SetDesaturated
-    resurrectionIcon.tex:SetTexture("Interface\\RaidFrame\\Raid-Icon-Rez")
+    --! WotLK fix: путь к иконке воскрешения - у владельца Cell.vars.resurrectionTexture
+    --! (Utils.lua). Прежний "Interface\RaidFrame\Raid-Icon-Rez" на 3.3.5 не существует,
+    --! и текстура молча гасла - иконка Revive не появлялась.
+    resurrectionIcon.tex:SetTexture(Cell.vars.resurrectionTexture)
     resurrectionIcon.tex:SetDesaturated(true)
     resurrectionIcon.tex:SetVertexColor(0.4, 0.4, 0.4, 0.5)
 
-    local bar = CreateFrame("StatusBar", nil, resurrectionIcon)
-    bar:SetAllPoints(resurrectionIcon)
-    bar:SetOrientation("VERTICAL")
-    --! WotLK fix: the visible resurrection icon is timer-driven without a
-    --! native reverse-fill surface; do not rely on a fake shared no-op method.
-    bar:SetStatusBarTexture(Cell.vars.whiteTexture)
-    --! WotLK fix: guard the texture on this Cell-owned bar locally instead of
-    --! replacing native StatusBar methods for the entire client.
-    local barTexture = bar:GetStatusBarTexture()
-    if not barTexture then
-        barTexture = bar:CreateTexture(nil, "ARTWORK")
-        barTexture:SetTexture(Cell.vars.whiteTexture)
-        bar:SetStatusBarTexture(barTexture)
+    --! WotLK fix: обратный отсчёт на иконке воскрешения не рисовался вообще.
+    --! В ретейле яркая копия значка обрезается маской (CreateMaskTexture, 8.0+),
+    --! а StatusBar под ней невидима (alpha 0) и служит только геометрией: заливка
+    --! вертикальная и reverse, то есть идёт сверху вниз, а маска берёт полосу от
+    --! низа заливки до низа значка - ярким показан ОСТАТОК времени, и он утекает
+    --! вниз. На 3.3.5a нет ни CreateMaskTexture, ни SetReverseFill (проверено
+    --! codex), поэтому от всей конструкции оставалась одна невидимая полоса:
+    --! игрок видел ровный притушенный значок без отсчёта, а её OnUpdate крутился
+    --! всё время показа и двигал значение, которое никто не рисует.
+    --! Вырезан заодно и источник маски maskIcon: он висел на той полосе, то есть
+    --! на дочернем фрейме, и его ARTWORK рисовался ПОВЕРХ resurrectionIcon.tex -
+    --! живая текстура без маски дала бы значок в полную яркость поверх задуманного
+    --! притушенного (0.4, 0.4, 0.4, 0.5). Обрезанная копия ниже такого не делает.
+    --! Тот же кадр даёт нативная 8-аргументная форма SetTexCoord (ULx, ULy, LLx,
+    --! LLy, URx, URy, LRx, LRy - есть на 3.3.5a): из текстуры вырезается нижняя
+    --! полоса высотой в долю остатка, и такой же долей задаётся высота самой
+    --! текстуры, поэтому её пиксели ложатся ровно на притушенный значок под ними.
+    local fillIcon = resurrectionIcon:CreateTexture(nil, "ARTWORK")
+    --! WotLK fix: внутри слоя порядок отрисовки задаётся sublevel'ом, а уже потом
+    --! порядком создания. Четвёртого аргумента (sublevel) у CreateTexture на 3.3.5a
+    --! нет - только (name, layer, inherits), - зато SetDrawLayer его принимает
+    --! (проверено codex). Ставим явно: яркая копия обязана лежать ПОВЕРХ притушенного
+    --! значка, и держать это на порядке создания текстур не надо.
+    fillIcon:SetDrawLayer("ARTWORK", 1)
+    fillIcon:SetTexture(Cell.vars.resurrectionTexture)
+    fillIcon:SetPoint("BOTTOMLEFT")
+    fillIcon:SetPoint("BOTTOMRIGHT")
+    fillIcon:Hide()
+
+    local fillStart, fillDuration
+
+    local function UpdateFill()
+        local height = resurrectionIcon:GetHeight()
+        local progress = 1 - (GetTime() - fillStart) / fillDuration
+        if progress <= 0 or not height or height == 0 then
+            fillIcon:Hide()
+            return
+        end
+        if progress > 1 then progress = 1 end
+        fillIcon:SetHeight(height * progress)
+        --! v текстуры растёт вниз, поэтому верхняя граница полосы - 1 - progress
+        fillIcon:SetTexCoord(0, 1 - progress, 0, 1, 1, 1 - progress, 1, 1)
+        fillIcon:Show()
     end
-    barTexture:SetAlpha(0)
-    --! WotLK perf: накопитель троттлинга переехал из поля кадра в локал
-    --! замыкания. Поле `bar.elapsedTime` стоило четыре хеш-лукапа в таблице за
-    --! кадр, а драйвер крутится на полном фреймрейте всё время, пока висит
-    --! иконка воскрешения. Снаружи поле никто не читал - проверено грепом по
-    --! Cell/, все обращения были в этих шести строках. Семантика прежняя:
-    --! накопление по-прежнему идёт после проверки, то есть первый тик приходит
-    --! кадром позже - так было и до правки.
+
+    --! WotLK perf: троттлинг 0.25 с и накопитель в локале замыкания - как было у
+    --! убранной полосы (поле кадра стоило четыре хеш-лукапа за кадр, а драйвер
+    --! крутится на полном фреймрейте всё время показа). Отдельный дочерний фрейм
+    --! под OnUpdate не нужен: он живёт на самой иконке и останавливается вместе с
+    --! ней, потому что скрытый фрейм OnUpdate не получает.
     local elapsedTime = 0
-    bar:SetScript("OnUpdate", function(self, elapsed)
+    resurrectionIcon:SetScript("OnUpdate", function(self, elapsed)
         if elapsedTime >= 0.25 then
-            self:SetValue(self:GetValue() + elapsedTime)
             elapsedTime = 0
+            if fillStart then UpdateFill() end
         end
         elapsedTime = elapsedTime + elapsed
     end)
 
-    --! WotLK 3.3.5a: CreateMaskTexture (8.0+) does not exist (проверено codex),
-    --! маска и её применение к иконке воскрешения вырезаны вместе с ретейл-веткой.
-    local maskIcon = bar:CreateTexture(nil, "ARTWORK")
-    maskIcon:SetAllPoints(resurrectionIcon)
-    maskIcon:SetTexture("Interface\\RaidFrame\\Raid-Icon-Rez")
-
     function resurrectionIcon:SetTimer(start, duration)
         resurrectionIcon:Hide() -- pause OnUpdate
-        bar:SetMinMaxValues(0, duration + 13) -- NOTE: texture gap (texcoord 0,1,0,1)
-        bar:SetValue(GetTime()-start)
+        fillStart = start
+        fillDuration = duration + 13 -- NOTE: texture gap (texcoord 0,1,0,1)
+        elapsedTime = 0
+        UpdateFill()
         resurrectionIcon:Show()
     end
 
     resurrectionIcon:SetScript("OnHide", function()
+        fillIcon:Hide()
+        fillStart, fillDuration = nil, nil
         if resurrectionIcon.timer then
             resurrectionIcon.timer:Cancel()
             resurrectionIcon.timer = nil
@@ -370,23 +399,34 @@ end
         --! кнопки у всех, кто индикатор включил.
         if UnitHasCellIncomingResurrection(unit) then
             icon:SetVertexColor(1, 1, 1, 1)
-            icon:SetTexture("Interface\\RaidFrame\\Raid-Icon-Rez")
+            --! WotLK fix: собственная копия иконки вместо клиентского
+            --! Raid-Icon-Rez, которого на 3.3.5 нет (владелец пути - Utils.lua).
+            icon:SetTexture(Cell.vars.resurrectionTexture)
             icon:SetTexCoord(0, 1, 0, 1)
             icon:Show()
         elseif button.states.hasRezDebuff or button.states.hasSoulstone then
             icon:SetVertexColor(0.6, 1, 0.6, 1)
-            icon:SetTexture("Interface\\RaidFrame\\Raid-Icon-Rez")
+            --! WotLK fix: то же, что веткой выше.
+            icon:SetTexture(Cell.vars.resurrectionTexture)
             icon:SetTexCoord(0, 1, 0, 1)
             icon:Show()
-        elseif UnitIsPlayer(unit) and UnitIsConnected(unit) and not Cell.UnitInPhase(unit) and not button.states.inVehicle then
-            icon:SetTexture("Interface\\TargetingFrame\\UI-PhasingIcon")
-            icon:SetTexCoord(0.1, 0.9, 0.1, 0.9)
-            icon:Show()
-        -- elseif UnitIsDeadOrGhost(unit) then
-        --     icon:SetTexture("Interface\\TargetingFrame\\UI-TargetingFrame-Skull")
-        --     icon:SetTexCoord(0, 1, 0, 1)
-        --     icon:Show()
         elseif button.states.BGFlag then
+            --! WotLK fix: здесь была ветка фазировки - иконка
+            --! "Interface\TargetingFrame\UI-PhasingIcon" для игрока не в твоей фазе.
+            --! Снята целиком, два независимых основания.
+            --! 1) Ассета в клиенте нет: audit/tools/mpq_probe.py даёт ABSENT по всем
+            --!    23 архивам 3.3.5a (иконка появилась в 4.x вместе с самим фазингом).
+            --!    SetTexture молча гасил бы текстуру - тот же класс, что GAP-063.
+            --! 2) Условие всё равно недостижимо: фазировки на 3.3.5 не существует,
+            --!    UnitInPhase нет ни в C-API (кодекс: НЕТ), ни во FrameXML, а приватная
+            --!    Cell.UnitInPhase (Polyfills.lua) на голом клиенте возвращает true,
+            --!    поэтому `not Cell.UnitInPhase(unit)` - всегда false.
+            --! Условие стояло третьим в цепочке, то есть три вызова API на каждое
+            --! обновление аур каждой кнопки ради заведомо пустого результата.
+            --! Cell.UnitInPhase не трогаем: её зовёт проверка дальности в Utils.lua,
+            --! и на кастомном ядре сервера натив может существовать.
+            --! Вместе с веткой убран закомментированный черновик upstream с черепом
+            --! UI-TargetingFrame-Skull: мёртвые состояния кнопка рисует сама.
             --! WotLK fix: 3.3.5 has no retail atlas escape names such as
             --! "horde_icon_and_flag-dynamicIcon". Use the native PvP flag
             --! textures shipped by the client instead of a silent empty atlas.

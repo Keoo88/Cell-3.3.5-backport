@@ -792,8 +792,21 @@ end
 -- CreateRaidDebuffs
 -------------------------------------------------
 local currentAreaDebuffs = {}
+--! WotLK fix: имя зоны, под которое собран currentAreaDebuffs. Нужно затем, чтобы
+--! ZONE_CHANGED_NEW_AREA (см. ниже) стоил одно сравнение строк, а не пересборку списка.
+local currentAreaDebuffsZone
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+--! WotLK fix: PLAYER_ENTERING_WORLD в одиночку держит список ТОЛЬКО на входе. На выходе
+--! из подземелья он приходит раньше, чем клиент забывает подземелье: измерено в прогоне
+--! 2026-08-23 (audit/raw/run19.json, канал raiddebuffs) - PLAYER_LEAVING_WORLD 16:20:03,
+--! PLAYER_ENTERING_WORLD 16:20:04, ZONE_CHANGED_NEW_AREA 16:20:05, и снимок в 16:20:06
+--! показал в Даларане все 26 дебаффов Гундрака: пересборка была, но со старым именем, а
+--! другого повода обновиться до следующей загрузочной ширмы у списка нет. Поэтому
+--! подписываемся и на смену зоны. Событие не частое - кодекс 3.3.5a: "major zone change",
+--! то есть вход/выход из инстанса и переход между большими зонами, подзоны идут отдельным
+--! ZONE_CHANGED. Плюс мемо ниже: если зона та же, чем была, обработчик выходит сразу.
+eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 
 local function UpdateDebuffsForCurrentZone(instanceName)
     local iName = F.GetInstanceName()
@@ -828,14 +841,24 @@ local function UpdateDebuffsForCurrentZone(instanceName)
 
     if iName == "" then
         wipe(currentAreaDebuffs)
+        currentAreaDebuffsZone = iName
         return
     end
 
     currentAreaDebuffs = F.GetDebuffList(iName)
+    currentAreaDebuffsZone = iName
     F.Debug("|cffff77AARaidDebuffsChanged:|r", iName)
 end
 Cell.RegisterCallback("RaidDebuffsChanged", "UpdateDebuffsForCurrentZone", UpdateDebuffsForCurrentZone)
-eventFrame:SetScript("OnEvent", function()
+eventFrame:SetScript("OnEvent", function(_, event)
+    --! WotLK fix: на PLAYER_ENTERING_WORLD пересобираем всегда - это загрузочная ширма,
+    --! и данные за ней могли поменяться. На смене зоны сначала сравниваем имя: в открытом
+    --! мире список почти всегда пустой и уже собран под эту зону, так что обычная цена
+    --! события - два C-вызова внутри F.GetInstanceName и одно сравнение строк. Мемо не
+    --! мешает правкам из настроек: путь RaidDebuffsChanged идёт мимо этой проверки.
+    if event == "ZONE_CHANGED_NEW_AREA" and F.GetInstanceName() == currentAreaDebuffsZone then
+        return
+    end
     UpdateDebuffsForCurrentZone()
 end)
 
@@ -1530,7 +1553,20 @@ local function BuildPattern(config)
     if config.delimiter == nil then
         prefix = ""
     else
-        prefix = "|cffababab" .. config.delimiter .. "|r"
+        --! WotLK fix: the delimiter is free text from an EditBox
+        --! (Widgets_IndicatorSettings.lua:1261/1328/1390 take GetText() with no
+        --! filtering, only SetMaxLetters(5)) and it is concatenated straight into
+        --! the pattern that the formatter functions below feed to string.format
+        --! with exactly ONE argument. Any '%' the player types therefore lands in
+        --! the format string: "50%" gives "invalid option '%|' to 'format'" (the
+        --! '|r' that follows becomes the conversion), "%s" and "%d" give
+        --! "bad argument #3 to 'format' (no value)" - all three verified under
+        --! Lua 5.1. Unlike the /cell report case in Core_Wrath.lua this fires from
+        --! HealthText_SetValue, i.e. on every health update of every visible unit,
+        --! so the health text dies and the error repeats without end. Escaping is
+        --! what the suffix below already does; the player still sees the exact
+        --! character typed, because "%%" formats as a literal '%'.
+        prefix = "|cffababab" .. gsub(config.delimiter, "%%", "%%%%") .. "|r"
     end
 
     local suffix = config.format:find("percent$") and "%%" or ""

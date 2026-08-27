@@ -768,3 +768,50 @@ function F.ShowRaidRosterFrame()
         -- texplore(changes)
     end
 end
+
+-------------------------------------------------
+-- pixel perfect
+-------------------------------------------------
+--! WotLK fix: смену масштаба этому окну ловить было некому - колбэка
+--! "UpdatePixelPerfect" тут не было ни одного, а единственный
+--! raidRosterFrame:UpdatePixelPerfect() стоит в F.ShowRaidRosterFrame за флагом
+--! `init`, то есть срабатывает один раз за сеанс. Толщина рамки - это P.Scale(1),
+--! записанный при создании кадра (Cell.StylizeFrame, Widgets.lua:383), и после
+--! смены масштаба он уже не тот: 0.7111 против 0.8466 при масштабе 0.84, то есть
+--! линия рисуется в 0.84 физического пикселя вместо ровно одного - тусклая и
+--! рваная. Полный разбор формы и всех трёх триггеров смены масштаба - в
+--! Modules/OptionsFrame.lua, колбэк UpdatePixelPerfect. На экране: рамка окна
+--! состава рейда и клетки внутри не совпадают по толщине с остальными рамками
+--! аддона и остаются такими до /reload.
+--! Обходим детей, а не только родителя (та же форма, что в
+--! RaidFrames/Groups/SpotlightFrame.lua:1152): бэкдроп есть у 8 подгрупп и у всех
+--! 40 клеток, а шов между ними виден лучше, чем рамка самого окна. Родителю годится
+--! его собственный метод - своих цветов у окна нет, сброс в умолчания ничего не
+--! меняет; детям P.Reborder, он снимает и возвращает оба цвета, а кнопке хватает
+--! b:UpdatePixelPerfect (Widgets.lua:733). Полосе прогресса только рамка: размер ей
+--! задают два якоря, а не width/height. До первого открытия окна детей не
+--! существует - родившись позже, они возьмут уже верный P.Scale(1), поэтому обход
+--! стоит за тем же флагом `init`.
+local function UpdatePixelPerfect()
+    raidRosterFrame:UpdatePixelPerfect()
+
+    if not init then return end
+
+    modeBtn:UpdatePixelPerfect()
+
+    P.Resize(assistantCB)
+    P.Reborder(assistantCB, true)
+
+    P.Reborder(processingFrame, true)
+    P.Reborder(progressBar, true)
+
+    for i = 1, 8 do
+        P.Resize(groups[i])
+        P.Reborder(groups[i], true)
+        for j = 1, 5 do
+            P.Resize(groups[i][j])
+            P.Reborder(groups[i][j], true)
+        end
+    end
+end
+Cell.RegisterCallback("UpdatePixelPerfect", "RaidRosterFrame_UpdatePixelPerfect", UpdatePixelPerfect)
