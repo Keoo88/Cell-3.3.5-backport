@@ -9,7 +9,7 @@ local LCG = LibStub("LibCustomGlow-1.0-Cell")
 -- raid tools
 -------------------------------------------------
 local rtPane, unlockBtn
-local reportCB, buffCB, buffDropdown, buffGlowCB, sizeEditBox, buffButtons, readyPullCB, styleDropdown, pullDropdown, secEditBox, marksBarCB, marksDropdown, marksShowSoloCB, fadeOutToolsCB
+local reportCB, buffCB, buffDropdown, buffGlowCB, buffMineOnlyCB, sizeEditBox, buffButtons, readyPullCB, styleDropdown, pullDropdown, secEditBox, marksBarCB, marksDropdown, marksShowSoloCB, fadeOutToolsCB
 
 -------------------------------------------------
 -- mover toggle
@@ -119,6 +119,7 @@ local function CreateRTPane()
         buffDropdown:SetEnabled(checked)
         sizeEditBox:SetEnabled(checked)
         buffGlowCB:SetEnabled(checked) --! WotLK fix
+        buffMineOnlyCB:SetEnabled(checked) --! WotLK feature
         if buffButtons then
             for buff, b in pairs(buffButtons) do
                 b:SetEnabled(checked)
@@ -251,6 +252,19 @@ local function CreateRTPane()
     end, L["Glow when you are missing the buff"], L["The icon and the counter stay either way"])
     buffGlowCB:SetPoint("TOPLEFT", buffCB, "BOTTOMRIGHT", 5, -28)
 
+    --! WotLK feature: следить только за бафами своего класса (buffTracker[7]) - так же,
+    --! как это делает VuhDo. На присте в трекере остаются выносливость и дух, на маге -
+    --! интеллект, а благословения паладина уходят: кликом их всё равно не наложить.
+    --! Класс, который из этого списка не даёт ничего (шаман, разбойник, воин, охотник,
+    --! рыцарь смерти, чернокнижник), фильтр не трогает - иначе полоса стала бы пустой.
+    buffMineOnlyCB = Cell.CreateCheckButton(rtPane, L["Only track buffs of your class"], function(checked, self)
+        CellDB["tools"]["buffTracker"][7] = checked
+        Cell.Fire("UpdateTools", "buffTracker")
+    end, L["Only track buffs of your class"],
+    L["A priest tracks Fortitude and Spirit, a mage tracks Intellect"],
+    L["Classes that provide none of these keep the whole list"])
+    buffMineOnlyCB:SetPoint("TOPLEFT", buffCB, "BOTTOMRIGHT", 5, -46)
+
     -- ready & pull
     readyPullCB = Cell.CreateCheckButton(rtPane, L["ReadyCheck and PullTimer buttons"], function(checked, self)
         CellDB["tools"]["readyAndPull"][1] = checked
@@ -260,7 +274,8 @@ local function CreateRTPane()
         Cell.Fire("UpdateTools", "buttons")
     end, L["ReadyCheck and PullTimer buttons"], L["Only show when you have permission to do this"], L["readyCheckTips"], L["pullTimerTips"])
     --! WotLK fix: было -43, освободили строку под buffGlowCB (см. выше).
-    readyPullCB:SetPoint("TOPLEFT", buffCB, "BOTTOMLEFT", 0, -63)
+    --! WotLK feature: и ещё строку под buffMineOnlyCB, поэтому -63 стало -68.
+    readyPullCB:SetPoint("TOPLEFT", buffCB, "BOTTOMLEFT", 0, -68)
     Cell.RegisterForCloseDropdown(readyPullCB)
 
     styleDropdown = Cell.CreateDropdown(rtPane, 120)
@@ -440,7 +455,8 @@ local function ShowUtilitySettings(which)
         buffDropdown:SetSelectedValue(CellDB["tools"]["buffTracker"][2])
         sizeEditBox:SetText(CellDB["tools"]["buffTracker"][3])
         buffGlowCB:SetChecked(CellDB["tools"]["buffTracker"][6]) --! WotLK fix
-        Cell.SetEnabled(CellDB["tools"]["buffTracker"][1], buffDropdown, sizeEditBox, buffGlowCB)
+        buffMineOnlyCB:SetChecked(CellDB["tools"]["buffTracker"][7]) --! WotLK feature
+        Cell.SetEnabled(CellDB["tools"]["buffTracker"][1], buffDropdown, sizeEditBox, buffGlowCB, buffMineOnlyCB)
         if buffButtons then
             for buff, b in pairs(buffButtons) do
                 b:SetEnabled(CellDB["tools"]["buffTracker"][1])

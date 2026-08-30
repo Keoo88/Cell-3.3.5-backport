@@ -666,6 +666,25 @@ local function IterateAllUnits()
         end
     end
 
+    --! WotLK feature: keep only the buffs my own class can actually cast (buffTracker[7],
+    --! on by default). This is the VuhDo model: VUHDO_CLASS_BUFFS is an explicit per-class
+    --! list of what that class provides, and its buff watch bar shows nothing else.
+    --! Tracking Blessing of Kings on a priest is pure noise - the icon cannot be clicked
+    --! to cast it, the missingBuffs indicator never lights up for it either (it only knows
+    --! buffsProvidedByMe), so the counter just competes for space with Fortitude/Spirit.
+    --! Classes that provide nothing from this list (shaman, rogue, warrior, hunter, death
+    --! knight, warlock) keep the whole group overview: filtering there would leave an empty
+    --! bar and take away the right-click report instead of cleaning anything up.
+    if CellDB["tools"]["buffTracker"][7] and next(buffsProvidedByMe) then
+        --! clearing the field being visited is explicitly allowed by the Lua 5.1 manual
+        --! ("you may clear existing fields"), unlike adding a new one.
+        for buff in pairs(available) do
+            if not buffsProvidedByMe[buff] then
+                available[buff] = nil
+            end
+        end
+    end
+
     if next(available) then
         hasBuffProvider = true
     else
@@ -742,6 +761,13 @@ end
 -- end
 
 function buffTrackerFrame:UNIT_AURA(unit)
+    --! WotLK fix: guard against an argument-less UNIT_AURA. strfind(nil, ...) is a
+    --! hard error, and it would come out of the OnEvent dispatcher below - taking the
+    --! whole buff tracker down for the rest of the session, which is the failure the
+    --! owner already reported once. Custom 3.3.5 cores are known to fire the event
+    --! without a unit (the same guard exists in the NoM0Re fork, commit ee3c28c8);
+    --! one comparison in front of two strfind calls costs nothing.
+    if not unit then return end
     --! WotLK perf: локальный strfind вместо unit:find - см. объявление наверху.
     if IsInRaid() then
         if strfind(unit, "^raid%d+$") then

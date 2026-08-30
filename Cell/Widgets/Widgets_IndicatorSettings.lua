@@ -702,6 +702,10 @@ local function CreateSetting_ThreatThreshold(parent)
         widget.threshold = Cell.CreateSlider(L["Threat threshold"], widget, 50, 130, 110, 5, nil, nil, true,
             L["Percentage of the threat of whoever is holding the mob"],
             L["100 means the unit has caught up with them"],
+            --! WotLK fix: 130 is a special case handled in UnitButton_UpdateThreat -
+            --! that percentage is unreachable in practice, so the top of the slider
+            --! means "only once the mob is actually on this unit".
+            L["130 means only when the mob is already hitting the unit"],
             L["Without a hostile target Cell falls back to the old rule and ignores this"])
         widget.threshold:SetPoint("TOPLEFT", widget, 5, -20)
         widget.threshold.afterValueChangedFn = function(value)
@@ -4075,7 +4079,15 @@ local function CreateSetting_Glow(parent)
         function widget:SetDBValue(t, hideNone)
             widget.useSmallerSize = not hideNone -- TODO: may require addtional arg
             widget.glowType.items[1].disabled = hideNone
-            widget.glowType.items[5].disabled = true --! ретейл-флаг свёрнут
+            --! WotLK feature: "Proc" is selectable again. It was greyed out because
+            --! upstream gates it behind a retail-only flag, but the whole path is ported
+            --! and live on 3.3.5: LibCustomGlow's ProcGlow_Start/Stop drive a hand-rolled
+            --! flipbook (the retail sheet is bundled as Media/UIActionBarFX.blp, so there
+            --! is no dependency on the client's own texture), Base.lua wires ["proc"] into
+            --! StartGlow/StopGlow and fills glowOptions, and the very same option is
+            --! already offered without a guard in Request_GlowOptions.lua and in the raid
+            --! debuff panes. Leaving the dropdown entry disabled only hid a working type
+            --! from indicator settings.
 
             -- {"Pixel", {0.95,0.95,0.32,1}, 9, 0.25, 8, 2},
             widget.glow = t

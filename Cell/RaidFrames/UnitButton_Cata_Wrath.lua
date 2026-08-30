@@ -1,7 +1,6 @@
 local _, Cell = ...
 --! WotLK fix: bind Cell timers privately so standalone !!!ClassicAPI cannot change semantics.
 local C_Timer = Cell.C_Timer
-local L = Cell.L
 ---@type CellFuncs
 local F = Cell.funcs
 ---@class CellUnitButtonFuncs
@@ -58,7 +57,6 @@ local UnitIsAFK = UnitIsAFK
 local UnitIsFeignDeath = UnitIsFeignDeath
 local UnitIsDeadOrGhost = UnitIsDeadOrGhost
 local UnitIsGhost = UnitIsGhost
-local UnitPowerType = UnitPowerType
 local UnitPowerMax = UnitPowerMax
 --! WotLK perf: UnitPower звался голым глобалом в UnitButton_UpdatePowerStates,
 --! рядом со своим уже локализованным близнецом UnitPowerMax. Функция идёт на
@@ -2015,8 +2013,6 @@ end
 -------------------------------------------------
 -- functions
 -------------------------------------------------
-local pwsInfo = {} -- Power Word: Shield
-local daInfo = {} -- Divine Aegis
 -- 64413: Protection of Ancient Kings
 -- 64411: Blessing of Ancient Kings
 local absorbInfos = {}
@@ -2224,42 +2220,16 @@ ShouldShowPowerBar = function(b)
 end
 
 CheckPowerEventRegistration = function(b)
+    --! WotLK perf: the power events now live on the central unitEventFrame, so this
+    --! no longer registers anything - it flips the gate the dispatcher reads before
+    --! it touches a power branch. Same decision, same return value, but instead of
+    --! fourteen C calls per button per toggle it is one field, and a button with a
+    --! hidden power bar stops paying for power events exactly as it did before.
     if b:IsVisible() and not b.isPreview and (b._shouldShowPowerText or b._shouldShowPowerBar) then
-        --! WotLK: UNIT_POWER does not exist on stock 3.3.5 (added in 4.0) - kept for
-        --! custom cores that backported it; the per-power-type events below do the work.
-        b:RegisterEvent("UNIT_POWER")
-        b:RegisterEvent("UNIT_MANA")
-        b:RegisterEvent("UNIT_RAGE")
-        b:RegisterEvent("UNIT_FOCUS")
-        b:RegisterEvent("UNIT_ENERGY")
-        b:RegisterEvent("UNIT_RUNIC_POWER")
-        --! WotLK fix: UNIT_MAXPOWER does not exist in 3.3.5 (added in 4.0);
-        --! the client fires per-power-type max events instead. Keep
-        --! UNIT_MAXPOWER for custom cores that backported the new event.
-        b:RegisterEvent("UNIT_MAXPOWER")
-        b:RegisterEvent("UNIT_MAXMANA")
-        b:RegisterEvent("UNIT_MAXRAGE")
-        b:RegisterEvent("UNIT_MAXFOCUS")
-        b:RegisterEvent("UNIT_MAXENERGY")
-        b:RegisterEvent("UNIT_MAXRUNIC_POWER")
-        b:RegisterEvent("UNIT_MAXHAPPINESS")
-        b:RegisterEvent("UNIT_DISPLAYPOWER")
+        b.__powerEvents = true
         return true
     else
-        b:UnregisterEvent("UNIT_POWER")
-        b:UnregisterEvent("UNIT_MANA")
-        b:UnregisterEvent("UNIT_RAGE")
-        b:UnregisterEvent("UNIT_FOCUS")
-        b:UnregisterEvent("UNIT_ENERGY")
-        b:UnregisterEvent("UNIT_RUNIC_POWER")
-        b:UnregisterEvent("UNIT_MAXPOWER")
-        b:UnregisterEvent("UNIT_MAXMANA")
-        b:UnregisterEvent("UNIT_MAXRAGE")
-        b:UnregisterEvent("UNIT_MAXFOCUS")
-        b:UnregisterEvent("UNIT_MAXENERGY")
-        b:UnregisterEvent("UNIT_MAXRUNIC_POWER")
-        b:UnregisterEvent("UNIT_MAXHAPPINESS")
-        b:UnregisterEvent("UNIT_DISPLAYPOWER")
+        b.__powerEvents = nil
         return false
     end
 end
@@ -2562,6 +2532,12 @@ UnitButton_UpdatePower = function(self)
     local power = self.states.power
     if not power then return end
 
+    --! WotLK fix: same zero-value rect as on the health bar, see
+    --! UnitButton_UpdateHealth. Here it is powerBarLoss that hangs off
+    --! powerBar:GetStatusBarTexture(), so a warrior at 0 rage or a rogue at 0 energy
+    --! kept the "missing power" part starting at the previous fill edge.
+    if power == 0 and barAnimationType ~= "Smooth" then power = 0.0001 end
+
     self.widgets.powerBar:SetBarValue(power)
 end
 
@@ -2618,8 +2594,23 @@ local function UnitButton_UpdateHealth(self, diff, statesReady)
     local healthPercent = states.healthPercent
     local healthBar = self.widgets.healthBar
 
+    --! WotLK fix: at exactly the bar's minimum 3.3.5 leaves the fill texture's rect
+    --! where it was instead of collapsing it onto the left edge. The bar itself reads
+    --! as empty, but every region anchored to :GetStatusBarTexture() keeps the stale
+    --! position - healthBarLoss, incomingHeal, shieldBar, shieldBarR, absorbsBar,
+    --! overAbsorbGlow, damageFlashTex - so a unit at 0 health drew its incoming-heal,
+    --! shield and damage-flash segments starting in mid-bar. A hair above the minimum
+    --! paints a zero-width rect at the left edge, which is what the other two 3.3.5
+    --! code bases do for the same reason (reference/ElvUI-master oUF
+    --! elements/health.lua:166; NoM0Re fork commit 2657a35d).
+    --! "Smooth" is excluded on purpose: SmoothStatusBar.lua walks the value towards
+    --! the target and only its closing frame is exactly zero, by which point the
+    --! painted rect is already under 0.001% of the bar - invisible either way.
+    local barValue = states.health
+    if barValue == 0 and barAnimationType ~= "Smooth" then barValue = 0.0001 end
+
     if barAnimationType == "Flash" then
-        healthBar:SetValue(states.health)
+        healthBar:SetValue(barValue)
         local diff = healthPercent - (states.healthPercentOld or healthPercent)
         if diff >= 0 or states.healthMax == 0 then
             B.HideFlash(self)
@@ -2627,7 +2618,7 @@ local function UnitButton_UpdateHealth(self, diff, statesReady)
             B.ShowFlash(self, abs(diff))
         end
     else
-        healthBar:SetBarValue(states.health)
+        healthBar:SetBarValue(barValue)
     end
 
     --! WotLK perf: Cell.vars читался дважды подряд (чтение глобала Cell плюс
@@ -2665,7 +2656,7 @@ end
 local HealComm = LibStub and LibStub:GetLibrary("LibHealComm-4.0", true)
 local HEALCOMM_OVERTIME_AND_BOMBS = HealComm and bit.bor(HealComm.HOT_HEALS, HealComm.BOMB_HEALS)
 
-local function UnitButton_UpdateHealPrediction(self, statesReady)
+local function UnitButton_UpdateHealPrediction(self, statesReady, useCached)
     --! WotLK perf: widgets.incomingHeal читался пять раз (четыре ранних выхода плюс
     --! запись), states - трижды. Функция вызывается из шести колбэков LibHealComm,
     --! то есть на каждом старте, обновлении, задержке и остановке лечения в рейде.
@@ -2677,20 +2668,41 @@ local function UnitButton_UpdateHealPrediction(self, statesReady)
     end
 
     local states = self.states
-    local unit = states.displayedUnit
-    local guid = unit and UnitGUID(unit)
-    if not guid then
-        incomingHeal:Hide()
-        return
-    end
 
-    local casted = HealComm:GetHealAmount(guid, HealComm.CASTED_HEALS) or 0
-    local overtime = HealComm:GetHealAmount(
-        guid,
-        HEALCOMM_OVERTIME_AND_BOMBS,
-        GetTime() + 3
-    ) or 0
-    local value = floor((casted + overtime) * (HealComm:GetHealModifier(guid) or 1))
+    --! WotLK perf: the three LibHealComm queries below are Lua, not C - each one
+    --! walks the library's pending-heal tables - and health repaints call this
+    --! function far more often than the incoming amount can actually change: every
+    --! UNIT_HEALTH, every UNIT_MAXHEALTH and the 0.25s change-detected poll ask for
+    --! a value that only a LibHealComm callback can move. So those callers pass
+    --! useCached and reuse the last amount, rescaled by the current healthMax; the
+    --! six callbacks, UpdateAll and B.UpdateShields pass nothing and recompute.
+    --! The cache is still time-bounded, and that is not belt-and-braces: the
+    --! HoT/bomb query uses a sliding GetTime()+3 window, so the amount shrinks as
+    --! time passes even when no callback fires. One button tick is the bound,
+    --! because that is already the staleness of everything else on the frame.
+    local value
+    if useCached and states.incomingHeal and (GetTime() - (states.incomingHealAt or 0)) < 0.25 then
+        value = states.incomingHeal
+    else
+        local unit = states.displayedUnit
+        local guid = unit and UnitGUID(unit)
+        if not guid then
+            states.incomingHeal = nil
+            incomingHeal:Hide()
+            return
+        end
+
+        local now = GetTime()
+        local casted = HealComm:GetHealAmount(guid, HealComm.CASTED_HEALS) or 0
+        local overtime = HealComm:GetHealAmount(
+            guid,
+            HEALCOMM_OVERTIME_AND_BOMBS,
+            now + 3
+        ) or 0
+        value = floor((casted + overtime) * (HealComm:GetHealModifier(guid) or 1))
+        states.incomingHeal = value
+        states.incomingHealAt = now
+    end
 
     if value <= 0 then
         incomingHeal:Hide()
@@ -2780,13 +2792,15 @@ local function UnitButton_UpdateThreat(self)
     end
 
     local mob = B.GetThreatMobUnit()
-    local status, percent
+    local status, percent, isTanking
 
     if mob then
         -- isTanking, status, scaledPercentage, rawPercentage = UnitDetailedThreatSituation(unit, mobUnit)
         --! rawPercentage - процент от угрозы того, кто моба держит: 100 = вровень с ним.
-        local _, st, _, rawPercentage = UnitDetailedThreatSituation(unit, mob)
-        status, percent = st, rawPercentage or 0
+        --! WotLK fix: isTanking is no longer discarded - the codex defines it as "1 if
+        --! unit is mobUnit's primary target", i.e. the mob is swinging at this unit.
+        local tanking, st, _, rawPercentage = UnitDetailedThreatSituation(unit, mob)
+        isTanking, status, percent = tanking, st, rawPercentage or 0
         --! nil здесь означает "у этого юнита на этом мобе угрозы нет" - и это НЕ повод
         --! падать в глобальную ветку: именно она и подсвечивала весь рейд.
     else
@@ -2796,20 +2810,47 @@ local function UnitButton_UpdateThreat(self)
         --! к 100 и дальше сравниваем одинаково. Порог в глобальной ветке не работает -
         --! показываем как раньше, чтобы без цели индикатор не потерять совсем.
         percent = (status and status >= 1) and 100 or 0
+        --! WotLK fix: status 2 and 3 both mean "this unit IS the mob's primary target"
+        --! (codex, UnitThreatSituation), so the top-of-slider rule below still works
+        --! without a hostile target selected.
+        isTanking = status and status >= 2
     end
 
     --! Порог и "не показывать танков" - свои у каждого из двух индикаторов;
     --! данные угрозы при этом добываются один раз на кнопку.
     local isTank = self.states.role == "TANK"
 
-    if blink and percent > 0 and percent >= (indicatorNums["aggroBlink"] or 100)
+    --! WotLK fix: the top of the slider (130, see CreateSetting_ThreatThreshold in
+    --! Widgets_IndicatorSettings.lua) means "the mob is already hitting this unit",
+    --! not "130% of somebody else's threat". Such a percentage practically never
+    --! exists: rawPercentage is measured against the threat of whoever holds the mob,
+    --! and the moment the unit rips it the unit becomes that holder itself, so the
+    --! ratio reads 100 again. The old comparison therefore made the highest setting
+    --! fire never at all instead of firing exactly on a real pull.
+    local blinkThreshold = indicatorNums["aggroBlink"] or 100
+    local borderThreshold = indicatorNums["aggroBorder"] or 100
+    local blinkOn, borderOn
+
+    if blinkThreshold >= 130 then
+        blinkOn = isTanking and true or false
+    else
+        blinkOn = percent > 0 and percent >= blinkThreshold
+    end
+
+    if borderThreshold >= 130 then
+        borderOn = isTanking and true or false
+    else
+        borderOn = percent > 0 and percent >= borderThreshold
+    end
+
+    if blink and blinkOn
         and not (isTank and indicatorBooleans["aggroBlink"]) then
         self.indicators.aggroBlink:ShowAggro(GetThreatStatusColor(status or 0))
     else
         self.indicators.aggroBlink:Hide()
     end
 
-    if border and percent > 0 and percent >= (indicatorNums["aggroBorder"] or 100)
+    if border and borderOn
         and not (isTank and indicatorBooleans["aggroBorder"]) then
         self.indicators.aggroBorder:ShowAggro(GetThreatStatusColor(status or 0))
     else
@@ -2972,6 +3013,108 @@ local function UnitButton_UpdateInRange(self)
     end
 end
 
+-------------------------------------------------
+-- central unit event dispatcher
+-------------------------------------------------
+--! WotLK perf: 3.3.5a has no RegisterUnitEvent - it arrived in 5.0 - so a frame
+--! that registers UNIT_HEALTH receives UNIT_HEALTH for every unit in the game.
+--! Cell registered about thirty unit events on EVERY shown button, so one health
+--! tick on one raid member woke 25-40 button handlers, and all but one of them
+--! existed only to fail the same token comparison and then walk the whole
+--! broadcast-event chain below it. One frame receives those events instead and
+--! looks the token up in an index, so an event costs a single hash lookup and
+--! reaches only the button(s) that actually display that unit.
+--!
+--! Two tokens per button are indexed - states.unit and states.displayedUnit -
+--! because a unit in a vehicle is drawn from its vehicle/pet alias while events
+--! still arrive for the owner token; that is exactly the pair the old per-button
+--! filter compared against, so the set of delivered events is unchanged. Several
+--! buttons can show one unit (spotlight frames, party plus raid), hence a list.
+--!
+--! The failure modes are deliberately asymmetric. A stale entry only causes a
+--! redundant update, because every handler reads states.displayedUnit itself; a
+--! MISSING entry would silently stop a button updating. So UnitButton_OnTick
+--! re-checks its own entry four times a second and repairs it, which turns a
+--! forgotten index update into a quarter-second hiccup instead of a dead frame.
+--!
+--! The broadcast events stay on the buttons: PLAYER_TARGET_CHANGED, READY_CHECK*,
+--! RAID_TARGET_UPDATE, PLAYER_REGEN_* and ZONE_CHANGED_NEW_AREA are rare and
+--! every button has to react to each of them anyway, so routing them centrally
+--! would only add an iteration over the set the client already walks.
+--! Only three names reach the file scope from this section - the frame, the index
+--! and the updater. Everything else lives in a do-block on purpose: the main chunk
+--! of this file is a few slots short of Lua 5.1's hard limit of 200 active locals
+--! per function, and a block's locals give their slots back at `end` while the
+--! closures that captured them keep working.
+local unitEventFrame = CreateFrame("Frame")
+local unitEventButtons = {} -- [unitToken] = { button, ... }
+local UpdateUnitEventIndex
+
+do
+    local function AddToUnitEventIndex(token, button)
+        local list = unitEventButtons[token]
+        if not list then
+            list = {}
+            unitEventButtons[token] = list
+        end
+        for i = 1, #list do
+            if list[i] == button then return end
+        end
+        list[#list+1] = button
+    end
+
+    local function RemoveFromUnitEventIndex(token, button)
+        local list = unitEventButtons[token]
+        if not list then return end
+        local n = #list
+        for i = 1, n do
+            if list[i] == button then
+                for j = i, n - 1 do
+                    list[j] = list[j+1]
+                end
+                list[n] = nil
+                n = n - 1
+                break
+            end
+        end
+        if n == 0 then unitEventButtons[token] = nil end
+    end
+
+    --! Recomputes this button's place in the index from its own states, so it is safe
+    --! to call from anywhere that touches states.unit / states.displayedUnit. It
+    --! returns immediately when nothing moved, which is the common case by far.
+    UpdateUnitEventIndex = function(self)
+        local unit, displayed
+        if self.__unitEventsOn then
+            local states = self.states
+            unit = states.unit
+            displayed = states.displayedUnit
+            if displayed == unit then displayed = nil end
+        end
+
+        local oldUnit, oldDisplayed = self.__indexedUnit, self.__indexedDisplayedUnit
+        if oldUnit == unit and oldDisplayed == displayed then return end
+
+        --! Past this line the button draws a different unit than it did before, so the
+        --! incoming-heal cache (keyed by time only) has to die with the old token -
+        --! otherwise a vehicle, or a button taking over another raid member, would
+        --! show the previous unit's prediction for up to one tick.
+        self.states.incomingHeal = nil
+
+        if oldUnit and oldUnit ~= unit and oldUnit ~= displayed then
+            RemoveFromUnitEventIndex(oldUnit, self)
+        end
+        if oldDisplayed and oldDisplayed ~= unit and oldDisplayed ~= displayed then
+            RemoveFromUnitEventIndex(oldDisplayed, self)
+        end
+        if unit then AddToUnitEventIndex(unit, self) end
+        if displayed then AddToUnitEventIndex(displayed, self) end
+
+        self.__indexedUnit = unit
+        self.__indexedDisplayedUnit = displayed
+    end
+end
+
 local function UnitButton_UpdateVehicleStatus(self)
     local unit = self.states.unit
     if not unit then return end
@@ -2991,6 +3134,11 @@ local function UnitButton_UpdateVehicleStatus(self)
         self.states.displayedUnit = self.states.unit
         self.indicators.nameText.vehicle:SetText("")
     end
+
+    --! WotLK perf: displayedUnit just moved, so the central dispatcher's index has
+    --! to move with it - otherwise the button would keep receiving events for the
+    --! alias it no longer draws and miss the ones for the token it does.
+    UpdateUnitEventIndex(self)
 end
 
 UnitButton_UpdateStatusText = function(self)
@@ -3863,52 +4011,17 @@ local function UnitButton_RegisterEvents(self)
     --! WotLK fix: roster invalidation is delivered once through Cell's private
     --! GroupRosterUpdate callback, not the non-native frame event.
 
-    self:RegisterEvent("UNIT_HEALTH")
-    --! WotLK: UNIT_HEALTH_FREQUENT does not exist on stock 3.3.5 - kept for custom
-    --! cores that backported it (harmless if it never fires; UNIT_HEALTH plus the
-    --! 0.25s change-detected poll in OnTick cover health updates).
-    self:RegisterEvent("UNIT_HEALTH_FREQUENT")
-    self:RegisterEvent("UNIT_MAXHEALTH")
+    --! WotLK perf: every UNIT_* event this function used to register now sits on the
+    --! central unitEventFrame, registered once for the whole session - joining the
+    --! token index IS the registration for this button. __powerEvents carries what
+    --! CheckPowerEventRegistration used to express by (un)registering the fourteen
+    --! power events here: they are always on centrally, so the gate moved onto the
+    --! button. Both fields are set before UpdateUnitEventIndex so the very first
+    --! event after this line finds the button in the index.
+    self.__unitEventsOn = true
+    self.__powerEvents = true
+    UpdateUnitEventIndex(self)
 
-    --! WotLK: UNIT_POWER does not exist on stock 3.3.5 (added in 4.0) - kept for
-    --! custom cores that backported it; the per-power-type events below do the work.
-    self:RegisterEvent("UNIT_POWER")
-    self:RegisterEvent("UNIT_MANA")
-    self:RegisterEvent("UNIT_RAGE")
-    self:RegisterEvent("UNIT_FOCUS")
-    self:RegisterEvent("UNIT_ENERGY")
-    self:RegisterEvent("UNIT_RUNIC_POWER")
-    --! WotLK fix: UNIT_MAXPOWER does not exist in 3.3.5 (added in 4.0);
-    --! the client fires per-power-type max events instead.
-    self:RegisterEvent("UNIT_MAXPOWER")
-    self:RegisterEvent("UNIT_MAXMANA")
-    self:RegisterEvent("UNIT_MAXRAGE")
-    self:RegisterEvent("UNIT_MAXFOCUS")
-    self:RegisterEvent("UNIT_MAXENERGY")
-    self:RegisterEvent("UNIT_MAXRUNIC_POWER")
-    self:RegisterEvent("UNIT_MAXHAPPINESS")
-    self:RegisterEvent("UNIT_DISPLAYPOWER")
-
-    self:RegisterEvent("UNIT_AURA")
-
-    --! WotLK fix: incoming-heal repainting is driven directly by the six
-    --! LibHealComm callbacks above. Do not register the non-native retail
-    --! UNIT_HEAL_PREDICTION event or redundant player spellcast events.
-
-    self:RegisterEvent("UNIT_THREAT_SITUATION_UPDATE")
-    --! WotLK perf: UNIT_THREAT_LIST_UPDATE на кнопках больше не регистрируется - arg1
-    --! у него NPC, а не юнит рейда, фильтр он не проходил и заставлял все кнопки
-    --! пересчитывать угрозу на каждое событие. Теперь его слушает одна центральная
-    --! рамка с окном 0.2 с (см. B.RequestThreatUpdate).
-    self:RegisterEvent("UNIT_ENTERED_VEHICLE")
-    self:RegisterEvent("UNIT_EXITED_VEHICLE")
-
-    self:RegisterEvent("UNIT_FLAGS") -- afk
-    self:RegisterEvent("UNIT_FACTION") -- mind control
-
-    self:RegisterEvent("UNIT_CONNECTION") -- offline
-    self:RegisterEvent("PLAYER_FLAGS_CHANGED") -- afk
-    self:RegisterEvent("UNIT_NAME_UPDATE") -- unknown target
     self:RegisterEvent("ZONE_CHANGED_NEW_AREA") --? update status text
 
     --! WotLK fix: PARTY_LEADER_CHANGED / PLAYER_ROLES_ASSIGNED зарегистрированы
@@ -3924,7 +4037,11 @@ local function UnitButton_RegisterEvents(self)
             self:RegisterEvent("RAID_TARGET_UPDATE")
         end
         if enabledIndicators["targetRaidIcon"] then
-            self:RegisterEvent("UNIT_TARGET")
+            --! UNIT_TARGET is a unit event, so it is toggled on the central frame.
+            --! The indicator flag is global, so there is nothing to refcount: the
+            --! second button to show only repeats what the first one decided, and
+            --! RegisterEvent is idempotent.
+            unitEventFrame:RegisterEvent("UNIT_TARGET")
         end
         if enabledIndicators["readyCheckIcon"] then
             self:RegisterEvent("READY_CHECK")
@@ -3933,13 +4050,12 @@ local function UnitButton_RegisterEvents(self)
         end
     else
         self:RegisterEvent("RAID_TARGET_UPDATE")
-        self:RegisterEvent("UNIT_TARGET")
+        unitEventFrame:RegisterEvent("UNIT_TARGET")
         self:RegisterEvent("READY_CHECK")
         self:RegisterEvent("READY_CHECK_FINISHED")
         self:RegisterEvent("READY_CHECK_CONFIRM")
     end
 
-    -- self:RegisterEvent("UNIT_PHASE") -- warmode, traditional sources of phasing such as progress through quest chains
     -- self:RegisterEvent("PARTY_MEMBER_DISABLE")
     -- self:RegisterEvent("PARTY_MEMBER_ENABLE")
     --! WotLK fix: incoming resurrection updates are owned privately by
@@ -3948,9 +4064,6 @@ local function UnitButton_RegisterEvents(self)
     -- self:RegisterEvent("VOICE_CHAT_CHANNEL_ACTIVATED")
     -- self:RegisterEvent("VOICE_CHAT_CHANNEL_DEACTIVATED")
 
-    -- self:RegisterEvent("UNIT_PET")
-    self:RegisterEvent("UNIT_PORTRAIT_UPDATE") -- pet summoned far away
-
     local success, result = pcall(UnitButton_UpdateAll, self)
     if not success then
         F.Debug("UnitButton_UpdateAll |cffff0000FAILED:|r", self:GetName(), result)
@@ -3958,168 +4071,254 @@ local function UnitButton_RegisterEvents(self)
 end
 
 local function UnitButton_UnregisterEvents(self)
+    --! WotLK perf: leaving the token index is what unregisters the unit events now;
+    --! the broadcast ones are still real registrations on this frame.
+    self.__unitEventsOn = nil
+    UpdateUnitEventIndex(self)
     self:UnregisterAllEvents()
 end
 
-local function UnitButton_OnEvent(self, event, unit, ...)
+--! WotLK perf: the per-button half of the central dispatcher above. Reaching this
+--! function already means the index says this button displays `unit`, so the token
+--! filter that used to open it is gone. That filter was the most-executed line in
+--! the addon and it answered "no" for 25-40 buttons out of 25-40 on every unit
+--! event; the index answers the same question once, with one hash lookup. What the
+--! old note here explained about that filter now describes UpdateUnitEventIndex.
+--! What still holds is why `states` is hoisted (P-1/P-28: the body walks it
+--! repeatedly) and why the branch order is what it is - kept below.
+local function UnitButton_UnitEvent(self, event, unit)
     -- print(event, self:GetName(), unit, self.states.displayedUnit, self.states.unit)
-    --! WotLK fix: 3.3.5 has no RegisterUnitEvent, so every unit event reaches
-    --! every visible button. Do only string-token comparisons in this hot path.
-    --! states.unit and states.displayedUnit already cover the owner and its
-    --! active vehicle/pet alias; UnitIsUnit here multiplied a C call by every
-    --! mismatched button and every UNIT_* event.
-    --! WotLK perf: this line runs more often than any other in the addon - about
-    --! thirty unit events registered per button, times every shown button, and only
-    --! one of them owns the unit. So it holds nothing but the test. The opening
-    --! `type(unit) == "string"` is gone: it was a GETGLOBAL plus a C call here (the
-    --! file localizes its hot API but never localized `type`), and plain `unit` is
-    --! provably the same test. That guard exists only so a non-unit event, whose
-    --! arg1 is nil, cannot match an unassigned button whose states are also nil;
-    --! both states hold a string or nil, so arg1 of any other type fails both
-    --! comparisons on its own. `states` is hoisted for the same reason as P-1/P-28:
-    --! in the overwhelmingly common miss the old form indexed `self.states` twice.
     local states = self.states
-    if unit and (states.displayedUnit == unit or states.unit == unit) then
-        --! WotLK perf: the branches below are ordered by how often 3.3.5 actually
-        --! fires them, not by topic. Because there is no RegisterUnitEvent here,
-        --! every UNIT_* event walks this chain once per registered button - and
-        --! UNIT_AURA used to sit behind twenty-two string comparisons, after both
-        --! power groups. Health, auras and power now come first; the conditions are
-        --! mutually exclusive equality tests on one upvalue, so the order carries no
-        --! meaning beyond cost.
-        if event == "UNIT_HEALTH" or event == "UNIT_HEALTH_FREQUENT" then
-            --! WotLK fix/perf: one snapshot feeds health, prediction and shield
-            --! outputs; 3.3.5 broadcasts this event to every registered button.
-            UnitButton_UpdateHealthStates(self)
-            UnitButton_UpdateHealth(self, nil, true)
-            UnitButton_UpdateHealPrediction(self, true)
-            UnitButton_UpdateShieldAbsorbs(self, true)
-            -- UnitButton_UpdateStatusText(self)
-            --! WotLK fix: UNIT_CONNECTION does not exist in 3.3.5 (added 4.0),
-            --! so its registration above never fires and OFFLINE state was only
-            --! refreshed by (synthetic) GROUP_ROSTER_UPDATE - reliable in raid
-            --! (RAID_ROSTER_UPDATE) but NOT in party. Blizzard's own 3.3.5
-            --! PartyMemberFrame refreshes online status on UNIT_HEALTH
-            --! (PartyMemberFrame.lua:421) - the server fires UNIT_HEALTH for a
-            --! unit on connect/disconnect. Mirror that: on connection-state
-            --! change, request a full update (grey bar, OFFLINE status text).
-            local connected = UnitIsConnected(unit) and true or false
-            if connected ~= self.__isConnected then
-                self.__isConnected = connected
-                self._updateRequired = 1
-                self._powerUpdateRequired = 1
-            end
-
-        elseif event == "UNIT_AURA" then
-            UnitButton_UpdateAuras(self)
-
-        elseif event == "UNIT_POWER" or event == "UNIT_MANA" or event == "UNIT_RAGE" or event == "UNIT_FOCUS" or event == "UNIT_ENERGY" or event == "UNIT_RUNIC_POWER" then
-            UnitButton_UpdatePowerStates(self)
-            UnitButton_UpdatePower(self)
-            UnitButton_UpdatePowerText(self)
-
-        elseif event == "UNIT_MAXHEALTH" then
-            --! WotLK fix/perf: this branch used to rebuild identical health and
-            --! absorb state four times before repainting the same button.
-            UnitButton_UpdateHealthStates(self)
-            UnitButton_UpdateHealthMax(self, true)
-            UnitButton_UpdateHealth(self, nil, true)
-            UnitButton_UpdateHealPrediction(self, true)
-            UnitButton_UpdateShieldAbsorbs(self, true)
-
-        --! WotLK fix: heal prediction is updated by direct LibHealComm
-        --! callbacks, plus the health/max-health branches above.
-
-        --! WotLK fix: 3.3.5 fires per-power-type max events, not UNIT_MAXPOWER
-        elseif event == "UNIT_MAXPOWER" or event == "UNIT_MAXMANA" or event == "UNIT_MAXRAGE" or event == "UNIT_MAXFOCUS" or event == "UNIT_MAXENERGY" or event == "UNIT_MAXRUNIC_POWER" or event == "UNIT_MAXHAPPINESS" then
-            UnitButton_UpdatePowerStates(self)
-            UnitButton_UpdatePowerMax(self)
-            UnitButton_UpdatePower(self)
-            UnitButton_UpdatePowerText(self)
-
-        elseif event == "UNIT_DISPLAYPOWER" then
-            UnitButton_UpdatePowerStates(self)
-            UnitButton_UpdatePowerMax(self)
-            UnitButton_UpdatePower(self)
-            UnitButton_UpdatePowerType(self)
-            UnitButton_UpdatePowerTextColor(self)
-            UnitButton_UpdatePowerText(self)
-
-        elseif  event == "UNIT_ENTERED_VEHICLE" or event == "UNIT_EXITED_VEHICLE" or event == "UNIT_CONNECTION" then
+    --! WotLK perf: the branches below are ordered by how often 3.3.5 actually
+    --! fires them, not by topic. UNIT_AURA used to sit behind twenty-two string
+    --! comparisons, after both power groups. Health, auras and power now come
+    --! first; the conditions are mutually exclusive equality tests on one upvalue,
+    --! so the order carries no meaning beyond cost.
+    if event == "UNIT_HEALTH" or event == "UNIT_HEALTH_FREQUENT" then
+        --! WotLK fix/perf: one snapshot feeds health, prediction and shield outputs.
+        UnitButton_UpdateHealthStates(self)
+        UnitButton_UpdateHealth(self, nil, true)
+        UnitButton_UpdateHealPrediction(self, true, true)
+        UnitButton_UpdateShieldAbsorbs(self, true)
+        -- UnitButton_UpdateStatusText(self)
+        --! WotLK fix: UNIT_CONNECTION does not exist in 3.3.5 (added 4.0),
+        --! so its registration never fires and OFFLINE state was only
+        --! refreshed by (synthetic) GROUP_ROSTER_UPDATE - reliable in raid
+        --! (RAID_ROSTER_UPDATE) but NOT in party. Blizzard's own 3.3.5
+        --! PartyMemberFrame refreshes online status on UNIT_HEALTH
+        --! (PartyMemberFrame.lua:421) - the server fires UNIT_HEALTH for a
+        --! unit on connect/disconnect. Mirror that: on connection-state
+        --! change, request a full update (grey bar, OFFLINE status text).
+        local connected = UnitIsConnected(unit) and true or false
+        if connected ~= self.__isConnected then
+            self.__isConnected = connected
             self._updateRequired = 1
             self._powerUpdateRequired = 1
-
-        elseif event == "UNIT_NAME_UPDATE" then
-            UnitButton_UpdateName(self)
-            UnitButton_UpdateNameTextColor(self)
-            UnitButton_UpdateHealthColor(self)
-            UnitButton_UpdateHealthTextColor(self)
-            UnitButton_UpdatePowerTextColor(self)
-
-        elseif event == "UNIT_TARGET" then
-            UnitButton_UpdateTargetRaidIcon(self)
-
-        elseif event == "PLAYER_FLAGS_CHANGED" or event == "UNIT_FLAGS" then
-            UnitButton_UpdateStatusText(self)
-
-        elseif event == "UNIT_FACTION" then -- mind control
-            UnitButton_UpdateNameTextColor(self)
-            UnitButton_UpdateHealthColor(self)
-
-        elseif event == "UNIT_THREAT_SITUATION_UPDATE" then
-            --! Полоска аггро здесь НЕ перерисовывается, и это не забытая строка:
-            --! она видна только когда есть моб-юнит ("target"/"targettarget", см.
-            --! B.GetThreatMobUnit), а для такого юнита смена категории всегда идёт
-            --! вместе с UNIT_THREAT_LIST_UPDATE - его ловит общий тикер и красит
-            --! полоску всему рейду одним проходом. Добавить сюда UpdateThreatBar
-            --! значит удвоить работу на горячем пути ради уже сделанного. В upstream
-            --! ровно так же: полоску там ведут PLAYER_TARGET_CHANGED и
-            --! UNIT_THREAT_LIST_UPDATE на кнопках, а мы их свернули в тикер.
-            UnitButton_UpdateThreat(self)
-
-        -- elseif event == "UNIT_PHASE" or event == "PARTY_MEMBER_DISABLE" or event == "PARTY_MEMBER_ENABLE" then
-        --     UnitButton_UpdateStatusIcon(self)
-
-        elseif event == "UNIT_PORTRAIT_UPDATE" then -- pet summoned far away
-            if states.healthMax == 0 then
-                self._updateRequired = 1
-                self._powerUpdateRequired = 1
-            end
         end
 
-    else
-        if event == "READY_CHECK_CONFIRM" then
-            --! WotLK fix: arg1 is a numeric party/raid index on 3.3.5, not a
-            --! unit token. It can never pass the unit-event string filter above.
-            --! Each visible button already receives the event and can query its
-            --! own authoritative status through GetReadyCheckStatus(states.unit).
-            UnitButton_UpdateReadyCheck(self)
+    elseif event == "UNIT_AURA" then
+        UnitButton_UpdateAuras(self)
 
-        elseif event == "PLAYER_REGEN_ENABLED" or event == "PLAYER_REGEN_DISABLED" then
-            UnitButton_UpdateLeader(self, event)
+    elseif event == "UNIT_POWER" or event == "UNIT_MANA" or event == "UNIT_RAGE" or event == "UNIT_FOCUS" or event == "UNIT_ENERGY" or event == "UNIT_RUNIC_POWER" then
+        --! WotLK perf: this is what CheckPowerEventRegistration used to say by
+        --! (un)registering the power events on this very button.
+        if not self.__powerEvents then return end
+        UnitButton_UpdatePowerStates(self)
+        UnitButton_UpdatePower(self)
+        UnitButton_UpdatePowerText(self)
 
-        elseif event == "PLAYER_TARGET_CHANGED" then
-            UnitButton_UpdateTarget(self)
-            --! WotLK perf: угрозу здесь больше не считаем - смена цели меняет моба для
-            --! ВСЕХ кнопок сразу, и центральная рамка делает один общий проход вместо
-            --! 25-40 отдельных вызовов из 25-40 копий этого обработчика.
+    elseif event == "UNIT_MAXHEALTH" then
+        --! WotLK fix/perf: this branch used to rebuild identical health and
+        --! absorb state four times before repainting the same button.
+        UnitButton_UpdateHealthStates(self)
+        UnitButton_UpdateHealthMax(self, true)
+        UnitButton_UpdateHealth(self, nil, true)
+        UnitButton_UpdateHealPrediction(self, true, true)
+        UnitButton_UpdateShieldAbsorbs(self, true)
 
-        elseif event == "RAID_TARGET_UPDATE" then
-            UnitButton_UpdatePlayerRaidIcon(self)
-            UnitButton_UpdateTargetRaidIcon(self)
+    --! WotLK fix: heal prediction is updated by direct LibHealComm
+    --! callbacks, plus the health/max-health branches above.
 
-        elseif event == "READY_CHECK" then
-            UnitButton_UpdateReadyCheck(self)
+    --! WotLK fix: 3.3.5 fires per-power-type max events, not UNIT_MAXPOWER
+    elseif event == "UNIT_MAXPOWER" or event == "UNIT_MAXMANA" or event == "UNIT_MAXRAGE" or event == "UNIT_MAXFOCUS" or event == "UNIT_MAXENERGY" or event == "UNIT_MAXRUNIC_POWER" or event == "UNIT_MAXHAPPINESS" then
+        if not self.__powerEvents then return end
+        UnitButton_UpdatePowerStates(self)
+        UnitButton_UpdatePowerMax(self)
+        UnitButton_UpdatePower(self)
+        UnitButton_UpdatePowerText(self)
 
-        elseif event == "READY_CHECK_FINISHED" then
-            UnitButton_FinishReadyCheck(self)
+    elseif event == "UNIT_DISPLAYPOWER" then
+        if not self.__powerEvents then return end
+        UnitButton_UpdatePowerStates(self)
+        UnitButton_UpdatePowerMax(self)
+        UnitButton_UpdatePower(self)
+        UnitButton_UpdatePowerType(self)
+        UnitButton_UpdatePowerTextColor(self)
+        UnitButton_UpdatePowerText(self)
 
-        elseif event == "ZONE_CHANGED_NEW_AREA" then
-            UnitButton_UpdateStatusText(self)
+    elseif  event == "UNIT_ENTERED_VEHICLE" or event == "UNIT_EXITED_VEHICLE" or event == "UNIT_CONNECTION" then
+        self._updateRequired = 1
+        self._powerUpdateRequired = 1
 
-        -- elseif event == "VOICE_CHAT_CHANNEL_ACTIVATED" or event == "VOICE_CHAT_CHANNEL_DEACTIVATED" then
-        -- 	VOICE_CHAT_CHANNEL_MEMBER_SPEAKING_STATE_CHANGED
+    elseif event == "UNIT_NAME_UPDATE" then
+        UnitButton_UpdateName(self)
+        UnitButton_UpdateNameTextColor(self)
+        UnitButton_UpdateHealthColor(self)
+        UnitButton_UpdateHealthTextColor(self)
+        UnitButton_UpdatePowerTextColor(self)
+
+    elseif event == "UNIT_TARGET" then
+        UnitButton_UpdateTargetRaidIcon(self)
+
+    elseif event == "PLAYER_FLAGS_CHANGED" or event == "UNIT_FLAGS" then
+        --! WotLK: PLAYER_FLAGS_CHANGED is a unit event on 3.3.5a - arg1 is a unit
+        --! token, see FrameXML TargetFrame.lua:189 (`arg1 == self.unit`), which is
+        --! why it belongs on the central frame and not in the broadcast handler.
+        UnitButton_UpdateStatusText(self)
+
+    elseif event == "UNIT_FACTION" then -- mind control
+        UnitButton_UpdateNameTextColor(self)
+        UnitButton_UpdateHealthColor(self)
+
+    elseif event == "UNIT_THREAT_SITUATION_UPDATE" then
+        --! Полоска аггро здесь НЕ перерисовывается, и это не забытая строка:
+        --! она видна только когда есть моб-юнит ("target"/"targettarget", см.
+        --! B.GetThreatMobUnit), а для такого юнита смена категории всегда идёт
+        --! вместе с UNIT_THREAT_LIST_UPDATE - его ловит общий тикер и красит
+        --! полоску всему рейду одним проходом. Добавить сюда UpdateThreatBar
+        --! значит удвоить работу на горячем пути ради уже сделанного. В upstream
+        --! ровно так же: полоску там ведут PLAYER_TARGET_CHANGED и
+        --! UNIT_THREAT_LIST_UPDATE на кнопках, а мы их свернули в тикер.
+        UnitButton_UpdateThreat(self)
+
+    -- elseif event == "UNIT_PHASE" or event == "PARTY_MEMBER_DISABLE" or event == "PARTY_MEMBER_ENABLE" then
+    --     UnitButton_UpdateStatusIcon(self)
+
+    elseif event == "UNIT_PORTRAIT_UPDATE" then -- pet summoned far away
+        if states.healthMax == 0 then
+            self._updateRequired = 1
+            self._powerUpdateRequired = 1
         end
+    end
+end
+
+--! WotLK perf: one lookup, then only the owners. Reading unitEventButtons[nil] is
+--! legal in Lua 5.1 - only WRITING a nil key raises - so a custom core that fires
+--! a unit event without arg1 (the very defect behind the guard in
+--! BuffTracker_Classic.lua) lands on a nil list and returns, exactly as the old
+--! per-button `if unit and ...` filter did.
+local function UnitEventFrame_OnEvent(_, event, unit)
+    local list = unitEventButtons[unit]
+    if not list then return end
+    --! Backwards on purpose: the vehicle branches below reach UpdateUnitEventIndex,
+    --! which may remove an entry from the very list being walked. Counting down means
+    --! a removal at or above the current index cannot shift a button that has not been
+    --! visited yet. Order between buttons carries no meaning - they are separate
+    --! frames drawing the same unit.
+    for i = #list, 1, -1 do
+        local button = list[i]
+        if button then
+            UnitButton_UnitEvent(button, event, unit)
+        end
+    end
+end
+unitEventFrame:SetScript("OnEvent", UnitEventFrame_OnEvent)
+
+do
+    --! WotLK: registered once for the whole session instead of ~30 times per shown
+    --! button. An event that no button owns costs one failed hash lookup, so there
+    --! is nothing to gain from unregistering when the raid frames are hidden.
+    local events = {
+        "UNIT_HEALTH",
+        --! WotLK: UNIT_HEALTH_FREQUENT does not exist on stock 3.3.5 - kept for
+        --! custom cores that backported it (harmless if it never fires; UNIT_HEALTH
+        --! plus the 0.25s change-detected poll in OnTick cover health updates).
+        "UNIT_HEALTH_FREQUENT",
+        "UNIT_MAXHEALTH",
+        --! WotLK: UNIT_POWER does not exist on stock 3.3.5 (added in 4.0) - kept for
+        --! custom cores that backported it; the per-power-type events do the work.
+        "UNIT_POWER",
+        "UNIT_MANA",
+        "UNIT_RAGE",
+        "UNIT_FOCUS",
+        "UNIT_ENERGY",
+        "UNIT_RUNIC_POWER",
+        --! WotLK fix: UNIT_MAXPOWER does not exist in 3.3.5 (added in 4.0);
+        --! the client fires per-power-type max events instead. Keep UNIT_MAXPOWER
+        --! for custom cores that backported the new event.
+        "UNIT_MAXPOWER",
+        "UNIT_MAXMANA",
+        "UNIT_MAXRAGE",
+        "UNIT_MAXFOCUS",
+        "UNIT_MAXENERGY",
+        "UNIT_MAXRUNIC_POWER",
+        "UNIT_MAXHAPPINESS",
+        "UNIT_DISPLAYPOWER",
+        "UNIT_AURA",
+        --! WotLK fix: incoming-heal repainting is driven directly by the six
+        --! LibHealComm callbacks. Do not register the non-native retail
+        --! UNIT_HEAL_PREDICTION event or redundant player spellcast events.
+        "UNIT_THREAT_SITUATION_UPDATE",
+        --! WotLK perf: UNIT_THREAT_LIST_UPDATE не регистрируется - arg1 у него NPC,
+        --! а не юнит рейда, фильтр он не проходил и заставлял все кнопки
+        --! пересчитывать угрозу на каждое событие. Теперь его слушает одна
+        --! центральная рамка с окном 0.2 с (см. B.RequestThreatUpdate).
+        "UNIT_ENTERED_VEHICLE",
+        "UNIT_EXITED_VEHICLE",
+        "UNIT_FLAGS", -- afk
+        "UNIT_FACTION", -- mind control
+        --! WotLK: UNIT_CONNECTION does not exist in 3.3.5 either - see the
+        --! UNIT_HEALTH branch, which is what actually catches offline state.
+        "UNIT_CONNECTION", -- offline
+        "PLAYER_FLAGS_CHANGED", -- afk; unit event on 3.3.5a, see the branch above
+        "UNIT_NAME_UPDATE", -- unknown target
+        "UNIT_PORTRAIT_UPDATE", -- pet summoned far away
+        -- "UNIT_PHASE" -- warmode, traditional sources of phasing
+        -- "UNIT_PET"
+    }
+    for i = 1, #events do
+        unitEventFrame:RegisterEvent(events[i])
+    end
+end
+
+--! WotLK perf: what is left on the buttons themselves - the broadcast events. None
+--! of them carries a unit token this addon can filter on, and every shown button
+--! has to react to each of them, so the client's own dispatch is already the
+--! cheapest fan-out available. Because the unit events left this handler, the chain
+--! below now runs only when one of these seven actually fires - a few times per
+--! fight instead of once per button per health tick.
+local function UnitButton_OnEvent(self, event)
+    if event == "READY_CHECK_CONFIRM" then
+        --! WotLK fix: arg1 is a numeric party/raid index on 3.3.5, not a
+        --! unit token, so it never belonged with the unit events. Each visible
+        --! button already receives the event and can query its own authoritative
+        --! status through GetReadyCheckStatus(states.unit).
+        UnitButton_UpdateReadyCheck(self)
+
+    elseif event == "PLAYER_REGEN_ENABLED" or event == "PLAYER_REGEN_DISABLED" then
+        UnitButton_UpdateLeader(self, event)
+
+    elseif event == "PLAYER_TARGET_CHANGED" then
+        UnitButton_UpdateTarget(self)
+        --! WotLK perf: угрозу здесь больше не считаем - смена цели меняет моба для
+        --! ВСЕХ кнопок сразу, и центральная рамка делает один общий проход вместо
+        --! 25-40 отдельных вызовов из 25-40 копий этого обработчика.
+
+    elseif event == "RAID_TARGET_UPDATE" then
+        UnitButton_UpdatePlayerRaidIcon(self)
+        UnitButton_UpdateTargetRaidIcon(self)
+
+    elseif event == "READY_CHECK" then
+        UnitButton_UpdateReadyCheck(self)
+
+    elseif event == "READY_CHECK_FINISHED" then
+        UnitButton_FinishReadyCheck(self)
+
+    elseif event == "ZONE_CHANGED_NEW_AREA" then
+        UnitButton_UpdateStatusText(self)
+
+    -- elseif event == "VOICE_CHAT_CHANNEL_ACTIVATED" or event == "VOICE_CHAT_CHANNEL_DEACTIVATED" then
+    -- 	VOICE_CHAT_CHANNEL_MEMBER_SPEAKING_STATE_CHANGED
     end
 end
 
@@ -4192,6 +4391,12 @@ local function UnitButton_OnAttributeChanged(self, name, value)
                 lastHealTimeStamp[guid] = nil
             end
         end
+
+        --! WotLK perf: this is where a button changes which unit it owns - either to
+        --! a new token above, or to nothing at all when value is not a string and
+        --! wipe(self.states) has just cleared both tokens. Either way the central
+        --! dispatcher's index has to follow, and it has to happen after the wipe.
+        UpdateUnitEventIndex(self)
     end
 end
 
@@ -4302,6 +4507,21 @@ local function UnitButton_OnTick(self)
     --! created once in CellUnitButton_OnLoad and is only ever cleared in place
     --! (wipe / F.RemoveElementsExceptKeys), so the reference cannot go stale here.
     local states = self.states
+
+    --! WotLK perf: safety net for the central dispatcher's index. A missing entry is
+    --! the one failure mode that would be silent - the button would simply stop
+    --! updating - so its own tick verifies the entry it believes it holds and
+    --! repairs it. Four comparisons four times a second per button; in exchange, a
+    --! token change that some future edit forgets to report costs a quarter second
+    --! of staleness instead of a dead frame for the rest of the session.
+    if self.__unitEventsOn then
+        local indexedDisplayed = states.displayedUnit
+        if indexedDisplayed == states.unit then indexedDisplayed = nil end
+        if self.__indexedUnit ~= states.unit or self.__indexedDisplayedUnit ~= indexedDisplayed then
+            UpdateUnitEventIndex(self)
+        end
+    end
+
     local e = (self.__tickCount or 0) + 1
     if e >= 2 then -- every 0.5 second
         e = 0
@@ -4398,11 +4618,11 @@ local function UnitButton_OnTick(self)
             UnitButton_UpdateHealthStates(self)
             UnitButton_UpdateHealthMax(self, true)
             UnitButton_UpdateHealth(self, nil, true)
-            UnitButton_UpdateHealPrediction(self, true)
+            UnitButton_UpdateHealPrediction(self, true, true)
         elseif UnitHealth(u) ~= states.health then
             UnitButton_UpdateHealthStates(self)
             UnitButton_UpdateHealth(self, nil, true)
-            UnitButton_UpdateHealPrediction(self, true)
+            UnitButton_UpdateHealPrediction(self, true, true)
         end
     end
 
@@ -5032,10 +5252,13 @@ end
 function B.UpdateTargetRaidIcon(button, enabled)
     if not button:IsShown() then return end
     UnitButton_UpdateTargetRaidIcon(button)
+    --! WotLK perf: UNIT_TARGET is a unit event, so it is toggled on the central
+    --! dispatcher. `enabled` is one global option, so every button passes the same
+    --! value and the repeated calls are idempotent - no refcount needed.
     if enabled then
-        button:RegisterEvent("UNIT_TARGET")
+        unitEventFrame:RegisterEvent("UNIT_TARGET")
     else
-        button:UnregisterEvent("UNIT_TARGET")
+        unitEventFrame:UnregisterEvent("UNIT_TARGET")
     end
 end
 
@@ -5092,6 +5315,14 @@ function B.UpdateAnimation(button)
         button.widgets.healthBar.SetBarValue = button.widgets.healthBar.SetValue
         button.widgets.powerBar:ResetSmoothedValue()
         button.widgets.powerBar.SetBarValue = button.widgets.powerBar.SetValue
+
+        --! WotLK fix: ResetSmoothedValue re-applies the pending target, and that target
+        --! can be exactly zero - a bar parked on its minimum keeps the stale fill rect
+        --! (see UnitButton_UpdateHealth). Nudge it off the minimum here, otherwise
+        --! switching the bar animation away from "Smooth" leaves a unit that is at
+        --! 0 health or 0 power with mid-bar anchors until its next update.
+        if button.states.health == 0 then button.widgets.healthBar:SetValue(0.0001) end
+        if button.states.power == 0 then button.widgets.powerBar:SetValue(0.0001) end
     end
 
     if barAnimationType ~= "Flash" then
@@ -5173,7 +5404,6 @@ B.UpdateName = UnitButton_UpdateName
 -- unit button init
 -------------------------------------------------
 -- local startTimeCache, statusCache = {}, {}
-local startTimeCache = {}
 
 -- Layers ---------------------------------------
 -- OVERLAY

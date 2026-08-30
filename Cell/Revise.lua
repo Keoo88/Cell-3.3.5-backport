@@ -2894,13 +2894,24 @@ function F.Revise()
         CellDB["tools"]["buffTracker"][6] = true
     end
 
+    --! WotLK feature: buffTracker[7] - следить только за бафами своего класса. Тот же
+    --! порядок, что у [6]: заполнить ДО RepairAgainstDefaults, иначе база с шестью
+    --! элементами против семиэлементного дефолта потеряет и размер иконок, и список
+    --! баффов. Значение true - это то, о чём просил владелец (на маге только интеллект,
+    --! на присте только выносливость и дух); класс, который не даёт из списка ничего,
+    --! фильтр не трогает вовсе, см. IterateAllUnits в BuffTracker_Classic.lua.
+    if type(CellDB["tools"]) == "table" and type(CellDB["tools"]["buffTracker"]) == "table"
+        and type(CellDB["tools"]["buffTracker"][7]) ~= "boolean" then
+        CellDB["tools"]["buffTracker"][7] = true
+    end
+
     --! tools has no Cell.defaults entry, so mirror the table Core_Wrath seeds it with.
     --! battleResTimer is intentionally absent: its two checkboxes left the Raid Tools pane
     --! on 2026-08-19, nothing reads the key any more, and old saved payloads may keep it -
     --! RepairAgainstDefaults only fills what is missing, it never deletes.
     if type(CellDB["tools"]) == "table" then
         RepairAgainstDefaults(CellDB["tools"], {
-            ["buffTracker"] = {false, "left-to-right", 27, {}, {}, true},
+            ["buffTracker"] = {false, "left-to-right", 27, {}, {}, true, true},
             ["deathReport"] = {false, 10},
             ["readyAndPull"] = {false, "text_button", {"default", 7}, {}},
             ["marks"] = {false, false, "target_h", {}},
@@ -2932,6 +2943,48 @@ function F.Revise()
                                 end
                             end
                         end
+                    end
+                end
+            end
+        end
+    end
+
+    --! WotLK fix: un-weld profiles that share ONE indicator table without saying so.
+    --! "Sync With" (Indicators tab) welds a slave to its master by reference:
+    --! CellDB.layouts[slave].indicators = CellDB.layouts[master].indicators. Until the
+    --! fix in Indicators.lua, setting it back to None only cleared the syncWith key -
+    --! the tables stayed the same object forever, so two profiles kept sharing every
+    --! indicator setting (Enabled included) while the UI showed no sync at all. That is
+    --! the state existing saved databases are in, and no click in the options can leave
+    --! it. Splitting is lossless: both sides currently hold the very same content, only
+    --! the aliasing goes away. A profile that still declares the sync is left welded -
+    --! that one is deliberate. Names are sorted so the profile that keeps the original
+    --! table is the same on every login.
+    if type(CellDB["layouts"]) == "table" then
+        local names = {}
+        for name in pairs(CellDB["layouts"]) do
+            if type(name) == "string" then table.insert(names, name) end
+        end
+        table.sort(names)
+
+        local claimedBy = {}
+        for _, name in ipairs(names) do
+            local layout = CellDB["layouts"][name]
+            if type(layout) == "table" and type(layout["indicators"]) == "table" then
+                --! A layout that declares a syncWith AND already points at that master's
+                --! very table is welded on purpose: leave it, and do not let it claim the
+                --! table either, so the master keeps the original whatever the sort order.
+                local master = type(layout["syncWith"]) == "string" and CellDB["layouts"][layout["syncWith"]]
+                local declaredSlave = type(master) == "table" and master["indicators"] == layout["indicators"]
+
+                if not declaredSlave then
+                    local prev = claimedBy[layout["indicators"]]
+                    if not prev then
+                        claimedBy[layout["indicators"]] = name
+                    else
+                        layout["indicators"] = F.Copy(layout["indicators"])
+                        claimedBy[layout["indicators"]] = name
+                        F.Debug("Revise: split shared indicator table:", name, "<-", prev)
                     end
                 end
             end

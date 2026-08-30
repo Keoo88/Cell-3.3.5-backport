@@ -127,7 +127,12 @@ local function CreateIndicatorsImportFrame()
             end
 
             -- fire events
-            Cell.Fire("UpdateIndicators", toLayout)
+            --! WotLK fix: same reason as in Copy.lua - importing into a profile welded to
+            --! the active one by "Sync With" changes the indicator table in force, but the
+            --! raw name is not the active layout's, so the redraw was skipped as "not
+            --! active layout". GetNotifiedLayoutName maps a synced sibling to the name
+            --! UnitButton compares against.
+            Cell.Fire("UpdateIndicators", F.GetNotifiedLayoutName(toLayout))
             Cell.Fire("IndicatorsChanged", toLayout)
 
             importFrame:Hide()

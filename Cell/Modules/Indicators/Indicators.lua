@@ -1298,6 +1298,20 @@ LoadSyncDropdown = function()
             ["text"] = L["None"],
             ["value"] = "none",
             ["onClick"] = function()
+                --! WotLK fix: switching "Sync With" back to None left the two profiles
+                --! PHYSICALLY sharing one indicator table. UpdateSyncedLayouts welds a
+                --! slave to its master by plain reference assignment
+                --! (CellDB.layouts[slave].indicators = CellDB.layouts[master].indicators)
+                --! and clearing syncWith never split them apart, so from then on both
+                --! profiles read "Sync With: None" while every indicator setting - Enabled
+                --! included - still landed in both of them, with nothing on screen saying
+                --! why. Hand this profile its own copy of what it currently shows: the
+                --! content is identical, so nothing is lost. A master with slaves cannot
+                --! reach this dropdown (it is disabled for masters above), but check
+                --! anyway - copying a master's table would orphan its slaves.
+                if not masters[currentLayout] and type(currentLayoutTable["indicators"]) == "table" then
+                    currentLayoutTable["indicators"] = F.Copy(currentLayoutTable["indicators"])
+                end
                 currentLayoutTable["syncWith"] = nil
                 -- currentLayoutTable = CellDB["layouts"][currentLayout]
                 UpdateSyncedLayouts()
@@ -2351,6 +2365,28 @@ end
 
 
 local function UpdateLayout()
+    --! WotLK fix: this tab remembers which profile it was pointed at, and nothing
+    --! re-pointed it when the ACTIVE profile changed underneath an open tab (raid
+    --! entry, spec change, party -> raid, Layout Auto Switch). The list, the preview
+    --! and every "Enabled" checkbox kept showing the previous profile, and because
+    --! ShowIndicatorSettings captured that profile's name for its Cell.Fire, ticking
+    --! a checkbox wrote into a profile that is no longer in force: UnitButton took
+    --! the "not active layout" early exit, the frames did not change, and the value
+    --! looked like it had not been saved at all. ShowTab already re-points to the
+    --! active profile whenever the tab is opened -- do the same when the profile
+    --! changes while it is already open.
+    if init and indicatorsTab:IsShown() and currentLayout ~= Cell.vars.currentLayout then
+        currentLayout = Cell.vars.currentLayout
+        currentLayoutTable = Cell.vars.currentLayoutTable
+        LoadSyncDropdown()
+        UpdatePreviewButton()
+        UpdateIndicators(true)
+        layoutDropdown:SetSelected(currentLayout == "default" and _G.DEFAULT or currentLayout)
+        LoadIndicatorList()
+        listButtons[1]:Click()
+        return
+    end
+
     if previewButton and currentLayout == Cell.vars.currentLayout then
         UpdatePreviewButton()
     end

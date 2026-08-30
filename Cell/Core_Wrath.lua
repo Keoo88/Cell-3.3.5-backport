@@ -368,7 +368,9 @@ function eventFrame:ADDON_LOADED(arg1)
                 --! WotLK fix: шестой элемент - подсветка иконки, когда баффа нет на самом
                 --! игроке. Раньше глоу был вшит наглухо; для существующих баз ключ
                 --! добирает Revise (ищи buffTracker[6]).
-                ["buffTracker"] = {false, "left-to-right", 27, {}, {}, true},
+                --! WotLK feature: седьмой элемент - следить только за бафами своего класса
+                --! (по образцу VuhDo). Для существующих баз тоже добирает Revise.
+                ["buffTracker"] = {false, "left-to-right", 27, {}, {}, true, true},
                 ["deathReport"] = {false, 10},
                 ["readyAndPull"] = {false, "text_button", {"default", 7}, {}},
                 ["marks"] = {false, false, "target_h", {}},

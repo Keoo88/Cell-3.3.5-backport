@@ -76,7 +76,13 @@ local function CreateIndicatorsCopyFrame()
                 tinsert(CellDB["layouts"][to]["indicators"], indicator)
             end
         end
-        Cell.Fire("UpdateIndicators", to)
+        --! WotLK fix: notify under the name UnitButton actually compares against. Copying
+        --! into a profile that is welded to the active one by "Sync With" writes straight
+        --! into the indicator table in force, but the raw name is not the active layout's,
+        --! so UnitButton_UpdateIndicators bailed out with "not active layout" and the
+        --! frames kept the old icons until the next reload. Every in-tab edit already
+        --! notifies through this helper; only copy and import did not.
+        Cell.Fire("UpdateIndicators", F.GetNotifiedLayoutName(to))
         Cell.Fire("IndicatorsChanged", to)
         copyFrame:Hide()
     end)

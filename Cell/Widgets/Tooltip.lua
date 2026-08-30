@@ -112,6 +112,35 @@ cursorAnchor:SetScript("OnUpdate", function(self)
     end
 end)
 
+--! WotLK fix: a unit tooltip on 3.3.5 does not stay up by itself. GameTooltip:SetUnit
+--! returns whether the tooltip needs refreshing, and the client starts its native
+--! GameTooltip:FadeOut() unless someone keeps it alive: FrameXML's GameTooltip_OnUpdate
+--! (GameTooltip.lua:183-196) counts down TOOLTIP_UPDATE_TIME and calls
+--! owner:UpdateTooltip() if the owner defines one, which is exactly what Blizzard's own
+--! unit frames install (UnitFrame.lua:144-150 UnitFrame_UpdateTooltip). Cell set the
+--! owner and the content but never that method, so hovering a raid button showed the
+--! tooltip for a moment and then let it fade out under a motionless cursor.
+--! The owner is a foreign frame as far as this file is concerned (rule 3), so the
+--! previous UpdateTooltip is saved and put back when the tooltip hides, and the restore
+--! only fires if the field is still ours. Refreshing via GameTooltip:Show() rather than
+--! re-running SetUnit keeps Cell's custom anchor points untouched - the stale content of
+--! a 0.2s window is not worth re-positioning the tooltip every tick.
+local tooltipOwner, previousTooltipUpdater
+
+local function UpdateCellTooltip()
+    GameTooltip:Show()
+end
+
+local function ClearTooltipUpdater()
+    if tooltipOwner and tooltipOwner.UpdateTooltip == UpdateCellTooltip then
+        tooltipOwner.UpdateTooltip = previousTooltipUpdater
+    end
+    tooltipOwner = nil
+    previousTooltipUpdater = nil
+end
+
+GameTooltip:HookScript("OnHide", ClearTooltipUpdater)
+
 function F.ShowSpellTooltips(tooltip, spellID)
     --! WotLK fix: CreateBaseTooltipInfo/ProcessInfo are retail 10.x tooltip-data
     --! API and do not exist on 3.3.5. The function is currently unreferenced,
@@ -153,6 +182,8 @@ function F.ShowTooltips(anchor, tooltipType, unit, aura, filter)
     elseif tooltipType == "spell" and unit and aura then
         -- GameTooltip:SetSpellByID(aura)
         GameTooltip:SetUnitAura(unit, aura, filter)
+    else
+        return
     end
     --! WotLK fix: the "aura" branch called SetUnitDebuffByAuraInstanceID /
     --! SetUnitBuffByAuraInstanceID - retail 10.x tooltip methods that do not exist
@@ -162,4 +193,13 @@ function F.ShowTooltips(anchor, tooltipType, unit, aura, filter)
     --! and the only two callers (Built-in.lua debuffs / raidDebuffs) hand over the
     --! aura INDEX that UnitButton_Cata_Wrath.lua stores as ind.index, which the
     --! "spell" branch above resolves natively. Cut with its callers' dead elseif.
+    --! The else above only ends up unreachable together with them: all three live
+    --! callers pass one of the two types with full arguments.
+
+    --! WotLK fix: keep the tooltip alive, see ClearTooltipUpdater above.
+    tooltipOwner = GameTooltip:GetOwner()
+    if tooltipOwner then
+        previousTooltipUpdater = tooltipOwner.UpdateTooltip
+        tooltipOwner.UpdateTooltip = UpdateCellTooltip
+    end
 end

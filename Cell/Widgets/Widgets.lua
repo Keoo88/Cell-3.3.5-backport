@@ -249,6 +249,13 @@ do
 
     local UTF8_CHAR = "[%z\1-\127\194-\244][\128-\191]*"
     local DEGREES_PER_SECOND = 60 -- полный круг за 6 секунд, как при 60 fps раньше
+    --! WotLK perf: repaint at 30 fps instead of once per drawn frame. Every tick
+    --! rebuilds the whole string - one gsub plus a colour prefix and a |r per
+    --! character - and this runs not only on the About tab but in the Dispel and
+    --! Spell request windows during a raid (Utilities/Request_Dispel.lua,
+    --! Utilities/Request_Spell.lua). Halving the rebuilds is invisible: pos still
+    --! advances by the full accumulated time, so the rotation speed is unchanged.
+    local RAINBOW_INTERVAL = 1 / 30
 
     local prefixes
 
@@ -291,9 +298,13 @@ do
 
         local pos = 0
         local direction = reverse and 1 or -1
+        local acc = 0
 
         fs.updater:SetScript("OnUpdate", function(_, elapsed)
-            pos = (pos + direction * elapsed * DEGREES_PER_SECOND) % 360
+            acc = acc + elapsed
+            if acc < RAINBOW_INTERVAL then return end
+            pos = (pos + direction * acc * DEGREES_PER_SECOND) % 360
+            acc = 0
             hue = pos
             fs:SetText((gsub(text, UTF8_CHAR, Colorize)))
         end)

@@ -982,7 +982,9 @@ local function ThreatSnapshot()
         UnitExists("target") and (UnitName("target") or "?") or "none",
         mob and format("%s (%s)", mob, UnitName(mob) or "?")
             or format("%snone - откат на старое глобальное правило%s", C_WARN, C_OFF)))
-    Say(format("aggroBlink: порог %d%%, танки - %s", threshold,
+    Say(format("aggroBlink: %s, танки - %s",
+        threshold >= 130 and "верх ползунка (130) - только когда моба уже бьёт этот юнит"
+            or format("порог %d%%", threshold),
         hideTanks and "скрыты" or "показываем"))
     Say("unit name | anyMob | vsMob | detailed(isTanking/status/scaled/raw) | role | вердикт")
 
@@ -1004,7 +1006,21 @@ local function ThreatSnapshot()
             else
                 percent = (any and any >= 1) and 100 or 0
             end
-            local show = percent > 0 and percent >= threshold and not (hideTanks and role == "TANK")
+            --! WotLK fix: mirror the top-of-slider rule from UnitButton_UpdateThreat.
+            --! At 130 the verdict is "the mob is already hitting this unit" (isTanking,
+            --! or status >= 2 without a hostile target), not a percentage comparison.
+            local show
+            if threshold >= 130 then
+                local hit
+                if mob then
+                    hit = isTanking and true or false
+                else
+                    hit = (any and any >= 2) and true or false
+                end
+                show = hit and not (hideTanks and role == "TANK")
+            else
+                show = percent > 0 and percent >= threshold and not (hideTanks and role == "TANK")
+            end
 
             if show then
                 blinking = blinking + 1
@@ -1485,6 +1501,98 @@ local function CmdRaidDebuffs(rest)
 end
 
 -------------------------------------------------
+-- indicators: чей набор индикаторов показывает профиль
+-------------------------------------------------
+--! Why this exists: the owner reported that a custom indicator group keeps its
+--! on/off state when he switches profiles. Every write path in the options is a
+--! deep copy, so the only way two profiles can share one Enabled flag is by
+--! sharing the indicator TABLE itself - and that sharing is invisible: "Sync With"
+--! reads None on both sides once the key is cleared, while the tables stay welded
+--! (see the fixes in Indicators.lua and Revise.lua). Nothing on screen can tell
+--! the two states apart, hence a dump that compares table identity.
+local function CmdIndicators()
+    if type(CellDB) ~= "table" or type(CellDB["layouts"]) ~= "table" then
+        Say(C_WARN .. "CellDB.layouts недоступен" .. C_OFF)
+        return
+    end
+
+    local builtIns = (Cell.defaults and Cell.defaults.builtIns) or 0
+    local live = Cell.snippetVars and Cell.snippetVars.enabledIndicators
+
+    local names = {}
+    for name in pairs(CellDB["layouts"]) do
+        if type(name) == "string" then tinsert(names, name) end
+    end
+    table.sort(names)
+
+    Say(format("%sпрофили индикаторов%s: %d, активный = %s%s%s (%s)",
+        C_HEAD, C_OFF, #names,
+        C_KEY, tostring(Cell.vars and Cell.vars.currentLayout), C_OFF,
+        tostring(Cell.vars and Cell.vars.groupType)))
+
+    local claimedBy, welds = {}, 0
+    for _, name in ipairs(names) do
+        local layout = CellDB["layouts"][name]
+        local indicators = type(layout) == "table" and layout["indicators"]
+
+        if type(indicators) ~= "table" then
+            print(format("  %s%s%s: %sнет таблицы индикаторов%s", C_KEY, name, C_OFF, C_WARN, C_OFF))
+        else
+            local sharedWith = claimedBy[indicators]
+            if not sharedWith then claimedBy[indicators] = name end
+
+            local syncWith = layout["syncWith"]
+            local declared = sharedWith and (syncWith == sharedWith
+                or (type(CellDB["layouts"][sharedWith]) == "table"
+                    and CellDB["layouts"][sharedWith]["syncWith"] == name))
+
+            local shareStr = "своя таблица"
+            if sharedWith then
+                if declared then
+                    shareStr = format("общая с %s (синхронизация)", sharedWith)
+                else
+                    welds = welds + 1
+                    shareStr = format("%sОБЩАЯ с %s БЕЗ синхронизации%s", C_WARN, sharedWith, C_OFF)
+                end
+            end
+
+            local customN = #indicators - builtIns
+            print(format("  %s%s%s%s  %s  синхр.: %s  своих групп: %d",
+                C_KEY, name, C_OFF,
+                name == (Cell.vars and Cell.vars.currentLayout) and " (АКТИВНЫЙ)" or "",
+                shareStr,
+                syncWith and tostring(syncWith) or "Нет",
+                customN > 0 and customN or 0))
+
+            for i = builtIns + 1, #indicators do
+                local t = indicators[i]
+                if type(t) == "table" then
+                    local on = t["enabled"] and (C_OK .. "ВКЛ" .. C_OFF) or "выкл"
+                    local mismatch = ""
+                    if name == (Cell.vars and Cell.vars.currentLayout) and type(live) == "table" then
+                        local liveOn = live[t["indicatorName"]] and true or false
+                        if liveOn ~= (t["enabled"] and true or false) then
+                            mismatch = format("  %sна кнопках: %s%s", C_WARN, liveOn and "ВКЛ" or "выкл", C_OFF)
+                        end
+                    end
+                    print(format("      %s [%s] %s = %s%s",
+                        tostring(t["name"]), tostring(t["type"]),
+                        tostring(t["indicatorName"]), on, mismatch))
+                end
+            end
+        end
+    end
+
+    if welds > 0 then
+        Say(format("%sнайдено сварок: %d%s - у этих профилей вкл/выкл индикаторов физически "
+            .. "не может отличаться. Расцепляются сами при следующем входе в игру.",
+            C_WARN, welds, C_OFF))
+    else
+        Say(C_OK .. "сварок без синхронизации нет: у каждого профиля свой набор" .. C_OFF)
+    end
+end
+
+-------------------------------------------------
 -- Debug.lua вызывает наши билдеры ПОСЛЕ блока callbacks, чтобы
 -- /cell debug dump одной копипастой выдавал полный снимок сессии.
 if D.DumpSections then
@@ -1516,6 +1624,7 @@ local EXTRA = {
     threat = CmdThreat,
     readycheck = CmdReadyCheck,
     raiddebuffs = CmdRaidDebuffs,
+    indicators = CmdIndicators,
 }
 
 local origHandle = D.HandleCommand
@@ -1558,6 +1667,7 @@ function D:HandleCommand(option, raw)
         print("  /cell debug threat [on|off] - снимок угрозы по группе; on/off считает частоту threat-событий")
         print("  /cell debug readycheck [off] - сырые аргументы READY_CHECK_* и перебор ростера рядом (GAP-005)")
         print("  /cell debug raiddebuffs [full] - какие встроенные raid-debuff id мёртвы на 3.3.5 + сверка с ElvUI")
+        print("  /cell debug indicators - чей набор индикаторов у каждого профиля: свой или общий, и вкл/выкл своих групп")
         print("  /cell debug count - one-line dashboard")
         return
     end
