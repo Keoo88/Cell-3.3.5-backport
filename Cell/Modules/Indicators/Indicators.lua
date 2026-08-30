@@ -120,15 +120,19 @@ local function UpdatePreviewButton()
 
     previewButton.widgets.healthBar:SetStatusBarTexture(Cell.vars.texture)
     --! WotLK fix: guard Cell's preview textures locally rather than replacing
-    --! native StatusBar methods client-wide.
+    --! native StatusBar methods client-wide, and use a real draw layer instead of
+    --! upstream's ARTWORK sublevel -7: BORDER is below the two ARTWORK textures
+    --! that share this bar (incomingHeal, damageFlashTex) on any client, while a
+    --! sublevel is a parameter FrameXML 3.3.5a never passes itself. Same change in
+    --! Appearance.lua and in B.SetTexture, where the reasoning is written out.
     local healthTexture = previewButton.widgets.healthBar:GetStatusBarTexture()
     if healthTexture then
-        healthTexture:SetDrawLayer("ARTWORK", -7) --! VERY IMPORTANT
+        healthTexture:SetDrawLayer("BORDER")
     end
     previewButton.widgets.powerBar:SetStatusBarTexture(Cell.vars.texture)
     local powerTexture = previewButton.widgets.powerBar:GetStatusBarTexture()
     if powerTexture then
-        powerTexture:SetDrawLayer("ARTWORK", -7) --! VERY IMPORTANT
+        powerTexture:SetDrawLayer("BORDER")
     end
 
     -- health color

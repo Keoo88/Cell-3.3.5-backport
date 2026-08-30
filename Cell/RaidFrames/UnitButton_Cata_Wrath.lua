@@ -19,10 +19,19 @@ CELL_FADE_OUT_HEALTH_PERCENT = nil
 
 -- GetStatusBarTexture can return nil on some 3.3.5 clients (e.g. with
 -- Ascension's Classic API disabled), so guard the SetDrawLayer call
-local function SetBarTextureDrawLayer(bar, layer, subLayer)
+--! WotLK fix: the sublayer argument is gone. Upstream puts the bar fill on ARTWORK
+--! sublevel -7 so that it stays under the two textures that share the bar frame -
+--! incomingHeal and damageFlashTex, both ARTWORK -6 - but FrameXML 3.3.5a never
+--! passes a sublevel in 383 files and its XML schema has no subLevel attribute, so
+--! whether this client honours it is not something we can check statically. A real
+--! layer needs no such bet: BORDER is below ARTWORK everywhere, and nothing else on
+--! healthBar or powerBar uses BORDER. Same change in the two option previews
+--! (Modules/Appearance/Appearance.lua, Modules/Indicators/Indicators.lua), which
+--! share this creation path through CellUnitButton_OnLoad.
+local function SetBarTextureDrawLayer(bar, layer)
     local tex = bar:GetStatusBarTexture()
     if tex then
-        tex:SetDrawLayer(layer, subLayer)
+        tex:SetDrawLayer(layer)
     end
 end
 
@@ -1902,11 +1911,26 @@ local function UnitButton_UpdateBuffs(self)
             I.UpdateCustomIndicators(self, "buff", spellId, name, start, duration, nil, icon, count, refreshing, source == "player" or source == "pet")
 
             -- check BG flags for statusIcon
-            if spellId == 301091 then
-                states.BGFlag = "alliance"
-            end
-            if spellId == 301089 then
+            --! WotLK fix: 301091 and 301089 are the retail flag-carrier auras (added in
+            --! BfA) and do not exist on this client - audit/tools/dbc_probe.py reports
+            --! both as absent from the client's own Spell.dbc, so the branch could never
+            --! fire and the flag icon never appeared. The Wrath auras are 23333 Warsong
+            --! Flag (the Horde flag, so it is carried by an Alliance player) and 23335
+            --! Silverwing Flag (the Alliance flag), plus 34976 Netherstorm Flag in Eye of
+            --! the Storm, which is the same aura for both sides - there the icon has to
+            --! come from the carrier's own faction. The value picked here selects the
+            --! texture in I.UpdateStatusIcon (Indicators/StatusIcon.lua).
+            if spellId == 23333 then
                 states.BGFlag = "horde"
+            elseif spellId == 23335 then
+                states.BGFlag = "alliance"
+            elseif spellId == 34976 then
+                local faction = UnitFactionGroup(unit)
+                if faction == "Horde" then
+                    states.BGFlag = "horde"
+                elseif faction == "Alliance" then
+                    states.BGFlag = "alliance"
+                end
             end
 
             --! WotLK perf: дешёвый гейт вперёд. Оба операнда без побочных эффектов,
@@ -4745,10 +4769,10 @@ end
 
 function B.SetTexture(button, tex)
     button.widgets.healthBar:SetStatusBarTexture(tex)
-    SetBarTextureDrawLayer(button.widgets.healthBar, "ARTWORK", -7)
+    SetBarTextureDrawLayer(button.widgets.healthBar, "BORDER")
     button.widgets.healthBarLoss:SetTexture(tex)
     button.widgets.powerBar:SetStatusBarTexture(tex)
-    SetBarTextureDrawLayer(button.widgets.powerBar, "ARTWORK", -7)
+    SetBarTextureDrawLayer(button.widgets.powerBar, "BORDER")
     button.widgets.powerBarLoss:SetTexture(tex)
     button.widgets.incomingHeal:SetTexture(tex)
     button.widgets.damageFlashTex:SetTexture(tex)
@@ -5470,7 +5494,7 @@ function CellUnitButton_OnLoad(button)
     button.widgets.healthBar = healthBar
     healthBar.SetBarValue = healthBar.SetValue
     healthBar:SetStatusBarTexture(Cell.vars.texture)
-    SetBarTextureDrawLayer(healthBar, "ARTWORK", -7)
+    SetBarTextureDrawLayer(healthBar, "BORDER")
     healthBar:SetFrameLevel(button:GetFrameLevel()+1)
 
     -- hp loss
@@ -5485,7 +5509,7 @@ function CellUnitButton_OnLoad(button)
     button.widgets.powerBar = powerBar
     powerBar.SetBarValue = powerBar.SetValue
     powerBar:SetStatusBarTexture(Cell.vars.texture)
-    SetBarTextureDrawLayer(powerBar, "ARTWORK", -7)
+    SetBarTextureDrawLayer(powerBar, "BORDER")
     powerBar:SetFrameLevel(button:GetFrameLevel()+2)
 
     --! WotLK fix: install Cell-owned smoothing methods directly on these bars;

@@ -179,11 +179,21 @@ function I.UpdateAoEHealings(t)
     wipe(customAoEHealings)
     for _, id in pairs(t["custom"]) do
         customAoEHealings[id] = true
+        --! WotLK fix: every rank of a spell has its own spellId on 3.3.5a and the combat
+        --! log reports the rank that was actually cast, so a user entry stored by id alone
+        --! only ever matched that one rank - Wild Growth added as rank 1 stayed dark for
+        --! every other rank. Index the name as well. The built-in list solves the same
+        --! problem with its per-spell trackByName flag above; a user entry has no such
+        --! flag, and "all ranks of this spell" is what adding a spell by hand means.
+        local name = F.GetSpellInfo(id)
+        if name then
+            customAoEHealings[name] = true
+        end
     end
 end
 
 function I.IsAoEHealing(name, id)
-    return builtInAoEHealings[name] or builtInAoEHealings[id] or customAoEHealings[id]
+    return builtInAoEHealings[name] or builtInAoEHealings[id] or customAoEHealings[name] or customAoEHealings[id]
 end
 
 local summonDuration = {}

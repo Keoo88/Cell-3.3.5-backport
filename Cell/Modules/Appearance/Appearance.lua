@@ -504,17 +504,26 @@ local function UpdatePreviewButton(which)
         previewButton.widgets.damageFlashTex:SetTexture(Cell.vars.texture)
 
         previewButton2.widgets.healthBar:SetStatusBarTexture(Cell.vars.texture)
-        --! WotLK fix: native GetStatusBarTexture may be nil on some custom
-        --! clients; guard Cell's preview bars locally.
+        --! WotLK fix: two things here. GetStatusBarTexture may return nil on some
+        --! custom clients, so the call is guarded locally instead of replacing the
+        --! native StatusBar method client-wide. And the draw layer is a real one now:
+        --! upstream pushed the bar fill to sublevel -7 of ARTWORK to keep it under
+        --! incomingHeal and damageFlashTex (both ARTWORK -6 on the same bar, see
+        --! CellUnitButton_OnLoad), but this client never passes a sublevel itself -
+        --! FrameXML 3.3.5a does not do it once in 383 files - so leaning on it is a
+        --! bet. BORDER is below ARTWORK on any client and nothing else on this bar
+        --! uses BORDER, so the intended order holds either way. The preview shares
+        --! CellUnitButton_OnLoad with the real unit button, so B.SetTexture does the
+        --! same thing (UnitButton_Cata_Wrath.lua).
         local healthTexture = previewButton2.widgets.healthBar:GetStatusBarTexture()
         if healthTexture then
-            healthTexture:SetDrawLayer("ARTWORK", -7) --! VERY IMPORTANT
+            healthTexture:SetDrawLayer("BORDER")
         end
         previewButton2.widgets.healthBarLoss:SetTexture(Cell.vars.texture)
         previewButton2.widgets.powerBar:SetStatusBarTexture(Cell.vars.texture)
         local powerTexture = previewButton2.widgets.powerBar:GetStatusBarTexture()
         if powerTexture then
-            powerTexture:SetDrawLayer("ARTWORK", -7) --! VERY IMPORTANT
+            powerTexture:SetDrawLayer("BORDER")
         end
         previewButton2.widgets.powerBarLoss:SetTexture(Cell.vars.texture)
         previewButton2.widgets.incomingHeal:SetTexture(Cell.vars.texture)

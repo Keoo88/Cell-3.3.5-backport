@@ -719,6 +719,15 @@ local function Dispels_UpdateHighlight(self, highlightType)
     self.highlightType = highlightType
     self.highlight:SetBlendMode("BLEND")
 
+    --! WotLK fix: upstream separates this highlight from the shield overlays with
+    --! ARTWORK sublevels on midLevelFrame - 0 for the whole-bar modes (above the
+    --! shield hatch at -5 and the over-shield glow at -4), -7 for the two modes that
+    --! only cover current health (below both). The highlight is created later than
+    --! the shield textures, so with sublevels ignored it always landed on top and
+    --! "current"/"current+" painted over the shield hatch instead of under it -
+    --! "current+" blends ADD, so it washed the hatch out. Real layers say the same
+    --! thing without depending on sublevel support: ARTWORK keeps it above the
+    --! shields by creation order, BORDER puts it strictly below them.
     if highlightType == "none" then
         self.highlight:Hide()
     elseif highlightType == "gradient" then
@@ -726,32 +735,32 @@ local function Dispels_UpdateHighlight(self, highlightType)
         self.highlight:ClearAllPoints()
         self.highlight:SetAllPoints(self.parent.widgets.healthBar)
         self.highlight:SetTexture(Cell.vars.whiteTexture)
-        self.highlight:SetDrawLayer("ARTWORK", 0)
+        self.highlight:SetDrawLayer("ARTWORK")
     elseif highlightType == "gradient-half" then
         -- self.highlight:SetParent(self.parent.widgets.indicatorFrame)
         self.highlight:ClearAllPoints()
         self.highlight:SetPoint("BOTTOMLEFT", self.parent.widgets.healthBar)
         self.highlight:SetPoint("TOPRIGHT", self.parent.widgets.healthBar, "RIGHT")
         self.highlight:SetTexture(Cell.vars.whiteTexture)
-        self.highlight:SetDrawLayer("ARTWORK", 0)
+        self.highlight:SetDrawLayer("ARTWORK")
     elseif highlightType == "entire" then
         -- self.highlight:SetParent(self.parent.widgets.indicatorFrame)
         self.highlight:ClearAllPoints()
         self.highlight:SetAllPoints(self.parent.widgets.healthBar)
         self.highlight:SetTexture(Cell.vars.whiteTexture)
-        self.highlight:SetDrawLayer("ARTWORK", 0)
+        self.highlight:SetDrawLayer("ARTWORK")
     elseif highlightType == "current" then
         -- self.highlight:SetParent(self.parent.widgets.healthBar)
         self.highlight:ClearAllPoints()
         self.highlight:SetAllPoints(self.parent.widgets.healthBar:GetStatusBarTexture())
         self.highlight:SetTexture(Cell.vars.texture)
-        self.highlight:SetDrawLayer("ARTWORK", -7)
+        self.highlight:SetDrawLayer("BORDER")
     elseif highlightType == "current+" then
         -- self.highlight:SetParent(self.parent.widgets.healthBar)
         self.highlight:ClearAllPoints()
         self.highlight:SetAllPoints(self.parent.widgets.healthBar:GetStatusBarTexture())
         self.highlight:SetTexture(Cell.vars.texture)
-        self.highlight:SetDrawLayer("ARTWORK", -7)
+        self.highlight:SetDrawLayer("BORDER")
         self.highlight:SetBlendMode("ADD")
     end
 end
@@ -778,9 +787,18 @@ function I.CreateDispels(parent)
     dispels.SetIconStyle = Dispels_SetIconStyle
     dispels.SetOrientation = Dispels_SetOrientation
 
-    for i = 1, 5 do
+    --! WotLK fix: created back to front, 5 down to 1. The icons overlap each other by
+    --! half (see Dispels_SetOrientation / Dispels_UpdateSize), and upstream orders them
+    --! with ARTWORK sublevels 6-i, so the first dispel type - Magic, then Curse, see
+    --! dispelOrder above - is meant to lie on top and the rest to peek out behind it.
+    --! With sublevels ignored the draw order is the creation order, which put the LAST
+    --! icon on top and left the most important one half covered. Building them in
+    --! reverse makes the creation order carry the same intent; the SetDrawLayer call
+    --! stays, so the order is right whether or not this client honours sublevels.
+    --! The table itself is filled by index, so dispels[1..5] and # are unchanged.
+    for i = 5, 1, -1 do
         local icon = dispels:CreateTexture(parent:GetName().."Dispel"..i, "ARTWORK")
-        tinsert(dispels, icon)
+        dispels[i] = icon
         icon:Hide()
 
         icon:SetDrawLayer("ARTWORK", 6-i)
@@ -2469,12 +2487,19 @@ function I.CreateCombatIcon(parent)
     combatIcon.root = parent
     combatIcon:Hide()
 
-    combatIcon.tex = combatIcon:CreateTexture(nil, "ARTWORK", nil, 0)
+    --! WotLK fix: CreateTexture takes (name, layer, inherits) on 3.3.5a - there is no
+    --! fourth "sublevel" argument, so upstream's 0 / -5 pair was dropped silently and
+    --! both textures ended up on the same ARTWORK sublevel. Draw order then fell back
+    --! to creation order, which is the reverse of what is wanted here: flashTex was
+    --! created second and rendered ON TOP of the swords, so the ADD-blended glow lit up
+    --! the icon art instead of haloing behind it. Put the glow on a real lower layer
+    --! (BORDER < ARTWORK) - that holds whether or not this client honours sublevels.
+    combatIcon.tex = combatIcon:CreateTexture(nil, "ARTWORK")
     combatIcon.tex:SetAllPoints()
     combatIcon.tex:SetTexture("Interface\\AddOns\\Cell\\Media\\Icons\\combat", nil, nil, "TRILINEAR")
     -- combatIcon.tex:SetAtlas("combat_swords-dynamicIcon")
 
-    combatIcon.flashTex = combatIcon:CreateTexture(nil, "ARTWORK", nil, -5)
+    combatIcon.flashTex = combatIcon:CreateTexture(nil, "BORDER")
     combatIcon.flashTex:SetAllPoints()
     combatIcon.flashTex:SetTexture("Interface\\AddOns\\Cell\\Media\\Icons\\combat_glow", nil, nil, "TRILINEAR")
     -- combatIcon.flashTex:SetAtlas("combat_swords-flash")
