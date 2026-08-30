@@ -896,7 +896,13 @@ local function getBaseHealAmount(spellData, spellName, spellID, spellRank)
 		return average
 	end
 	local requiresLevel = spellData.levels[spellRank]
-	return average[min(playerLevel - requiresLevel + 1, #average)]
+	--! WotLK fix: clamp the level bracket to the first entry. When the caster is
+	-- below the spell's own required level - private cores hand out spells regardless
+	-- of level - playerLevel - requiresLevel + 1 is zero or negative, the lookup
+	-- returned nil and calculateGeneralAmount died on "arithmetic on local 'amount'",
+	-- which takes the whole UNIT_SPELLCAST_START handler down (reported on a zhCN
+	-- client: priest, Binding Heal rank 1, level below 64).
+	return average[max(1, min(playerLevel - requiresLevel + 1, #average))]
 end
 
 if( playerClass == "DRUID" ) then
