@@ -40,6 +40,8 @@ Indicators\Base.lua
 Indicators\Built-in.lua
 Indicators\StatusIcon.lua
 Indicators\AoEHealing.lua
+Indicators\Cluster.lua
+Indicators\IncomingHealers.lua
 Indicators\TargetedSpells.lua
 Indicators\Actions.lua
 Indicators\Custom_Classic.lua

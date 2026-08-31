@@ -703,6 +703,39 @@ local function IterateAllUnits()
 end
 
 ---------------------------------------------------------------------
+-- hide in combat
+---------------------------------------------------------------------
+--! WotLK feature: "Hide in combat" (CellDB.tools.buffTracker[8], off by default).
+--! Asked for by the tester, who runs RaidBuffStatus alongside Cell: buff bookkeeping
+--! is a pre-pull job, and during a 25-man fight the bar and the Missing Buffs icons
+--! are noise on top of the raid frames. Two halves, and the second one is the point:
+--!   * visibility goes through a secure state driver. The bar holds
+--!     SecureActionButtonTemplate buttons (see CreateBuffButton), and the code below
+--!     already refuses to touch them in combat; "[combat] hide; show" is the
+--!     sanctioned way to move a frame like that in and out of sight. FrameXML's own
+--!     SecureStateDriverManager does the Show/Hide, so nothing here is tainted.
+--!   * UNIT_AURA is dropped for the whole fight. That is the real win: it is by far
+--!     the busiest event the tracker listens to (every HoT tick on every raid member
+--!     re-checks one unit), and everything it would repaint is hidden anyway.
+--! The Missing Buffs icons follow the bar: they are fed from here, so without
+--! UNIT_AURA they would just freeze mid-pull showing who was missing what at the
+--! moment of the first hit - worse than showing nothing.
+local function UpdateHideInCombat()
+    if CellDB["tools"]["buffTracker"][1] and CellDB["tools"]["buffTracker"][8] then
+        RegisterStateDriver(buffTrackerFrame, "visibility", "[combat] hide; show")
+    else
+        UnregisterStateDriver(buffTrackerFrame, "visibility")
+        --! tearing the driver down mid-combat would leave the frame hidden, and the
+        --! options pane is locked in combat anyway - so defer the reappearance.
+        if InCombatLockdown() then
+            buffTrackerFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+        else
+            buffTrackerFrame:Show()
+        end
+    end
+end
+
+---------------------------------------------------------------------
 -- events
 ---------------------------------------------------------------------
 function buffTrackerFrame:PLAYER_ENTERING_WORLD()
@@ -717,6 +750,19 @@ function buffTrackerFrame:GroupRosterUpdate(immediate)
         buffTrackerFrame:RegisterEvent("READY_CHECK")
         buffTrackerFrame:RegisterEvent("UNIT_FLAGS")
         buffTrackerFrame:RegisterEvent("PLAYER_UNGHOST")
+        --! WotLK feature: "hide in combat" - see UpdateHideInCombat. This is the one
+        --! place where UNIT_AURA is subscribed, so the option is honoured here too:
+        --! a roster change mid-fight must not quietly bring the flood back.
+        if CellDB["tools"]["buffTracker"][8] then
+            buffTrackerFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
+            if InCombatLockdown() then
+                buffTrackerFrame:UnregisterEvent("UNIT_AURA")
+                --! nothing to repaint: the bar is hidden and the icons are down.
+                return
+            end
+        else
+            buffTrackerFrame:UnregisterEvent("PLAYER_REGEN_DISABLED")
+        end
         buffTrackerFrame:RegisterEvent("UNIT_AURA")
         -- buffTrackerFrame:RegisterEvent("PARTY_MEMBER_ENABLE")
         -- buffTrackerFrame:RegisterEvent("PARTY_MEMBER_DISABLE")
@@ -780,8 +826,38 @@ function buffTrackerFrame:UNIT_AURA(unit)
     end
 end
 
+function buffTrackerFrame:PLAYER_REGEN_DISABLED()
+    --! WotLK feature: "hide in combat" - see UpdateHideInCombat. The state driver
+    --! takes the bar off screen by itself; this handler does the half that matters,
+    --! dropping UNIT_AURA and taking the Missing Buffs icons down with it.
+    if not CellDB["tools"]["buffTracker"][8] then return end
+
+    buffTrackerFrame:UnregisterEvent("UNIT_AURA")
+    for unit in F.IterateGroupMembers() do
+        I.HideMissingBuffs(unit, true)
+    end
+    buffTrackerFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+end
+
 function buffTrackerFrame:PLAYER_REGEN_ENABLED()
     buffTrackerFrame:UnregisterEvent("PLAYER_REGEN_ENABLED")
+
+    --! WotLK feature: "hide in combat" - the bar is back, so it needs one full sweep:
+    --! UNIT_AURA was off for the whole fight and every counter on it is stale.
+    if CellDB["tools"]["buffTracker"][1] and CellDB["tools"]["buffTracker"][8] then
+        buffTrackerFrame:RegisterEvent("UNIT_AURA")
+        RepointButtons()
+        ResizeButtons()
+        IterateAllUnits()
+        return
+    end
+
+    --! WotLK feature: the option was switched off while the driver had the frame
+    --! hidden - see UpdateHideInCombat, which defers exactly this call.
+    if not buffTrackerFrame:IsShown() then
+        buffTrackerFrame:Show()
+    end
+
     RepointButtons()
     ResizeButtons()
     UpdateButtons()
@@ -838,6 +914,9 @@ local function UpdateTools(which)
 
         RepointButtons()
         ResizeButtons()
+        --! WotLK feature: "hide in combat" - (re)arm or tear down the state driver
+        --! after the tracker itself was switched on/off, see UpdateHideInCombat.
+        UpdateHideInCombat()
     end
 
     if not which or which == "fadeOut" then

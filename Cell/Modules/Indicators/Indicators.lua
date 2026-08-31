@@ -534,6 +534,14 @@ local function InitIndicator(indicatorName)
         for i = 1, 3 do
             indicator[i]:SetCooldown(0, 0, nil, buffs[i], 0)
         end
+    --! WotLK feature: cluster counter - the preview just shows a plausible number,
+    --! the real one comes from the roster on the engine's own tick.
+    elseif indicatorName == "cluster" then
+        indicator:SetValue(5)
+    --! WotLK feature: incoming-heal counter - the preview shows a plausible number in
+    --! the "my heal lands first" colour.
+    elseif indicatorName == "incomingHealers" then
+        indicator:SetValue(2, true)
     elseif string.find(indicatorName, "indicator") then
         if indicator.indicatorType == "icons" then
             for i = 1, 10 do
@@ -989,6 +997,13 @@ local function UpdateIndicators(layout, indicatorName, setting, value, value2)
                 -- indicator:SetCooldown(GetTime(), 13)
             elseif value == "smooth" then
                 indicator:EnableSmooth(value2)
+            --! WotLK feature: aggro blink pulse toggle on the options preview frame.
+            --! The preview button is not a raid unit button, so I.SetAggroBlinkNoPulse
+            --! does not reach it - the indicator carries the method itself.
+            elseif value == "noPulse" then
+                if indicator.SetNoPulse then
+                    indicator:SetNoPulse(value2)
+                end
             end
         elseif setting == "create" then
             indicator = I.CreateIndicator(previewButton, value)
@@ -1622,7 +1637,8 @@ indicatorSettings = {
 --! WotLK fix: threatThreshold + checkbutton:hideForTanks - см. UnitButton_UpdateThreat.
 --! Порог и "не показывать танков" заведены на каждом из двух индикаторов отдельно:
 --! мигание и рамку включают независимо друг от друга.
-["aggroBlink"] = {"enabled", "threatThreshold", "checkbutton:hideForTanks:"..L["A tank holds the mob by design"], "size", "position", "frameLevel"},
+--! WotLK feature: checkbutton2:noPulse - keep the highlight, drop the blink.
+["aggroBlink"] = {"enabled", "threatThreshold", "checkbutton:hideForTanks:"..L["A tank holds the mob by design"], "checkbutton2:noPulse:"..L["The highlight stays, only the blinking stops"], "size", "position", "frameLevel"},
 ["aggroBorder"] = {"enabled", "threatThreshold", "checkbutton:hideForTanks:"..L["A tank holds the mob by design"], "thickness", "frameLevel"},
 ["aggroBar"] = {"enabled", "size", "position", "frameLevel"},
 ["shieldBar"] = {"enabled", "checkbutton:onlyShowOvershields", "color-alpha", "height", "shieldBarPosition", "frameLevel"},
@@ -1643,6 +1659,10 @@ indicatorSettings = {
 ["healthThresholds"] = {"enabled", "thresholds", "thickness"},
 --! WotLK fix: checkbutton:showGlow - тумблер мигающей подсветки иконок.
 ["missingBuffs"] = {"|cffb7b7b7"..(L["%s in Utilities must be enabled to make this indicator work."]:format(Cell.GetAccentColorString()..L["Buff Tracker"].."|r")), "enabled", "checkbutton:showGlow:"..L["The icon stays either way"], "size-square", "orientation", "position", "frameLevel"},
+--! WotLK feature: cluster counter (Indicators/Cluster.lua).
+["cluster"] = {"|cffb7b7b7"..L["Shows how many allies an area heal cast on this unit would reach."], "enabled", "clusterRadius", "checkbutton:lowHealthOnly:"..L["Full-health allies are still standing there, they just do not need the heal"], "color", "position", "frameLevel", "font-noOffset"},
+--! WotLK feature: incoming-heal counter (Indicators/IncomingHealers.lua).
+["incomingHealers"] = {"|cffb7b7b7"..L["Shows how many different healers already have a heal landing on this unit."], "enabled", "checkbutton:countHoTs:"..L["A heal over time counts by its next tick, not by the moment it runs out"], "incomingHealersColors", "position", "frameLevel", "font-noOffset"},
 }
 end
 
@@ -2061,6 +2081,37 @@ local function ShowIndicatorSettings(id)
             if type(dbValue) ~= "number" then
                 dbValue = 100
                 indicatorTable[currentSetting] = 100
+            end
+            w:SetDBValue(dbValue)
+            w:SetFunc(function(value)
+                indicatorTable[currentSetting] = value
+                Cell.Fire("UpdateIndicators", notifiedLayout, indicatorName, currentSetting, value)
+            end)
+
+        --! WotLK feature: cluster radius. The key is new, so an existing layout does
+        --! not carry it until Revise has run once - materialise the default here
+        --! (0 = "the radius of my own class and spec"), or SetValue(nil) would throw
+        --! inside the slider.
+        elseif currentSetting == "clusterRadius" then
+            local dbValue = indicatorTable[currentSetting]
+            if type(dbValue) ~= "number" then
+                dbValue = 0
+                indicatorTable[currentSetting] = 0
+            end
+            w:SetDBValue(dbValue)
+            w:SetFunc(function(value)
+                indicatorTable[currentSetting] = value
+                Cell.Fire("UpdateIndicators", notifiedLayout, indicatorName, currentSetting, value)
+            end)
+
+        --! WotLK feature: the two colours of the incoming-heal counter. Same reason as
+        --! above - the key is new, and a layout saved before it existed has nothing
+        --! under it, which would hand two nil colours to the pickers.
+        elseif currentSetting == "incomingHealersColors" then
+            local dbValue = indicatorTable[currentSetting]
+            if type(dbValue) ~= "table" or type(dbValue[1]) ~= "table" or type(dbValue[2]) ~= "table" then
+                dbValue = F.Copy(Cell.defaults.layout.indicators[Cell.defaults.indicatorIndices["incomingHealers"]]["incomingHealersColors"])
+                indicatorTable[currentSetting] = dbValue
             end
             w:SetDBValue(dbValue)
             w:SetFunc(function(value)

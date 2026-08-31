@@ -370,7 +370,10 @@ function eventFrame:ADDON_LOADED(arg1)
                 --! добирает Revise (ищи buffTracker[6]).
                 --! WotLK feature: седьмой элемент - следить только за бафами своего класса
                 --! (по образцу VuhDo). Для существующих баз тоже добирает Revise.
-                ["buffTracker"] = {false, "left-to-right", 27, {}, {}, true, true},
+                --! WotLK feature: eighth element - "hide in combat" (off by default, so
+                --! an update changes nothing silently). See UpdateHideInCombat in
+                --! Utilities/BuffTracker_Classic.lua; Revise back-fills existing DBs.
+                ["buffTracker"] = {false, "left-to-right", 27, {}, {}, true, true, false},
                 ["deathReport"] = {false, 10},
                 ["readyAndPull"] = {false, "text_button", {"default", 7}, {}},
                 ["marks"] = {false, false, "target_h", {}},

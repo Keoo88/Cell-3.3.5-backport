@@ -2809,9 +2809,9 @@ function F.Revise()
     --! below under `CellDB["revise"] ~= Cell.version`, and the toc version is frozen at
     --! r277-release - so for anyone who has already run this backport it will never fire
     --! again, and the dead record would stay in the DB forever. It cannot be allowed to:
-    --! builtIns is now 28, and the custom-indicator loop in Custom_Classic.lua runs from
-    --! builtIns+1 to #indicators, i.e. it would take the 29th record for a user-made
-    --! indicator and reach for fields it does not have. Walk bottom-up so tremove cannot
+    --! builtIns counts one fewer record than the layout holds, i.e. the custom-indicator
+    --! loop would take the last built-in slot for a user-made indicator and reach for
+    --! fields it does not have. Walk bottom-up so tremove cannot
     --! shift elements we have not looked at yet (and so a duplicate, if one somehow got
     --! in there, is removed too). Idempotent, runs every load.
     if type(CellDB["layouts"]) == "table" then
@@ -2821,6 +2821,46 @@ function F.Revise()
                     local t = layout["indicators"][i]
                     if type(t) == "table" and t["indicatorName"] == "targetCounter" then
                         tremove(layout["indicators"], i)
+                    end
+                end
+            end
+        end
+    end
+
+    --! WotLK feature: add the records of the new indicators to already-saved layouts.
+    --! Mirror image of the block above and mandatory for the same reason: the stock
+    --! repair pass never fires again with the toc version frozen, and builtIns is now 30
+    --! while an old layout holds 28 built-ins - the custom-indicator loop in
+    --! Custom_Classic.lua would then start too early and read the player's own
+    --! indicators as built-ins. Each record is inserted at its own index so the customs
+    --! that follow keep their order; a layout that already has one is skipped, which
+    --! also covers two profiles welded to one shared indicators table. Both defaults are
+    --! disabled, so nothing new appears on anyone's frames by itself.
+    --! Idempotent, runs every load. In index order: inserting 29 before 30 keeps 30 at
+    --! its own index.
+    if type(CellDB["layouts"]) == "table" then
+        local added = {"cluster", "incomingHealers"}
+        for _, indicatorName in ipairs(added) do
+            local index = Cell.defaults.indicatorIndices[indicatorName]
+            local default = Cell.defaults.layout.indicators[index]
+            for _, layout in pairs(CellDB["layouts"]) do
+                if type(layout) == "table" and type(layout["indicators"]) == "table" then
+                    local found
+                    for i = 1, #layout["indicators"] do
+                        local t = layout["indicators"][i]
+                        if type(t) == "table" and t["indicatorName"] == indicatorName then
+                            found = true
+                            break
+                        end
+                    end
+                    if not found then
+                        --! Never write past the end of the array: a layout somehow shorter
+                        --! than the built-in list would get a hole, and ipairs stops there.
+                        if #layout["indicators"] >= index then
+                            tinsert(layout["indicators"], index, F.Copy(default))
+                        else
+                            tinsert(layout["indicators"], F.Copy(default))
+                        end
                     end
                 end
             end
@@ -2905,13 +2945,23 @@ function F.Revise()
         CellDB["tools"]["buffTracker"][7] = true
     end
 
+    --! WotLK feature: buffTracker[8] - "скрывать в бою". Тот же порядок, что у [6] и
+    --! [7]: заполнить ДО RepairAgainstDefaults, иначе база с семью элементами против
+    --! восьмиэлементного дефолта потеряет и размер иконок, и список баффов. Значение
+    --! false - прежнее поведение: обновление ничего не меняет молча, галку в Рейдовых
+    --! инструментах ставит тот, кому трекер в бою мешает.
+    if type(CellDB["tools"]) == "table" and type(CellDB["tools"]["buffTracker"]) == "table"
+        and type(CellDB["tools"]["buffTracker"][8]) ~= "boolean" then
+        CellDB["tools"]["buffTracker"][8] = false
+    end
+
     --! tools has no Cell.defaults entry, so mirror the table Core_Wrath seeds it with.
     --! battleResTimer is intentionally absent: its two checkboxes left the Raid Tools pane
     --! on 2026-08-19, nothing reads the key any more, and old saved payloads may keep it -
     --! RepairAgainstDefaults only fills what is missing, it never deletes.
     if type(CellDB["tools"]) == "table" then
         RepairAgainstDefaults(CellDB["tools"], {
-            ["buffTracker"] = {false, "left-to-right", 27, {}, {}, true, true},
+            ["buffTracker"] = {false, "left-to-right", 27, {}, {}, true, true, false},
             ["deathReport"] = {false, 10},
             ["readyAndPull"] = {false, "text_button", {"default", 7}, {}},
             ["marks"] = {false, false, "target_h", {}},

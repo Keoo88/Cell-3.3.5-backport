@@ -9,7 +9,7 @@ local LCG = LibStub("LibCustomGlow-1.0-Cell")
 -- raid tools
 -------------------------------------------------
 local rtPane, unlockBtn
-local reportCB, buffCB, buffDropdown, buffGlowCB, buffMineOnlyCB, sizeEditBox, buffButtons, readyPullCB, styleDropdown, pullDropdown, secEditBox, marksBarCB, marksDropdown, marksShowSoloCB, fadeOutToolsCB
+local reportCB, buffCB, buffDropdown, buffGlowCB, buffMineOnlyCB, buffHideInCombatCB, sizeEditBox, buffButtons, readyPullCB, styleDropdown, pullDropdown, secEditBox, marksBarCB, marksDropdown, marksShowSoloCB, fadeOutToolsCB
 
 -------------------------------------------------
 -- mover toggle
@@ -120,6 +120,7 @@ local function CreateRTPane()
         sizeEditBox:SetEnabled(checked)
         buffGlowCB:SetEnabled(checked) --! WotLK fix
         buffMineOnlyCB:SetEnabled(checked) --! WotLK feature
+        buffHideInCombatCB:SetEnabled(checked) --! WotLK feature
         if buffButtons then
             for buff, b in pairs(buffButtons) do
                 b:SetEnabled(checked)
@@ -265,6 +266,20 @@ local function CreateRTPane()
     L["Classes that provide none of these keep the whole list"])
     buffMineOnlyCB:SetPoint("TOPLEFT", buffCB, "BOTTOMRIGHT", 5, -46)
 
+    --! WotLK feature: "hide in combat" (buffTracker[8]), asked for by the tester, who
+    --! keeps RaidBuffStatus alongside Cell. Buffs are handed out before the pull, so
+    --! during the fight the bar and the Missing Buffs icons only cover the raid frames.
+    --! The UNIT_AURA subscription goes away with the picture - see UpdateHideInCombat
+    --! in Utilities/BuffTracker_Classic.lua.
+    --! The label reuses the existing "hideInCombat" key, translated in all 11 locales.
+    buffHideInCombatCB = Cell.CreateCheckButton(rtPane, L["hideInCombat"], function(checked, self)
+        CellDB["tools"]["buffTracker"][8] = checked
+        Cell.Fire("UpdateTools", "buffTracker")
+    end, L["hideInCombat"],
+    L["The bar and the Missing Buffs icons come back when the fight ends"],
+    L["Aura scanning stops as well, so this also saves CPU during a fight"])
+    buffHideInCombatCB:SetPoint("TOPLEFT", buffCB, "BOTTOMRIGHT", 5, -64)
+
     -- ready & pull
     readyPullCB = Cell.CreateCheckButton(rtPane, L["ReadyCheck and PullTimer buttons"], function(checked, self)
         CellDB["tools"]["readyAndPull"][1] = checked
@@ -275,7 +290,8 @@ local function CreateRTPane()
     end, L["ReadyCheck and PullTimer buttons"], L["Only show when you have permission to do this"], L["readyCheckTips"], L["pullTimerTips"])
     --! WotLK fix: было -43, освободили строку под buffGlowCB (см. выше).
     --! WotLK feature: и ещё строку под buffMineOnlyCB, поэтому -63 стало -68.
-    readyPullCB:SetPoint("TOPLEFT", buffCB, "BOTTOMLEFT", 0, -68)
+    --! WotLK feature: и третью строку под buffHideInCombatCB, поэтому -68 стало -86.
+    readyPullCB:SetPoint("TOPLEFT", buffCB, "BOTTOMLEFT", 0, -86)
     Cell.RegisterForCloseDropdown(readyPullCB)
 
     styleDropdown = Cell.CreateDropdown(rtPane, 120)
@@ -456,7 +472,8 @@ local function ShowUtilitySettings(which)
         sizeEditBox:SetText(CellDB["tools"]["buffTracker"][3])
         buffGlowCB:SetChecked(CellDB["tools"]["buffTracker"][6]) --! WotLK fix
         buffMineOnlyCB:SetChecked(CellDB["tools"]["buffTracker"][7]) --! WotLK feature
-        Cell.SetEnabled(CellDB["tools"]["buffTracker"][1], buffDropdown, sizeEditBox, buffGlowCB, buffMineOnlyCB)
+        buffHideInCombatCB:SetChecked(CellDB["tools"]["buffTracker"][8]) --! WotLK feature
+        Cell.SetEnabled(CellDB["tools"]["buffTracker"][1], buffDropdown, sizeEditBox, buffGlowCB, buffMineOnlyCB, buffHideInCombatCB)
         if buffButtons then
             for buff, b in pairs(buffButtons) do
                 b:SetEnabled(CellDB["tools"]["buffTracker"][1])

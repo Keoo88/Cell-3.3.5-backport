@@ -39,12 +39,18 @@ select(2, ...).L = setmetatable({
     --! enUS вернула бы сам ключ, и в панели стояло бы "showGlow"/"hideForTanks".
     ["showGlow"] = "Blinking glow",
     ["hideForTanks"] = "Do not show for tanks",
+    --! WotLK feature: aggro blink pulse toggle, see I.SetAggroBlinkNoPulse.
+    ["noPulse"] = "Do not blink",
     --! WotLK fix: showJump раньше дописывался врезкой в Modules/Indicators/Indicators.lua
     --! по GetLocale(). Врезка знала локаль КЛИЕНТА и ничего не знала про собственный
     --! переключатель языка Cell (CellDB.general.locale -> LoadUserLocale), поэтому при
     --! несовпадении этих двух значений подпись оставалась на языке клиента, а вся панель
     --! вокруг - на выбранном. Ключ живёт в файлах локалей, как showGlow и hideForTanks.
     ["showJump"] = "Show refresh (jump) animation",
+    --! WotLK feature: cluster counter, see Indicators/Cluster.lua.
+    ["lowHealthOnly"] = "Only count wounded allies",
+    --! WotLK feature: incoming-heal counter, see Indicators/IncomingHealers.lua.
+    ["countHoTs"] = "Count heals over time",
     ["hideDamager"] = "Hide Damager",
     ["hideInCombat"] = "Hide in combat",
     ["stackFont"] = "Stack Font",

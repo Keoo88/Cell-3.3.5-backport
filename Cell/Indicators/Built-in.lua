@@ -2088,10 +2088,12 @@ local PULSE_MID = PULSE_MIN + PULSE_AMP
 --! файла. Раньше на каждую кнопку рейда создавалось по три замыкания (40 юнитов
 --! = 120 объектов), хотя ни одно из них не захватывало ничего от конкретной
 --! кнопки - только константы и self.
-local function AggroBlink_OnShow(self)
-    self.pulseElapsed = 0
-    self:SetAlpha(PULSE_MAX)
-end
+--! WotLK feature: "noPulse" option. The tester asked for a way to keep the aggro
+--! highlight but stop it from blinking. The flag is module-level, not per button:
+--! one setting per indicator means one read, not 40 table lookups per frame. It is
+--! declared above the handlers because in Lua 5.1 an upvalue binds where the closure
+--! is compiled - a local declared later would be seen as a (nil) global here.
+local aggroBlinkNoPulse = false
 
 local function AggroBlink_OnUpdate(self, elapsed)
     --! WotLK perf: накопитель держится в локале на время кадра. Поле
@@ -2103,8 +2105,40 @@ local function AggroBlink_OnUpdate(self, elapsed)
     self:SetAlpha(PULSE_MID + PULSE_AMP * sin(t * PULSE_SPEED))
 end
 
+--! WotLK feature: apply noPulse to one frame right now. OnShow does the same on the
+--! next aggro, but an already blinking frame would keep pulsing until then and the
+--! checkbox would look dead. Also used for the options preview frame, which is not
+--! a raid unit button and therefore not reached by I.SetAggroBlinkNoPulse.
+local function AggroBlink_SetNoPulse(self, noPulse)
+    if noPulse then
+        self:SetScript("OnUpdate", nil)
+        self:SetAlpha(PULSE_MAX)
+    else
+        self.pulseElapsed = 0
+        self:SetScript("OnUpdate", AggroBlink_OnUpdate)
+    end
+end
+
+local function AggroBlink_OnShow(self)
+    --! WotLK feature: the driver is (un)installed on show, so the option costs
+    --! nothing when off: with noPulse there is no OnUpdate on the frame at all,
+    --! instead of an OnUpdate that runs every frame just to return early.
+    AggroBlink_SetNoPulse(self, aggroBlinkNoPulse)
+    self:SetAlpha(PULSE_MAX)
+end
+
 local function AggroBlink_OnHide(self)
     self:SetAlpha(1)
+end
+
+function I.SetAggroBlinkNoPulse(noPulse)
+    aggroBlinkNoPulse = noPulse and true or false
+    F.IterateAllUnitButtons(function(b)
+        local a = b.indicators and b.indicators.aggroBlink
+        if a then
+            AggroBlink_SetNoPulse(a, aggroBlinkNoPulse)
+        end
+    end, true)
 end
 
 function I.CreateAggroBlink(parent)
@@ -2123,8 +2157,11 @@ function I.CreateAggroBlink(parent)
     aggroBlink.pulseElapsed = 0
 
     aggroBlink:SetScript("OnShow", AggroBlink_OnShow)
-    aggroBlink:SetScript("OnUpdate", AggroBlink_OnUpdate)
     aggroBlink:SetScript("OnHide", AggroBlink_OnHide)
+    --! WotLK feature: a frame born while noPulse is on never gets a driver at all.
+    AggroBlink_SetNoPulse(aggroBlink, aggroBlinkNoPulse)
+    --! WotLK feature: method for the options preview frame, see AggroBlink_SetNoPulse.
+    aggroBlink.SetNoPulse = AggroBlink_SetNoPulse
 
     function aggroBlink:ShowAggro(r, g, b)
         aggroBlink:SetBackdropColor(r, g, b)

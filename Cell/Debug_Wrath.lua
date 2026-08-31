@@ -465,11 +465,18 @@ end
 --   - какие C_* / Lib* библиотеки реально подгружены и какой minor
 --   - флаги Cell.flavor / isWrath / isRetail (могут «поплыть» на кастомных ядрах)
 --   - счётчик загруженных аддонов и размеры CellDB на диске
+--! WotLK fix: the minor lives in LibStub.minors[major], NOT on the library table -
+--! LibStub:NewLibrary() writes `self.minors[major], self.libs[major] = minor, ...` and
+--! never touches the returned table. Reading lib.minor/lib.version therefore missed on
+--! every LibStub library, and the whole block printed "?" ten times out of ten (dump
+--! from the tester's client, 2026-08-31). GetLibrary already hands the minor back as
+--! its second return value; the field reads stay as a fallback for libraries that
+--! publish a version of their own (LibDeflate, LibSerialize).
 local function GetLibMinor(major)
     if not LibStub or not LibStub.GetLibrary then return nil end
-    local ok, lib = pcall(LibStub.GetLibrary, LibStub, major, true)
+    local ok, lib, minor = pcall(LibStub.GetLibrary, LibStub, major, true)
     if ok and lib then
-        return tostring(lib.minor or lib.version or "?")
+        return tostring(minor or lib.minor or lib.version or "?")
     end
     return nil
 end

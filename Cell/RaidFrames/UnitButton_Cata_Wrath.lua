@@ -367,6 +367,26 @@ local function ResetIndicators()
         -- update healthThresholds
         elseif t["indicatorName"] == "healthThresholds" then
             I.UpdateHealthThresholds()
+
+        --! WotLK feature: aggro blink pulse toggle, see I.SetAggroBlinkNoPulse.
+        --! The flag is module-level in Built-in.lua, so it has to be pushed there
+        --! on every layout load - the indicator itself keeps no copy of it.
+        elseif t["indicatorName"] == "aggroBlink" then
+            I.SetAggroBlinkNoPulse(t["noPulse"])
+
+        --! WotLK feature: cluster counter. Options go in before Enable, because
+        --! Enable does the first sweep right away and would otherwise count with
+        --! the radius of the previously loaded layout.
+        elseif t["indicatorName"] == "cluster" then
+            I.SetClusterOptions(t["clusterRadius"], t["lowHealthOnly"])
+            I.EnableCluster(t["enabled"])
+
+        --! WotLK feature: incoming-heal counter. Options before Enable for the same
+        --! reason: Enable sweeps immediately and would paint with the colours and the
+        --! HoT rule of the previously loaded layout.
+        elseif t["indicatorName"] == "incomingHealers" then
+            I.SetIncomingHealersOptions(t["incomingHealersColors"], t["countHoTs"])
+            I.EnableIncomingHealers(t["enabled"])
         end
 
         -- update extra
@@ -841,6 +861,13 @@ local function UpdateIndicators(layout, indicatorName, setting, value, value2)
                 end, true)
             elseif indicatorName == "aoeHealing" then
                 I.EnableAoEHealing(value)
+            --! WotLK feature: cluster counter - starts or stops its own timer.
+            elseif indicatorName == "cluster" then
+                I.EnableCluster(value)
+            --! WotLK feature: incoming-heal counter - starts or stops its own timer and
+            --! its LibHealComm callbacks.
+            elseif indicatorName == "incomingHealers" then
+                I.EnableIncomingHealers(value)
             elseif indicatorName == "targetedSpells" then
                 I.EnableTargetedSpells(value)
             elseif indicatorName == "actions" then
@@ -1072,6 +1099,15 @@ local function UpdateIndicators(layout, indicatorName, setting, value, value2)
             --! в мирное время не приходят, иначе ползунок выглядел бы мёртвым.
             indicatorNums[indicatorName] = value
             F.IterateAllUnitButtons(B.UpdateThreat, true)
+        --! WotLK feature: cluster radius. The engine keeps the value itself and
+        --! recounts on its own next tick, so nothing has to be pushed to buttons.
+        elseif setting == "clusterRadius" then
+            I.SetClusterRadius(value)
+        --! WotLK feature: the two colours of the incoming-heal counter. The engine
+        --! repaints the frames that already show a number, so the picker is not dead
+        --! until the next heal.
+        elseif setting == "incomingHealersColors" then
+            I.SetIncomingHealersColors(value)
         elseif setting == "numPerLine" then
             F.IterateAllUnitButtons(function(b)
                 local indicator = b.indicators[indicatorName]
@@ -1200,6 +1236,20 @@ local function UpdateIndicators(layout, indicatorName, setting, value, value2)
                 --! двух индикаторов нет), перерисовка - сразу, см. B.UpdateThreat.
                 indicatorBooleans[indicatorName] = value2
                 F.IterateAllUnitButtons(B.UpdateThreat, true)
+            elseif value == "noPulse" then
+                --! WotLK feature: "do not blink" - the aggro highlight stays, the
+                --! alpha pulse goes. This is aggroBlink's second boolean, so it cannot
+                --! live in indicatorBooleans (keyed by indicator name, already taken
+                --! by hideForTanks): the flag is module-level in Built-in.lua.
+                I.SetAggroBlinkNoPulse(value2)
+            --! WotLK feature: cluster counter - count only allies who are missing
+            --! health. Module-level in Cluster.lua, the next tick picks it up.
+            elseif value == "lowHealthOnly" then
+                I.SetClusterLowHealthOnly(value2)
+            --! WotLK feature: incoming-heal counter - count heals over time as well.
+            --! Module-level in IncomingHealers.lua, the next sweep picks it up.
+            elseif value == "countHoTs" then
+                I.SetIncomingHealersCountHoTs(value2)
             elseif value == "showStack" then
                 F.IterateAllUnitButtons(function(b)
                     b.indicators[indicatorName]:ShowStack(value2)
@@ -5709,6 +5759,8 @@ function CellUnitButton_OnLoad(button)
     I.CreateTargetRaidIcon(button)
     I.CreateShieldBar(button)
     I.CreateAoEHealing(button)
+    I.CreateCluster(button) --! WotLK feature: predictive AoE-cluster counter
+    I.CreateIncomingHealers(button) --! WotLK feature: incoming-heal counter
     -- I.CreateDefensiveCooldowns(button)
     -- I.CreateExternalCooldowns(button)
     -- I.CreateAllCooldowns(button)

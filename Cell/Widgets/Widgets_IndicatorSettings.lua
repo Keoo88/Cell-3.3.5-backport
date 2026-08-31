@@ -729,6 +729,91 @@ local function CreateSetting_ThreatThreshold(parent)
     return widget
 end
 
+--! WotLK feature: radius of the cluster counter, in yards. 0 means "use the
+--! radius of the spell my own class and spec casts on a cluster".
+local function CreateSetting_ClusterRadius(parent)
+    local widget
+
+    if not settingWidgets["clusterRadius"] then
+        widget = Cell.CreateFrame("CellIndicatorSettings_ClusterRadius", parent, 240, 50)
+        settingWidgets["clusterRadius"] = widget
+
+        widget.radius = Cell.CreateSlider(L["Cluster radius"], widget, 0, 40, 110, 0.5, nil, nil, nil,
+            L["How far from a unit an ally still counts as standing with them"],
+            L["0 means the radius of your own class and spec"],
+            L["Paladin 9.5, Shaman 12.5, Holy Priest 16.5, Discipline Priest 30, Druid 16.5"])
+        widget.radius:SetPoint("TOPLEFT", widget, 5, -20)
+        widget.radius.afterValueChangedFn = function(value)
+            widget.func(value)
+        end
+
+        -- callback
+        function widget:SetFunc(func)
+            widget.func = func
+        end
+
+        -- show db value
+        function widget:SetDBValue(n)
+            widget.radius:SetValue(n)
+        end
+    else
+        widget = settingWidgets["clusterRadius"]
+    end
+
+    widget:Show()
+    return widget
+end
+
+--! WotLK feature: the two colours of the incoming-heal counter (see
+--! Indicators/IncomingHealers.lua). The number itself is the same either way - the
+--! colour is the answer to "will my heal get there first or land on top of somebody
+--! else's". The stock "colors" widget is the aura duration one and cannot be reused.
+local function CreateSetting_IncomingHealersColors(parent)
+    local widget
+
+    if not settingWidgets["incomingHealersColors"] then
+        widget = Cell.CreateFrame("CellIndicatorSettings_IncomingHealersColors", parent, 240, 54)
+        settingWidgets["incomingHealersColors"] = widget
+
+        local mineColor, otherColor
+
+        mineColor = Cell.CreateColorPicker(widget, L["My heal lands first"], false, function(r, g, b)
+            if not widget.colorsTable then return end
+            widget.colorsTable[1][1] = r
+            widget.colorsTable[1][2] = g
+            widget.colorsTable[1][3] = b
+            widget.func(widget.colorsTable)
+        end)
+        mineColor:SetPoint("TOPLEFT", 5, -8)
+
+        otherColor = Cell.CreateColorPicker(widget, L["Another healer lands first"], false, function(r, g, b)
+            if not widget.colorsTable then return end
+            widget.colorsTable[2][1] = r
+            widget.colorsTable[2][2] = g
+            widget.colorsTable[2][3] = b
+            widget.func(widget.colorsTable)
+        end)
+        otherColor:SetPoint("TOPLEFT", mineColor, "BOTTOMLEFT", 0, -8)
+
+        -- callback
+        function widget:SetFunc(func)
+            widget.func = func
+        end
+
+        -- show db value
+        function widget:SetDBValue(colorsTable)
+            widget.colorsTable = colorsTable
+            mineColor:SetColor(colorsTable[1])
+            otherColor:SetColor(colorsTable[2])
+        end
+    else
+        widget = settingWidgets["incomingHealersColors"]
+    end
+
+    widget:Show()
+    return widget
+end
+
 local function CreateSetting_SizeNormalBig(parent)
     local widget
 
@@ -6789,6 +6874,8 @@ local builders = {
     -- ["showOn"] = CreateSetting_ShowOn,
     ["maxValue"] = CreateSetting_MaxValue,
     ["threatThreshold"] = CreateSetting_ThreatThreshold, --! WotLK fix: порог аггро
+    ["clusterRadius"] = CreateSetting_ClusterRadius, --! WotLK feature: cluster radius
+    ["incomingHealersColors"] = CreateSetting_IncomingHealersColors, --! WotLK feature: two colours of the incoming-heal counter
     ["iconStyle"] = CreateSetting_IconStyle,
     ["powerTextFilters"] = CreateSetting_RoleFilters,
 }

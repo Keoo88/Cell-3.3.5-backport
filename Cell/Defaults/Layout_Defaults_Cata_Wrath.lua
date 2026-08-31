@@ -7,7 +7,9 @@ local addonName, Cell = ...
 --! was a stub and the options checkbox switched nothing on. The checkbox is gone too;
 --! the indices below shifted, and the record left in already-saved layouts is cleaned
 --! out by Revise.lua.
-Cell.defaults.builtIns = 28
+--! WotLK feature: 29 - "Cluster", the predictive AoE-cluster counter (Indicators/Cluster.lua).
+--! WotLK feature: 30 - "Incoming Healers", the incoming-heal counter (Indicators/IncomingHealers.lua).
+Cell.defaults.builtIns = 30
 
 Cell.defaults.indicatorIndices = {
     ["nameText"] = 1,
@@ -38,6 +40,8 @@ Cell.defaults.indicatorIndices = {
     ["crowdControls"] = 26,
     ["actions"] = 27,
     ["missingBuffs"] = 28,
+    ["cluster"] = 29,
+    ["incomingHealers"] = 30,
 }
 
 Cell.defaults.layout = {
@@ -308,6 +312,10 @@ Cell.defaults.layout = {
             --! каждый вход в игру).
             ["threatThreshold"] = 100,
             ["hideForTanks"] = false,
+            --! WotLK feature: "noPulse" keeps the red highlight but drops the alpha
+            --! pulse (tester request). Default false = exactly the old look, so an
+            --! update changes nothing silently; RepairAgainstDefaults back-fills it.
+            ["noPulse"] = false,
         }, -- 13
         {
             ["name"] = "Aggro (bar)",
@@ -524,6 +532,40 @@ Cell.defaults.layout = {
             --! базам ключ доберёт RepairAgainstDefaults в Revise.
             ["showGlow"] = true,
         }, -- 28
+        --! WotLK feature: predictive AoE-cluster counter (Indicators/Cluster.lua).
+        --! Off by default - an update must not silently put a new number on every
+        --! frame of an existing layout.
+        {
+            ["name"] = "Cluster",
+            ["indicatorName"] = "cluster",
+            ["type"] = "built-in",
+            ["enabled"] = false,
+            ["position"] = {"TOPRIGHT", "button", "TOPRIGHT", -1, -1},
+            ["frameLevel"] = 2,
+            ["font"] = {"Cell ".._G.DEFAULT, 11, "Outline", false},
+            ["color"] = {0.7, 1, 0.7},
+            --! 0 = radius of your own class and spec.
+            ["clusterRadius"] = 0,
+            ["lowHealthOnly"] = false,
+        }, -- 29
+        --! WotLK feature: incoming-heal counter (Indicators/IncomingHealers.lua).
+        --! Off by default, same reason as the one above.
+        {
+            ["name"] = "Incoming Healers",
+            ["indicatorName"] = "incomingHealers",
+            ["type"] = "built-in",
+            ["enabled"] = false,
+            ["position"] = {"BOTTOMRIGHT", "button", "BOTTOMRIGHT", -1, 1},
+            ["frameLevel"] = 2,
+            ["font"] = {"Cell ".._G.DEFAULT, 11, "Outline", false},
+            --! Two colours, not one: the first is used while the heal landing first is
+            --! the player's own, the second while somebody else gets there first.
+            ["incomingHealersColors"] = {
+                {0.4, 1, 0.4},
+                {1, 0.6, 0.2},
+            },
+            ["countHoTs"] = false,
+        }, -- 30
     },
 }
 
