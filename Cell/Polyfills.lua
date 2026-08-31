@@ -234,6 +234,9 @@ do
     --   4. LibGroupInfo talent-based specRole ONLY (never assignedRole - that
     --      field is written FROM this function, reading it back would create
     --      a circular dependency)
+    --   5. LibGroupTalents-1.0, if some other addon (DBM / WeakAuras / ElvUI)
+    --      has it loaded: talents of units Cell could never inspect, because
+    --      that library also fetches them over the addon channel
 
     --
     --! WotLK fix (Blizzard tank-icon bug): this polyfill used to REPLACE the
@@ -256,6 +259,31 @@ do
     -- hot path: this polyfill runs for every unit button role/power update,
     -- so cache the LibGroupInfo reference instead of a LibStub lookup per call
     local _cachedLGI
+
+    --! WotLK fix: optional second talent source, read exactly the way
+    --! WeakAuras reads it (WeakAuras.lua:44 - a LibStub lookup, then a single
+    --! LGT:GetUnitRole(unit) call in BuffTrigger2.lua:1163, nothing else; DBM
+    --! does the same in DBM-Core.lua:495/5711). Why it is needed here:
+    --! Cell's own LibGroupInfo can only learn a spec through NotifyInspect,
+    --! which requires CheckInteractDistance(unit, 1) (~28 yd) plus CanInspect,
+    --! so most of a raid is never inspected and used to land on the DAMAGER
+    --! default below - a protection paladin at range was drawn as DPS.
+    --! LibGroupTalents asks the other player over the addon channel when they
+    --! are out of inspect range ("REQUESTTALENTS", LibGroupTalents-1.0.lua:1310)
+    --! and every user of the library broadcasts its own talents on change, so
+    --! it usually knows roles Cell cannot see at all.
+    --! The library is NOT ours: DBM and WeakAuras both ship it. Only read it
+    --! when another addon has already loaded it, never install or require it.
+    local _cachedLGT
+    -- LibGroupTalents role vocabulary -> Cell contract. Same mapping DBM uses
+    -- (LGTRoleTable, DBM-Core.lua:5624); WeakAuras maps melee/caster onto the
+    -- DAMAGER role icon as well (BuffTrigger2.lua:551-554).
+    local LGT_ROLE_TO_CELL = {
+        tank = "TANK",
+        healer = "HEALER",
+        melee = "DAMAGER",
+        caster = "DAMAGER",
+    }
 
     --! WotLK fix: keep role selection in one resolver and expose a read-only
     --! diagnostic snapshot through Cell.GetUnitRoleDebugInfo(). The public Cell
@@ -408,6 +436,29 @@ do
             end
         end
 
+        --! WotLK fix: last source before the default - LibGroupTalents-1.0,
+        --! only if another addon already loaded it. Deliberately AFTER
+        --! LibGroupInfo: our own inspect result is validated per class, this is
+        --! a foreign cache we merely read. Resolved lazily (not at file scope)
+        --! because DBM and WeakAuras load after Cell, so the library does not
+        --! exist yet while Polyfills.lua runs. GetUnitRole only reads the
+        --! library's own roster cache, it does not start an inspect.
+        if (not result or details) and not _cachedLGT and LibStub then
+            local lgt = LibStub:GetLibrary("LibGroupTalents-1.0", true)
+            if type(lgt) == "table" and type(lgt.GetUnitRole) == "function" then
+                _cachedLGT = lgt
+            end
+        end
+        if _cachedLGT and _cachedLGT.GetUnitRole and (not result or details) then
+            local lgtRole = _cachedLGT:GetUnitRole(unit)
+            if details then details.lgtRole = lgtRole end
+            local mapped = lgtRole and LGT_ROLE_TO_CELL[lgtRole]
+            if not result and mapped then
+                result = mapped
+                roleSource = "LibGroupTalents (spec-based)"
+            end
+        end
+
         -- Final fallback: Default to DAMAGER if still no role detected
         -- This helps on custom servers like Ascension where spec detection may not work
         if not result then
@@ -445,6 +496,39 @@ do
             print(string.format("[Cell] Role debug: %s", roleDebugEnabled and "enabled" or "disabled"))
         end
     end
+end
+
+-- Cell.RegisterLGTRoleCallback
+--! WotLK fix: fan-out for LibGroupTalents role updates, modelled one for one on
+--! WeakAuras' LibGroupTalentsWrapper.lua: one registration on the library, a
+--! plain subscriber list, and a Register that does nothing when the library is
+--! absent. Needed because LibGroupTalents answers late - for a unit outside
+--! inspect range its talents arrive by addon comm seconds after the roster
+--! event, so without this the frames keep the stale role until some unrelated
+--! full update. Registration is deferred to PLAYER_LOGIN: DBM and WeakAuras
+--! carry the library and both load after Cell, so at file scope it is missing.
+do
+    local subscribers = {}
+
+    function Cell.RegisterLGTRoleCallback(func)
+        subscribers[#subscribers + 1] = func
+    end
+
+    local bridge = CreateFrame("Frame")
+    bridge:RegisterEvent("PLAYER_LOGIN")
+    bridge:SetScript("OnEvent", function(self)
+        self:UnregisterAllEvents()
+        self:SetScript("OnEvent", nil)
+        if #subscribers == 0 then return end
+        local lgt = LibStub and LibStub:GetLibrary("LibGroupTalents-1.0", true)
+        if type(lgt) ~= "table" or type(lgt.RegisterCallback) ~= "function" then return end
+        -- fired as (event, guid, unit, newSpec, ...) - LibGroupTalents-1.0.lua:899
+        lgt.RegisterCallback("CellLGTRoleBridge", "LibGroupTalents_Update", function(_, guid, unit)
+            for i = 1, #subscribers do
+                subscribers[i](guid, unit)
+            end
+        end)
+    end)
 end
 
 -- Cell.GetUnitClassToken

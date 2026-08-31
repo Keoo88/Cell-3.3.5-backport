@@ -792,7 +792,7 @@ local function CmdRoles()
     end
 
     Say(format("%srole resolution%s: %d units", C_HEAD, C_OFF, #units))
-    Say("unit name class | native | roster MT/MA | LGI | final/source")
+    Say("unit name class | native | roster MT/MA | LGI | LGT | final/source")
     for i = 1, #units do
         local unit = units[i]
         if UnitExists(unit) then
@@ -808,8 +808,12 @@ local function CmdRoles()
             local lgi = format("spec=%s assigned=%s inspected=%s name=%s",
                 tostring(info.lgiSpecRole), tostring(info.lgiAssignedRole),
                 tostring(info.lgiInspected), tostring(info.lgiSpecName))
-            print(format("  %s %s %s | native=%s | roster/flags=%s | %s | %s (%s)",
+            --! WotLK fix: LibGroupTalents is the source that covers units Cell
+            --! could never inspect - show it, otherwise "default fallback" is
+            --! indistinguishable from "library absent".
+            print(format("  %s %s %s | native=%s | roster/flags=%s | %s | LGT=%s | %s (%s)",
                 unit, name, tostring(class), native, assignments, lgi,
+                tostring(info.lgtRole),
                 tostring(info.finalRole), tostring(info.source)))
         end
     end

@@ -5808,4 +5808,15 @@ do
             F.HandleUnitButton("guid", guid, UnitButton_RoleChanged)
         end)
     end
+
+    --! WotLK fix: same repaint for the foreign LibGroupTalents source added to
+    --! Cell.UnitGroupRolesAssigned. Its role for a unit outside inspect range
+    --! arrives over the addon channel seconds after the roster event, and
+    --! nothing else in Cell would repaint the button by then.
+    if Cell.RegisterLGTRoleCallback then
+        Cell.RegisterLGTRoleCallback(function(guid)
+            if not Cell.loaded then return end
+            F.HandleUnitButton("guid", guid, UnitButton_RoleChanged)
+        end)
+    end
 end

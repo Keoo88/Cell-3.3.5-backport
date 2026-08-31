@@ -555,6 +555,15 @@ do
             roleSortFrame:GetScript("OnEvent")(roleSortFrame, "GroupInfo_Update")
         end)
     end
+
+    --! WotLK fix: role sorting has to react to the foreign LibGroupTalents
+    --! source too - that is where roles of units Cell never inspected come
+    --! from, and they arrive late (addon comm reply).
+    if Cell.RegisterLGTRoleCallback then
+        Cell.RegisterLGTRoleCallback(function()
+            roleSortFrame:GetScript("OnEvent")(roleSortFrame, "GroupInfo_Update")
+        end)
+    end
 end
 
 local function RaidFrame_UpdateLayout(layout, which)

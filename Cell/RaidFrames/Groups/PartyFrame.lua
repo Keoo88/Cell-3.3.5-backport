@@ -489,6 +489,15 @@ do
             partySortFrame:GetScript("OnEvent")(partySortFrame, "GroupInfo_Update")
         end)
     end
+
+    --! WotLK fix: same for the foreign LibGroupTalents source - a party member
+    --! out of inspect range gets a role only from that library, and only after
+    --! its addon-comm reply arrives.
+    if Cell.RegisterLGTRoleCallback then
+        Cell.RegisterLGTRoleCallback(function()
+            partySortFrame:GetScript("OnEvent")(partySortFrame, "GroupInfo_Update")
+        end)
+    end
 end
 
 -- local function PartyFrame_UpdateVisibility(which)
