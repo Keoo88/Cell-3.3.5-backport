@@ -129,7 +129,6 @@ local blessings = {}
 --! i.e. when learning a spell can change what my buttons should cast.
 local iProvideVariants = false
 local _, myClass = UnitClass("player")
-local myName
 
 do
     local function Handle(buff, t, k)
@@ -661,169 +660,17 @@ end
 --! blessings a raid member can possibly have equals the number of paladins in the group.
 --! The tracker used to ask a different question - "does this class want Kings/Might/
 --! Wisdom/Sanctuary" - and with a single paladin present it therefore reported three of
---! the four as missing on everybody, permanently. Two answers, best first:
---!   * PallyPower is the addon the paladins here hand out blessings with, and its
---!     assignment tables are plain globals that EVERY client fills from the raid comm,
---!     non-paladins included (PallyPower registers CHAT_MSG_ADDON without a class gate,
---!     and its ParseMessage writes PallyPower_Assignments / _NormalAssignments). So ask
---!     for the real plan: what is THIS unit supposed to get, from the paladins who are
---!     actually in the group right now. Stale entries for paladins who left are filtered
---!     out by the roster check; individual assignments override that one paladin's class
---!     assignment exactly the way PallyPower:GetSpellID resolves them.
---!   * without PallyPower (not installed, disabled, nothing assigned) fall back to
---!     counting: require at most (paladins - blessings already on the unit) more.
---! Nothing is read unless the tracker is showing blessings at all, nothing is ever
---! written into PallyPower's tables, and no blessing icon disappears from the bar either
---! way - only the "who is missing what" bookkeeping changes.
+--! the four as missing on everybody, permanently. The answer is counting: require at most
+--! (paladins - blessings already on the unit) more, and clear every blessing past that
+--! number so the counter on the bar cannot hold a unit from an earlier roster.
+--! No blessing icon disappears from the bar either way - only the "who is missing what"
+--! bookkeeping changes.
+--! A second layer on top of this read PallyPower's assignment tables to name the exact
+--! blessing each unit was promised. Withdrawn on the owner's request (2026-09-01): it
+--! only paid off while every paladin kept their plan up to date, and when they did not it
+--! asked for blessings nobody was going to cast. The count above needs no foreign addon.
 local numBlessers = 0
 local blessingsShown = false
-local paladinsInGroup = {}
-
-local ppPrefix
-local ppData = false        -- true when PallyPower gave us a usable plan
-local ppHasIndividual = false
-local ppByClass = {}        -- [classToken] = {[code] = true}, union over paladins present
-local ppByName = {}         -- [name] = {[code] = true} for units with an individual assignment
-local ppByNameClass = {}    -- [name] = class token that individual assignment was made for
-local ppMineByClass = {}    -- [classToken] = the code I am assigned to cast
-local ppMineByName = {}     -- [name] = the code I am assigned to cast
-local ppCodeByIndex         -- [PallyPower blessing index] = our buff code
-local NONE = {}             -- shared read-only empty set: "assigned nothing"
-
-local function BuildPPIndexMap(PP)
-    --! blessing index -> our buff code, matched by spell NAME. PallyPower numbers its
-    --! blessings differently per expansion (Salvation and Light exist before Wrath), and
-    --! both sides take their names from the same GetSpellInfo, so the name is the only
-    --! key that cannot silently point at the wrong blessing.
-    local map = {}
-    for i = 1, 6 do
-        local n1, n2 = PP.Spells[i], PP.GSpells[i]
-        for code in pairs(isBlessing) do
-            local t = buffs[code]
-            if (n1 and n1 ~= "" and t.buff1 and t.buff1.name == n1)
-                or (n2 and n2 ~= "" and t.buff2 and t.buff2.name == n2) then
-                map[i] = code
-            end
-        end
-    end
-    return map
-end
-
-local function ReadPallyPowerAssignments()
-    wipe(ppByClass)
-    wipe(ppByName)
-    wipe(ppByNameClass)
-    wipe(ppMineByClass)
-    wipe(ppMineByName)
-    ppData = false
-    ppHasIndividual = false
-
-    if not blessingsShown or numBlessers == 0 then return end
-
-    --! rule 3: PallyPower is somebody else's addon. Every field is checked before use and
-    --! nothing here writes into it.
-    local PP = _G.PallyPower
-    if type(PP) ~= "table" or type(PP.ClassID) ~= "table"
-        or type(PP.Spells) ~= "table" or type(PP.GSpells) ~= "table" then return end
-
-    --! PallyPower keys its saved assignments by expansion; the variable itself is file
-    --! local over there, but these three flags are public.
-    local flavor = (PP.IsWrath and "Wrath") or (PP.IsTBC and "TBC") or (PP.IsVanilla and "Vanilla")
-    if not flavor then return end
-
-    local greater = _G.PallyPower_Assignments
-    greater = type(greater) == "table" and greater[flavor] or nil
-    local normal = _G.PallyPower_NormalAssignments
-    normal = type(normal) == "table" and normal[flavor] or nil
-    if type(greater) ~= "table" and type(normal) ~= "table" then return end
-
-    ppCodeByIndex = ppCodeByIndex or BuildPPIndexMap(PP)
-    myName = myName or UnitName("player")
-
-    --! what each paladin present hands out to a whole class
-    local perPally = {}
-    if type(greater) == "table" then
-        for pally, byClass in pairs(greater) do
-            if paladinsInGroup[pally] and type(byClass) == "table" then
-                for idx, classToken in pairs(PP.ClassID) do
-                    local code = ppCodeByIndex[byClass[idx] or 0]
-                    if code then
-                        perPally[pally] = perPally[pally] or {}
-                        perPally[pally][idx] = code
-
-                        ppByClass[classToken] = ppByClass[classToken] or {}
-                        ppByClass[classToken][code] = true
-                        if pally == myName then ppMineByClass[classToken] = code end
-                        ppData = true
-                    end
-                end
-            end
-        end
-    end
-
-    --! an individual assignment replaces THAT paladin's class assignment for THAT player
-    --! only - see PallyPower:GetSpellID, where a normal assignment of 0 falls back to the
-    --! greater one. Collected first, then merged with the other paladins' plans below.
-    local overrides
-    if type(normal) == "table" then
-        for pally, byClass in pairs(normal) do
-            if paladinsInGroup[pally] and type(byClass) == "table" then
-                for idx, byTarget in pairs(byClass) do
-                    local classToken = PP.ClassID[idx]
-                    if classToken and type(byTarget) == "table" then
-                        for target, skill in pairs(byTarget) do
-                            local code = skill and ppCodeByIndex[skill]
-                            if code then
-                                ppHasIndividual = true
-                                ppData = true
-                                ppByNameClass[target] = classToken
-                                ppByName[target] = ppByName[target] or {}
-                                ppByName[target][code] = true
-                                if pally == myName then ppMineByName[target] = code end
-
-                                overrides = overrides or {}
-                                --! numeric key: cannot collide with a player name
-                                overrides[target] = overrides[target] or {[0] = idx}
-                                overrides[target][pally] = true
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-
-    if overrides then
-        for target, byPally in pairs(overrides) do
-            local set = ppByName[target]
-            local idx = byPally[0]
-            for pally, byIdx in pairs(perPally) do
-                if not byPally[pally] then
-                    local code = byIdx[idx]
-                    if code then set[code] = true end
-                end
-            end
-        end
-    end
-end
-
---! WotLK feature: PallyPower broadcasts every assignment change over the raid, so one
---! prefix comparison per addon message is all it takes to know the plan moved.
-local ppRefreshTimer
-local function RefreshPallyPowerLater(iterate)
-    if ppRefreshTimer then return end
-    --! one refresh per second at most: assigning a whole raid is a burst of messages, and
-    --! the delay also puts our read after PallyPower's own handler, whichever of the two
-    --! frames the client happens to dispatch first.
-    ppRefreshTimer = C_Timer.NewTimer(1, function()
-        ppRefreshTimer = nil
-        if not CellDB["tools"]["buffTracker"][1] then return end
-        --! in combat the bar refuses to repoint anyway, and PLAYER_REGEN_ENABLED does a
-        --! full sweep when the fight ends.
-        if InCombatLockdown() then return end
-        iterate()
-    end)
-end
 
 ---------------------------------------------------------------------
 -- missing buffs
@@ -895,26 +742,12 @@ local function CheckUnit(unit, updateBtn)
         end
 
         --! WotLK feature: blessings - see the blessings section above. Walked in a fixed
-        --! order because the fallback marks the first N of them.
+        --! order because only the first N missing ones are asked for.
         if blessingsShown then
-            local name, expected, mine
-            if ppData then
-                expected = ppByClass[class] or NONE
-                if ppHasIndividual then
-                    name = UnitName(unit)
-                    --! the name is only trusted for the class the assignment was made
-                    --! for - saved assignments outlive the raid they were made in
-                    if name and ppByNameClass[name] == class then
-                        expected = ppByName[name]
-                    end
-                end
-                mine = (name and ppMineByName[name]) or ppMineByClass[class]
-            end
-
             local have, num = 0, 0
             for i = 1, #blessings do
                 local buff = blessings[i]
-                if available[buff] and required[buff] and (not expected or expected[buff]) then
+                if available[buff] and required[buff] then
                     local exists, providedByMe = UnitBuffExists(unit, buff)
                     if exists then
                         unaffected[buff][unit] = nil
@@ -922,28 +755,20 @@ local function CheckUnit(unit, updateBtn)
                         if providedByMe then
                             hasBuffFromMe[unit] = true
                         end
-                    elseif expected then
-                        --! the plan says this unit gets this blessing: no guessing needed
-                        unaffected[buff][unit] = true
-                        --! and if the plan names somebody else's blessing, the indicator on
-                        --! the unit frame is not mine to light up
-                        if buffsProvidedByMe[buff] and (not mine or mine == buff) then
-                            UpdateMissingBuffs(unit, buff)
-                        end
                     else
                         num = num + 1
                         missingBlessings[num] = buff
                     end
                 else
-                    --! not wanted, not shown, or not part of the plan - clear it, or the
-                    --! counter on the bar keeps a unit from an earlier plan forever
+                    --! not wanted or not shown - clear it, or the counter on the bar keeps
+                    --! a unit from an earlier roster forever
                     unaffected[buff][unit] = nil
                 end
             end
 
             if num > 0 then
-                --! no plan to go by: every paladin can still cover one blessing, and the
-                --! ones already on the unit have used up that many paladins.
+                --! every paladin can cover one blessing, and the ones already on the unit
+                --! have used up that many paladins.
                 local slots = numBlessers - have
                 for i = 1, num do
                     local buff = missingBlessings[i]
@@ -974,7 +799,6 @@ local function IterateAllUnits()
     myUnit = ""
     --! WotLK feature: blessings - see the blessings section.
     numBlessers = 0
-    wipe(paladinsInGroup)
 
     local class, level
     for unit in F.IterateGroupMembers() do
@@ -987,8 +811,6 @@ local function IterateAllUnits()
             --! at the other end of the raid still holds a blessing on people.
             if class == "PALADIN" then
                 numBlessers = numBlessers + 1
-                local pname = UnitName(unit)
-                if pname then paladinsInGroup[pname] = true end
             end
 
             if UnitIsVisible(unit) then
@@ -1042,8 +864,8 @@ local function IterateAllUnits()
     end
 
     --! WotLK feature: blessings - work out whether any of them is on the bar at all (a
-    --! priest with "my class only" on never sees one), then read the plan for the roster
-    --! we have just walked. Both are per-sweep state that CheckUnit reads afterwards.
+    --! priest with "my class only" on never sees one). Per-sweep state that CheckUnit
+    --! reads afterwards.
     blessingsShown = false
     for i = 1, #blessings do
         if available[blessings[i]] then
@@ -1051,7 +873,6 @@ local function IterateAllUnits()
             break
         end
     end
-    ReadPallyPowerAssignments()
 
     --! WotLK feature: what the buttons cast can change with the spellbook, see
     --! UpdateSpellVariants.
@@ -1117,14 +938,6 @@ function buffTrackerFrame:GroupRosterUpdate(immediate)
         buffTrackerFrame:RegisterEvent("UNIT_FLAGS")
         buffTrackerFrame:RegisterEvent("PLAYER_UNGHOST")
 
-        --! WotLK feature: blessings - listen for PallyPower's own traffic so a
-        --! re-assignment mid-raid is picked up, but only when PallyPower is actually
-        --! loaded. Its prefix is public; the handler compares it and drops everything else.
-        ppPrefix = type(_G.PallyPower) == "table" and _G.PallyPower.commPrefix or nil
-        if ppPrefix then
-            buffTrackerFrame:RegisterEvent("CHAT_MSG_ADDON")
-        end
-
         --! WotLK feature: only meaningful for a class that owns a buff with a second
         --! version - learning it changes what the button has to cast.
         if iProvideVariants then
@@ -1176,14 +989,6 @@ end
 
 function buffTrackerFrame:PLAYER_UNGHOST()
     buffTrackerFrame:GroupRosterUpdate()
-end
-
---! WotLK feature: blessings - PallyPower changed its plan (assign, clear, a paladin
---! announcing what they know). Only the prefix is looked at; the re-read itself is
---! throttled, see RefreshPallyPowerLater.
-function buffTrackerFrame:CHAT_MSG_ADDON(prefix)
-    if prefix ~= ppPrefix then return end
-    RefreshPallyPowerLater(IterateAllUnits)
 end
 
 --! WotLK feature: a mage who just learned Dalaran Brilliance should cast it from now on,
@@ -1266,8 +1071,6 @@ end
 --! зарегистрированных событий не передаёт (кодекс: UNIT_AURA - unitTarget,
 --! READY_CHECK - name, UNIT_FLAGS - unit, остальные с пустым payload),
 --! так что одного параметра хватает всем.
---! WotLK feature: CHAT_MSG_ADDON does carry four (prefix, message, channel, sender), but
---! the handler only ever looks at the prefix, so one slot is still enough.
 buffTrackerFrame:SetScript("OnEvent", function(self, event, arg1)
     self[event](self, arg1)
 end)
