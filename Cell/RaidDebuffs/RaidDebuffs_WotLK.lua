@@ -399,7 +399,16 @@ local debuffs = {
             71257, -- 野蛮打击
             -------
             71316, -- 冰川打击
-            "71330", -- 寒冰坟墓
+            --! WotLK fix: was "71330" - quoted, i.e. tracked BY ID. The client knows
+            --! eight spells called Ice Tomb (16869, 29670, 69675, 69700, 69712, 70157,
+            --! 71330, 71331) because every raid size and difficulty gets its own id,
+            --! and an ID-tracked entry fires on exactly one of them. A real 25-man run
+            --! (reference/WoWCombatLog.txt) shows the Ice Sorceress casting 71331, so
+            --! 71330 never lit up at all. Unquoted the entry is matched BY NAME, which
+            --! covers all eight at once; Sindragosa keeps her own ID-tracked 70157
+            --! below and still wins there, because the lookup in Built-in.lua tries the
+            --! spell id before the spell name.
+            71331, -- Ice Tomb
             71320, -- 冰霜新星
             71327, -- 蛛网
             "71318", -- 寒冰箭
@@ -408,6 +417,44 @@ local debuffs = {
             71380, -- 寒冰冲击
             -36922, -- 低吼
             -- 71387, -- 冰霜光环
+            -------
+            --! WotLK fix: trash debuffs that a full 25-man clear actually puts on the
+            --! raid and this list did not have at all - taken from the encounter log
+            --! reference/WoWCombatLog.txt (2026-08-31, 19:19-21:46, all twelve bosses),
+            --! counted as "applications / distinct players hit" and kept only where the
+            --! raid has something to do about it. Ids are unquoted on purpose: see the
+            --! Ice Tomb note above.
+            71150, -- Plague Cloud (74 / 22, Plagued Abomination)
+            71252, -- Volley (55 / 25, Ymirjar Huntress)
+            70671, -- Leeching Rot (44 / 22, Blood-sucking imp)
+            72848, -- Arctic Breath (38 / 22, Rotting Frost Giant)
+            71151, -- Blast Wave (37 / 20, Darkfallen Archmage)
+            71157, -- Infected Wound (16 / 7, Plague Zombie)
+            71362, -- Frost Blast (10 / 5, Frostwing Whelp)
+            70432, -- Blood Sap (9 / 8, Darkfallen Tactician - stun)
+            72865, -- Death Plague (6 / 6, Rotting Frost Giant)
+            71103, -- Combobulating Spray (6 / 5, Plague Scientist)
+            71163, -- Devour Humanoid (4 / 4, Vengeful Fleshreaper)
+            --! WotLK fix: second batch from the same log - every remaining debuff a real
+            --! NPC put on a raider and this list did not have, either by id or by name.
+            --! Left out on purpose: zone and item auras (Chill of the Throne, the six
+            --! Citadel teleports, Exhaustion, Forbearance, Hypothermia, Ardent Defender,
+            --! Sulfuron Slammer, Geist Alarm), plain Dazed from melee, and everything one
+            --! raider casts on another. The last four here are listed unchecked because
+            --! they only shave armor or stun for a second - they sit in the options list
+            --! and take one click to switch on.
+            72571, -- Wounding Strike (9 / 2, Kor'kron Sergeant - healing taken down)
+            72026, -- Gut Spray (4 / 4, Gluttonous Abomination)
+            71124, -- Curse of Doom (3 / 2, Kor'kron Necrolyte)
+            70475, -- Giant Insect Swarm (3 / 3, Precious' trap in the Plagueworks)
+            69405, -- Consuming Shadows (3 / 3, Deathspeaker Attendant)
+            71552, -- Mortal Strike (2 / 2, Suffering Soul - healing taken down)
+            71298, -- Banish (2 / 1, Ymirjar Deathbringer)
+            71117, -- Avenger's Shield (2 / 1, Kor'kron Reaver - silence)
+            70645, -- Chains of Shadow (2 / 2, Darkfallen Noble)
+            71112, -- Curse of Agony (1 / 1, Deathspeaker Attendant)
+            -71960, -- Heroic Leap (2 / 2, Suffering Soul)
+            -71130, -- Frostfire Bolt (1 / 1, Kor'kron Invoker)
         },
         [1624] = { -- 玛洛加尔领主
             69065, -- 穿刺
@@ -423,6 +470,19 @@ local debuffs = {
             -72905, -- 寒冰箭雨
         },
         [1627] = { -- 冰冠冰川炮舰战
+            --! WotLK fix: the gunship battle was an empty list, so the fight showed
+            --! nothing at all. Both entries are proven by reference/WoWCombatLog.txt
+            --! (25-man, 19:53-20:08): counts are "applications / distinct players hit".
+            70309, -- Rending Throw (6 / 2, High Overlord Saurfang - tank bleed)
+            71787, -- Fel Iron Bomb (5 / 5, Captain Rupert)
+            --! WotLK fix: the enemy captains hit the boarding party too - same log, same
+            --! "applications / distinct players hit". Sunder Armor is matched by name, so
+            --! the one entry also covers 57807 cast by the Kor'kron Defender. Both of the
+            --! last two are unchecked: armor loss and a one-second stun are not worth a
+            --! frame each until the player asks for them.
+            71786, -- Rocket Launch (1 / 1, Captain Rupert)
+            -71554, -- Sunder Armor (2 / 1, Captain Grondel)
+            -65929, -- Charge Stun (1 / 1, Captain Grondel)
         },
         [1628] = { -- 死亡使者萨鲁法尔
             72385, -- 沸腾之血
@@ -443,6 +503,9 @@ local debuffs = {
             69674, -- 畸变感染
             72272, -- 邪恶毒气
             69789, -- 软泥洪流
+            --! WotLK fix: missing - the puddle the small oozes leave behind, 18 hits on
+            --! 15 players in reference/WoWCombatLog.txt (25-man, 20:55-21:02).
+            71208, -- Sticky Ooze
         },
         [1631] = { -- 普崔塞德教授
             70911, -- 肆虐毒疫
@@ -452,6 +515,16 @@ local debuffs = {
             70853, -- 可延展黏液
             72451, -- 畸变瘟疫
             -70353, -- 异变毒气
+            --! WotLK fix: Gas Variable above had no twin - the ooze half of the same
+            --! phase-3 mechanic was missing from the list entirely, although the log
+            --! reference/WoWCombatLog.txt shows it on 23 of 25 players (id 74118, 60
+            --! applications). Listed unchecked, exactly like Gas Variable, so nothing
+            --! changes on screen until the player ticks it.
+            -70352, -- Ooze Variable
+            --! WotLK fix: the bomb blast itself was missing - Choking Gas above is the
+            --! cloud, this is what hits whoever stands in it when the bomb goes off
+            --! (1 hit in reference/WoWCombatLog.txt, phase 2).
+            72622, -- Choking Gas Explosion
             -70308, -- 畸变
         },
         [1632] = { -- 鲜血王子议会
@@ -462,10 +535,20 @@ local debuffs = {
         [1633] = { -- 鲜血女王兰娜瑟尔
             70867, -- 鲜血女王的精华
             70877, -- 疯狂嗜血
-            "71264", -- 蜂拥之影
+            --! WotLK fix: was "71264" - tracked by id, and the id is the one the boss
+            --! uses on some raid sizes only. Unquoted it is matched by name and covers
+            --! every Swarming Shadows id; the "71265" row below keeps its own id key and
+            --! still wins for that one, because Built-in.lua looks the id up first.
+            71264, -- Swarming Shadows
             "71265", -- 蜂拥之影
             70838, -- 鲜血镜像
             70923, -- 失心疯
+            --! WotLK fix: three boss mechanics were missing entirely. Proven by
+            --! reference/WoWCombatLog.txt (25-man, 20:37-20:48), counted as
+            --! "applications / distinct players hit".
+            71340, -- Pact of the Darkfallen (33 / 17 - the link that must be broken)
+            73070, -- Incite Terror (45 / 23 - raid-wide fear)
+            71626, -- Delirious Slash (12 / 1 - tank bleed)
         },
         [1634] = { -- 踏梦者瓦莉瑟瑞娅
             70744, -- 酸性爆炸
@@ -480,16 +563,30 @@ local debuffs = {
             70106, -- 寒霜刺骨
             69649, -- 冰霜吐息
             "70157", -- 寒冰坟墓
-            "-70084", -- 冰霜光环
+            --! WotLK fix: was "-70084" - tracked by id. Sindragosa's aura is 71052 on
+            --! 25-man (111 hits on all 25 players in reference/WoWCombatLog.txt), so the
+            --! id-tracked row never fired there. Unquoted it matches by name and covers
+            --! every Frost Aura id. Still off by default, as before.
+            -70084, -- Frost Aura
+            --! WotLK fix: missing - the mark that says who is about to be encased in ice
+            --! and must run out, 14 hits on 12 players (25-man, 20:21-20:24).
+            70126, -- Frost Beacon
         },
         [1636] = { -- 巫妖王
             70338, -- 死疽
             70541, -- 寄生
             69409, -- 灵魂收割
             72133, -- 饱受折磨
-            "73654", -- 收割灵魂
+            --! WotLK fix: was "73654" - tracked by id. On 25-man the Lich King sends
+            --! 74297 instead (50 hits on all 25 players in reference/WoWCombatLog.txt),
+            --! so the row never fired: the whole soul-harvest phase was invisible.
+            --! Unquoted it matches by name and covers both.
+            73654, -- Harvest Souls
             69242, -- 灵魂尖啸
-            "-73655", -- 收割灵魂
+            --! WotLK fix: was "-73655", same reason; this is the singular Harvest Soul
+            --! put on the players dragged into Frostmourne (50 hits, 21:39-21:41).
+            --! Still off by default, as before.
+            -73655, -- Harvest Soul
             -72754, -- 污染
             -72350, -- 霜之哀伤的怒火
         },

@@ -844,8 +844,11 @@ local function CreateDebuffsFrame()
     local create = Cell.CreateButton(debuffsTab, L["Create"], "accent-hover", {66, 20})
     create:SetPoint("TOPLEFT", debuffListFrame, "BOTTOMLEFT", 0, -5)
     create:SetScript("OnClick", function()
-        local popup = Cell.CreateConfirmPopup(debuffsTab, 200, L["Create new debuff (id)"], function(self)
-            local id = tonumber(self.editBox:GetText()) or 0
+        --! WotLK feature: the input takes a spell id, a pasted spell link or a spell
+        --! NAME. The id chosen by either path is kept on the popup instead of being
+        --! re-read from the edit box, which now may hold a name.
+        local popup = Cell.CreateConfirmPopup(debuffsTab, 240, L["Create new debuff (id or name)"], function(self)
+            local id = self.createSpellId or 0
             local name = F.GetSpellInfo(id)
             if not name then
                 F.Print(L["Invalid spell id."])
@@ -898,33 +901,121 @@ local function CreateDebuffsFrame()
             CellSpellTooltip:Hide()
         end, function()
             CellSpellTooltip:Hide()
-        end, true, true)
-        popup.editBox:SetNumeric(true)
-        popup.editBox:SetScript("OnTextChanged", function()
-            local spellId = tonumber(popup.editBox:GetText())
-            if not spellId then
-                CellSpellTooltip:Hide()
-                popup.button1:SetEnabled(false)
-                return
-            end
+        end, true, true, 1)
 
+        --! WotLK feature: a name cannot be resolved by GetSpellInfo("name") on 3.3.5a -
+        --! that call reads the player's spellbook, not the spell database - so a name
+        --! query runs F.SearchSpellsByName and the matches are offered in the popup's
+        --! dropdown, the same idea as the WeakAuras options spell picker. Every id
+        --! carrying a matched name gets its own row, because one name is a family of
+        --! ids (one per raid size and difficulty) and only the player knows which one
+        --! is wanted. The id path below is unchanged: an id still previews instantly
+        --! with no search at all.
+        popup.editBox:SetNumeric(false)
+
+        local function ShowPreview(spellId)
             local name, icon = F.GetSpellInfo(spellId)
             if not name then
-                CellSpellTooltip:Hide()
+                popup.createSpellId = nil
                 popup.button1:SetEnabled(false)
+                CellSpellTooltip:Hide()
                 return
             end
 
+            popup.createSpellId = spellId
             popup.button1:SetEnabled(true)
             CellSpellTooltip:SetOwner(popup, "ANCHOR_NONE")
-            CellSpellTooltip:SetPoint("TOPLEFT", popup, "BOTTOMLEFT", 0, -1)
+            --! WotLK feature: anchored to the right, not below - the match dropdown
+            --! now opens its list under the popup and the tooltip would cover it.
+            CellSpellTooltip:SetPoint("TOPLEFT", popup, "TOPRIGHT", 5, 0)
             --! WotLK fix: SetSpellByID on 3.3.5 is (id, isPet, showSubtext) - a texture path
             --! in slot 2 is truthy and sends the client to the PET spellbook. The icon used to
             --! be picked up by a global hooksecurefunc, which was removed; set it explicitly.
             CellSpellTooltip:SetSpellIcon(icon)
             CellSpellTooltip:SetSpellByID(spellId)
             CellSpellTooltip:Show()
+        end
+
+        local function ShowMatches(matches)
+            popup.dropdown1:ClearItems()
+
+            if #matches == 0 then
+                popup.dropdown1.text:SetText(L["No spell found."])
+                popup.createSpellId = nil
+                popup.button1:SetEnabled(false)
+                CellSpellTooltip:Hide()
+                return
+            end
+
+            local items = {}
+            for i = 1, #matches do
+                local id, name = matches[i][1], matches[i][2]
+                items[i] = {
+                    --! WotLK perf: no "|T<icon>|t" in the item text. Upstream already
+                    --! found that inline textures in a long dropdown freeze the client
+                    --! (see the note in Modules/ClickCastings/ClickCastings.lua), and the
+                    --! icon is shown by the tooltip anyway.
+                    ["text"] = name.." |cff777777("..id..")|r",
+                    ["value"] = id,
+                    ["onClick"] = function()
+                        ShowPreview(id)
+                    end,
+                }
+            end
+
+            popup.dropdown1:SetItems(items)
+            popup.dropdown1:SetSelectedItem(1)
+            ShowPreview(matches[1][1])
+        end
+
+        popup.editBox:SetScript("OnTextChanged", function()
+            if popup.searchTimer then
+                popup.searchTimer:Cancel()
+                popup.searchTimer = nil
+            end
+            F.AbortSpellSearch()
+            popup.dropdown1:ClearItems()
+
+            local text = strtrim(popup.editBox:GetText() or "")
+            --! WotLK feature: a pasted spell link ("|cff71d5ff|Hspell:72385|h[...]|h|r")
+            --! carries the id, so accept it instead of making the user cut it out.
+            local spellId = tonumber(strmatch(text, "|Hspell:(%d+)") or text)
+
+            if spellId then
+                ShowPreview(spellId)
+                return
+            end
+
+            popup.createSpellId = nil
+            popup.button1:SetEnabled(false)
+            CellSpellTooltip:Hide()
+            if text == "" then return end
+
+            popup.dropdown1.text:SetText(L["Searching..."])
+            --! WotLK perf: debounced - one pass over the spell database per pause in
+            --! typing, not one per keystroke.
+            popup.searchTimer = C_Timer.NewTimer(0.4, function()
+                popup.searchTimer = nil
+                F.SearchSpellsByName(text, 50, ShowMatches)
+            end)
         end)
+
+        --! WotLK feature: the popup is shared and rebuilt on every click, so this hook
+        --! is installed once and reads its state from the popup, never from the closure
+        --! of the click that happened to install it.
+        if not popup.searchHooked then
+            popup.searchHooked = true
+            popup:HookScript("OnHide", function(self)
+                if self.searchTimer then
+                    self.searchTimer:Cancel()
+                    self.searchTimer = nil
+                end
+                F.AbortSpellSearch()
+                self.createSpellId = nil
+                if self.dropdown1 then self.dropdown1:ClearItems() end
+            end)
+        end
+
         popup:SetPoint("TOPLEFT", 117, -170)
     end)
 

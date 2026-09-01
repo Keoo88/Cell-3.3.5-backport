@@ -2028,6 +2028,146 @@ end
         return name, icon, tonumber(rank)
     end
 
+--! WotLK feature: find spells by localized NAME, the way WeakAuras' options do.
+--! GetSpellInfo("name") exists on 3.3.5a but resolves against the player's
+--! SPELLBOOK (highest known rank), so it can never find a raid debuff the player
+--! does not learn. The only route on this client is a pass over the id space.
+--! Nothing is retained afterwards: a persistent name index costs memory in every
+--! session for an action taken a few times ever in the options pane, and Lua 5.1
+--! has no JIT to make that table cheap. Instead the pass is sliced across frames
+--! (SCAN_BUDGET_MS each), so one query is a fraction of a second and leaves no
+--! footprint.
+--! MAX_SPELL_ID is measured, not guessed: Spell.dbc of the 3.3.5a client
+--! (patch-enUS-3.MPQ) holds 49839 records and its highest id is 80864. A private
+--! server may add ids above that - those stay reachable by typing the id itself,
+--! which is the path that existed before this search.
+--! EVERY id carrying a matched name is reported, not just one of them: one spell
+--! name covers a whole family of ids, because each raid size and difficulty gets
+--! its own - "Pact of the Darkfallen" is 71336, 71340, 71341 and 71390, and which
+--! one a given server actually casts cannot be told apart from here. WeakAuras
+--! keeps the same full set per name (WeakAurasOptions/Cache.lua) and offers it to
+--! the user; picking one by rule is what produced the wrong id before.
+--! The pass runs DOWNWARDS, so the newest (WotLK) ids are met first and the name
+--! cap keeps them instead of vanilla ranks; it always runs to the bottom, because
+--! the remaining ids of an already matched name lie below the first one.
+local MAX_SPELL_ID = 80864
+local SCAN_BUDGET_MS = 5
+local SCAN_CHUNK = 500
+--! a name family can be 30 ids wide (Frostbolt has one per rank), so the row count
+--! is capped too - by dropping whole names from the tail of the sorted list, never
+--! by cutting a family in half, which would hide the very id that is needed
+local SCAN_MAX_ROWS = 200
+
+local scanner
+local scanQuery, scanLimit, scanCallback, scanNextId, scanGroups, scanByName
+
+local function StopScan()
+    if scanner then scanner:Hide() end
+    scanQuery, scanCallback, scanGroups, scanByName = nil, nil, nil, nil
+end
+
+function F.AbortSpellSearch()
+    StopScan()
+end
+
+local function ScanRank(from, to, length)
+    if from ~= 1 then return 3 end -- somewhere inside the name
+    if to == length then return 1 end -- whole name
+    return 2 -- name starts with the query
+end
+
+local function ScanCompare(a, b)
+    if a.rank ~= b.rank then return a.rank < b.rank end
+    return a.ids[1] > b.ids[1] -- newest content first
+end
+
+local function ScanOnUpdate()
+    local start = debugprofilestop()
+    local id, groups, byName, query, limit = scanNextId, scanGroups, scanByName, scanQuery, scanLimit
+    local n = #groups
+
+    while true do
+        local stop = id - SCAN_CHUNK
+        if stop < 1 then stop = 1 end
+
+        while id >= stop do
+            local name, _, icon = GetSpellInfo(id)
+            if name then
+                local group = byName[name]
+                if group then
+                    --! another id of a name already matched - always taken, the
+                    --! cap counts names, not ids
+                    local ids = group.ids
+                    ids[#ids+1] = id
+                elseif n < limit then
+                    local from, to = strfind(strlower(name), query, 1, true)
+                    if from then
+                        n = n + 1
+                        group = {["name"] = name, ["icon"] = icon,
+                                 ["rank"] = ScanRank(from, to, #name), ["ids"] = {id}}
+                        byName[name] = group
+                        groups[n] = group
+                    end
+                end
+            end
+            id = id - 1
+        end
+
+        if id < 1 or debugprofilestop() - start >= SCAN_BUDGET_MS then
+            break
+        end
+    end
+
+    scanNextId = id
+
+    if id < 1 then
+        local callback = scanCallback
+        StopScan()
+        sort(groups, ScanCompare)
+
+        local result, count = {}, 0
+        for i = 1, #groups do
+            local group = groups[i]
+            local ids = group.ids
+            if count > 0 and count + #ids > SCAN_MAX_ROWS then break end
+            --! ids were met newest-first; hand them over ascending, so the base
+            --! spell of a family is the first thing offered
+            for j = #ids, 1, -1 do
+                count = count + 1
+                result[count] = {ids[j], group.name, group.icon, group.rank}
+            end
+        end
+        callback(result)
+    end
+end
+
+--! query is matched as a case-insensitive substring of the localized spell name.
+--! limit caps the number of distinct NAMES collected; every id of a collected
+--! name is reported, so the row count can be larger.
+--! callback receives {{id, name, icon, rank}, ...}, whole-name matches first,
+--! then names starting with the query, then the rest; the ids of one name stay
+--! together and ascending.
+function F.SearchSpellsByName(query, limit, callback)
+    StopScan()
+    if type(query) ~= "string" then return end
+    query = strlower(strtrim(query))
+    if query == "" then return end
+
+    if not scanner then
+        scanner = CreateFrame("Frame")
+        scanner:Hide()
+        scanner:SetScript("OnUpdate", ScanOnUpdate)
+    end
+
+    scanQuery = query
+    scanLimit = limit or 50
+    scanCallback = callback
+    scanNextId = MAX_SPELL_ID
+    scanGroups = {}
+    scanByName = {}
+    scanner:Show()
+end
+
 --! WotLK fix: guard `if Cell.isWrath or Cell.isVanilla` вырезан - на 3.3.5 он
 --! всегда истина. Блок объявлял F.GetRankSuffix и F.GetMaxSpellRank плюс свои
 --! файловые локалы; тело поднято на верхний уровень как есть.
