@@ -104,6 +104,9 @@ local defaultSpells = {
             2050, -- 次级治疗术
             2054, -- 治疗术
             2060, -- 强效治疗术
+            --! WotLK fix: missing upstream. Rank-1 id like every entry here,
+            --! F.GetMaxSpellRank resolves the known rank (48120 on 3.3.5).
+            32546, -- Binding Heal
             139, -- 恢复
             33076, -- 愈合祷言
             596, -- 治疗祷言
@@ -173,7 +176,12 @@ local defaultSpells = {
 }
 
 function F.GetClickCastingSpellList(class)
-    local spells = defaultSpells[class]["common"] and F.Copy(defaultSpells[class]["common"]) or {}
+    --! WotLK fix: normalize the token and return {} for an unknown class - the raw
+    --! defaultSpells[class] index took the whole Click-Casting tab down on any miss.
+    local classSpells = class and defaultSpells[strupper(class)]
+    if not classSpells then return {} end
+
+    local spells = classSpells["common"] and F.Copy(classSpells["common"]) or {}
 
     -- fill data
     for i, v in pairs(spells) do

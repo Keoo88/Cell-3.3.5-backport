@@ -175,10 +175,56 @@ end
 --     end
 -- end
 
-local GetNearestPixelSize = PixelUtil.GetNearestPixelSize
+local GetPixelToUIUnitFactor = PixelUtil.GetPixelToUIUnitFactor
+local mfloor, mceil = math.floor, math.ceil
+
+--! WotLK fix: P.Scale is the hottest leaf of the whole addon. Run 41 measured 82,276 calls
+--! in a single 0.59 s layout rebuild (entering an instance flips the group type, which
+--! re-applies geometry over every widget and every indicator of every unit button), and
+--! that burst is the freeze the tester reported. The old body was one line but four calls:
+--! CellParent:GetEffectiveScale() across the C boundary, GetNearestPixelSize, and inside it
+--! GetPixelToUIUnitFactor plus Round. On Lua 5.1 without a JIT those calls, not the
+--! arithmetic, are the price, so only the pixel-to-UI factor is cached and the rest is
+--! inlined. The basis is still read every call and compared, so the cache invalidates itself
+--! and no hook can go stale (UIParent scale, uiscale CVar, resolution change and
+--! CellParent:SetScale in Appearance are all covered by that comparison alone).
+--! The expression is GetNearestPixelSize's own, kept character for character:
+--! Round((size * scale) / factor) * factor / scale, no minPixels clamp because P.Scale never
+--! passed one. Folding the two divisions into premultiplied constants was tried first and
+--! rejected: (s * sc) / f and s * (sc / f) are not the same double, and 3,646 of 17,080
+--! probed size/scale pairs crossed a Round() boundary because of it - up to 1.33 UI units,
+--! i.e. a visibly misplaced border.
+local scaleBasis, scaleFactor = false, 1
 
 function P.Scale(desiredPixels)
-    return GetNearestPixelSize(desiredPixels, CellParent:GetEffectiveScale())
+    if desiredPixels == 0 then return 0 end
+
+    local scale = CellParent:GetEffectiveScale()
+    if scale ~= scaleBasis then
+        --! Same guard as GetNearestPixelSize: a zero scale would divide by zero.
+        scaleBasis = (scale and scale ~= 0) and scale or 1
+        scaleFactor = GetPixelToUIUnitFactor()
+    end
+
+    local numPixels = (desiredPixels * scaleBasis) / scaleFactor
+    if numPixels >= 0 then
+        numPixels = mfloor(numPixels + 0.5)
+    else
+        numPixels = mceil(numPixels - 0.5)
+    end
+    return numPixels * scaleFactor / scaleBasis
+end
+
+--! WotLK perf: file-local alias for the hottest leaf. `P` is addon.pixelPerfectFuncs,
+--! a table this file creates, so no foreign owner can swap Scale out from under it
+--! (rule 3) - and every call below saves one hash lookup on P.
+local Scale = P.Scale
+
+--! WotLK perf: the stamp callers compare to decide whether geometry they stored earlier
+--! still matches the screen. GetPixelToUIUnitFactor above is memoised for the session,
+--! so the effective scale is the only variable Scale() has.
+function P.GetScale()
+    return CellParent:GetEffectiveScale()
 end
 
 function P.Size(frame, width, height)
@@ -219,8 +265,19 @@ function P.SetGridSize(region, gridWidth, gridHeight, gridSpacingH, gridSpacingV
     end
 end
 
+--! WotLK perf: 44339 calls in one 5-man run, and each one allocated a fresh 5-slot
+--! table that ClearPoints then threw away - pure GC pressure on Lua 5.1. `frame.points`
+--! is private to Point/ClearPoints/Repoint (nothing else in Cell reads it), so it is now
+--! a pooled counted array: `.n` is the live count, the slot tables are reused, and wipe
+--! and tinsert are gone. The arity dispatch is kept as-is on purpose: 20+ call sites
+--! pass a trailing offset that can be nil at runtime, and named slots cannot tell
+--! "5 args, last one nil" from "4 args".
 function P.Point(frame, ...)
-    if not frame.points then frame.points = {} end
+    local pts = frame.points
+    if not pts then
+        pts = {n = 0}
+        frame.points = pts
+    end
     local point, anchorTo, anchorPoint, x, y
 
     local n = select("#", ...)
@@ -234,14 +291,24 @@ function P.Point(frame, ...)
         point, anchorTo, anchorPoint, x, y = ...
     end
 
-    tinsert(frame.points, {point, anchorTo or frame:GetParent(), anchorPoint or point, x or 0, y or 0})
-    local n = #frame.points
-    frame:SetPoint(frame.points[n][1], frame.points[n][2], frame.points[n][3], P.Scale(frame.points[n][4]), P.Scale(frame.points[n][5]))
+    n = (pts.n or #pts) + 1
+    pts.n = n
+
+    local p = pts[n]
+    if p then
+        p[1], p[2], p[3], p[4], p[5] = point, anchorTo or frame:GetParent(), anchorPoint or point, x or 0, y or 0
+    else
+        p = {point, anchorTo or frame:GetParent(), anchorPoint or point, x or 0, y or 0}
+        pts[n] = p
+    end
+
+    frame:SetPoint(p[1], p[2], p[3], Scale(p[4]), Scale(p[5]))
 end
 
 function P.ClearPoints(frame)
     frame:ClearAllPoints()
-    if frame.points then wipe(frame.points) end
+    --! WotLK perf: drop the count, keep the slot tables for P.Point to refill.
+    if frame.points then frame.points.n = 0 end
 end
 
 --------------------------------------------
@@ -306,11 +373,19 @@ function P.Reborder(frame, ignoreSnippetVar)
     if r then frame:SetBackdropBorderColor(r, g, b, a) end
 end
 
+--! WotLK perf: 33840 calls in one 5-man run. `pairs` over an array cost one `next`
+--! C-call per slot plus the iterator setup; the count is now known, so a numeric for
+--! does the same walk with no C-calls, and Scale is the file-local.
 function P.Repoint(frame)
-    if not frame.points or #frame.points == 0 then return end
+    local pts = frame.points
+    if not pts then return end
+    local n = pts.n or #pts
+    if n == 0 then return end
+
     frame:ClearAllPoints()
-    for _, t in pairs(frame.points) do
-        frame:SetPoint(t[1], t[2], t[3], P.Scale(t[4]), P.Scale(t[5]))
+    for i = 1, n do
+        local t = pts[i]
+        frame:SetPoint(t[1], t[2], t[3], Scale(t[4]), Scale(t[5]))
     end
 end
 

@@ -7,8 +7,6 @@ local L = Cell.L
 local F = Cell.funcs
 ---@type CellIndicatorFuncs
 local I = Cell.iFuncs
---! WotLK fix: realm normalization is private to Cell.
-local GetNormalizedRealmName = Cell.GetNormalizedRealmName
 
 Cell.vars.playerFaction = UnitFactionGroup("player")
 
@@ -16,21 +14,119 @@ Cell.vars.playerFaction = UnitFactionGroup("player")
 -- game version
 -------------------------------------------------
 Cell.isAsian = LOCALE_zhCN or LOCALE_zhTW or LOCALE_koKR
-
---! WotLK fix: Polyfills.lua establishes private flavor state from this addon's
---! fixed Interface 30300 target. Do not recompute it from optional project
---! globals supplied by a custom core or standalone compatibility addon.
-Cell.flavor = "wrath"
-Cell.isRetail = false
-Cell.isVanilla = false
-Cell.isWrath = true
-Cell.isCata = false
-Cell.isMists = false
-Cell.isTWW = false
+--! WotLK fix: flavor flags are owned by Core_Wrath.lua (single owner).
 
 -------------------------------------------------
 -- class
 -------------------------------------------------
+--! WotLK fix: no native C_CreatureInfo/GetClassInfo on 3.3.5a. Keep the fallback
+--! private: preserve a custom-core or !!!ClassicAPI owner when one exists.
+local wrathClassFiles = {
+    [1] = "WARRIOR",
+    [2] = "PALADIN",
+    [3] = "HUNTER",
+    [4] = "ROGUE",
+    [5] = "PRIEST",
+    [6] = "DEATHKNIGHT",
+    [7] = "SHAMAN",
+    [8] = "MAGE",
+    [9] = "WARLOCK",
+    [11] = "DRUID",
+}
+
+function Cell.GetClassInfoTuple(classID)
+    local info
+    if C_CreatureInfo and C_CreatureInfo.GetClassInfo then
+        info = C_CreatureInfo.GetClassInfo(classID)
+    end
+    if type(info) == "table" then
+        return info.className, info.classFile, info.classID
+    end
+    if GetClassInfo then
+        local a, b, c = GetClassInfo(classID)
+        if type(a) == "table" then
+            return a.className, a.classFile, a.classID
+        elseif a ~= nil then
+            return a, b, c
+        end
+    end
+
+    local classFile = wrathClassFiles[classID]
+    if classFile then
+        local localized = LOCALIZED_CLASS_NAMES_MALE and LOCALIZED_CLASS_NAMES_MALE[classFile]
+        return localized or classFile, classFile, classID
+    end
+end
+
+--! WotLK fix: never touch the native global UnitClassBase - Blizzard_RaidUI reads
+--! both of its returns. Cell consumers use this private one-value normalizer:
+--! some 3.3.5 cores/addons yield mixed case ("Hunter") or a display name with
+--! spaces ("Death Knight"), and the token is used as a table key.
+do
+    local nativeUnitClass = UnitClass
+
+    local VALID_TOKENS = {
+        WARRIOR = true, PALADIN = true, HUNTER = true, ROGUE = true,
+        PRIEST = true, DEATHKNIGHT = true, SHAMAN = true, MAGE = true,
+        WARLOCK = true, DRUID = true,
+    }
+
+    -- lazy-built reverse map: localized class name -> canonical token
+    local localizedToToken
+    local function BuildLocalizedMap()
+        localizedToToken = {}
+        for _, source in pairs({LOCALIZED_CLASS_NAMES_MALE, LOCALIZED_CLASS_NAMES_FEMALE}) do
+            if type(source) == "table" then
+                for token, localizedName in pairs(source) do
+                    if type(localizedName) == "string" and VALID_TOKENS[token] then
+                        localizedToToken[string.upper(localizedName)] = token
+                    end
+                end
+            end
+        end
+    end
+
+    local function NormalizeUnitClass(class, localizedName)
+        --! perf fast-path: on 3.3.5 UnitClass() already returns a valid uppercase
+        --! token for virtually every call, so skip the upper/gsub allocations
+        --! (this runs on every unit button update).
+        if VALID_TOKENS[class] then
+            return class
+        end
+        if type(class) == "string" then
+            -- uppercase + strip spaces: "Death Knight"/"DEATH KNIGHT" -> "DEATHKNIGHT"
+            local token = string.gsub(string.upper(class), "%s+", "")
+            if VALID_TOKENS[token] then
+                return token
+            end
+            -- non-English value (e.g. ruRU display name): try the reverse map
+            if not localizedToToken then BuildLocalizedMap() end
+            local mapped = localizedToToken[string.upper(class)]
+            if mapped then
+                return mapped
+            end
+        end
+        -- last resort: reverse-map the localized first return of UnitClass
+        if type(localizedName) == "string" then
+            if not localizedToToken then BuildLocalizedMap() end
+            local mapped = localizedToToken[string.upper(localizedName)]
+            if mapped then
+                return mapped
+            end
+        end
+        -- give back *something* uppercase rather than a guaranteed-miss value
+        if type(class) == "string" then
+            return (string.gsub(string.upper(class), "%s+", ""))
+        end
+        return class
+    end
+
+    function Cell.GetUnitClassToken(unit)
+        local localizedName, classFileName = nativeUnitClass(unit)
+        return NormalizeUnitClass(classFileName, localizedName)
+    end
+end
+
 local localizedClass = {}
 FillLocalizedClassList(localizedClass)
 
@@ -180,6 +276,296 @@ end
 -- function F.GetPlayerRole()
 
 -- end
+
+-------------------------------------------------
+-- roles
+-------------------------------------------------
+-- Cell.UnitGroupRolesAssigned
+do
+    -- RETAIL CONTRACT: returns ONE string - "TANK" / "HEALER" / "DAMAGER" / "NONE".
+    -- Every consumer (UnitButton, SpotlightFrame, LibGroupInfo) relies on this.
+    --
+    --! WotLK fix: 3.3.5a HAS a native UnitGroupRolesAssigned (added with the Dungeon
+    --! Finder) but with the OLD contract - THREE BOOLEANS (isTank, isHealer, isDamage).
+    --! It must keep them: Blizzard's own PlayerFrame/PartyMemberFrame LFD icons and
+    --! foreign frames (oUF, XPerl) read all three, and a single truthy string made
+    --! every grouped player wear a TANK shield. So the resolver is Cell-private and
+    --! converts the native triple to the retail single string before the chain below.
+    --
+    -- Sources, in priority order:
+    --   1. Native 3.3.5 LFD role (converted from three booleans; also
+    --      passes through retail-style strings on custom cores)
+    --   2. GetRaidRosterInfo role (LFG / raid assignments)
+    --   3. Party MAINTANK / MAINASSIST assignments
+    --   4. LibGroupInfo talent-based specRole ONLY (never assignedRole - that
+    --      field is written FROM this function, reading it back would create
+    --      a circular dependency)
+    --   5. LibGroupTalents-1.0, if some other addon (DBM / WeakAuras / ElvUI)
+    --      has it loaded: talents of units Cell could never inspect, because
+    --      that library also fetches them over the addon channel
+
+    local orig_UnitGroupRolesAssigned = UnitGroupRolesAssigned
+
+    -- Debug flag for role detection (toggle with /cell roledebug)
+    local roleDebugEnabled = false
+
+    -- hot path: this runs for every unit button role/power update, so cache the
+    -- library reference instead of a LibStub lookup per call
+    local _cachedLGI
+
+    --! WotLK fix: optional second talent source, read exactly the way WeakAuras and
+    --! DBM read it (LibStub lookup, then one LGT:GetUnitRole(unit) call). Needed
+    --! because our own LibGroupInfo can only inspect within ~28 yd, so most of a raid
+    --! used to land on the DAMAGER default - a protection paladin at range was drawn
+    --! as DPS. LibGroupTalents asks the other player over the addon channel instead.
+    --! The library is NOT ours (DBM and WeakAuras ship it): only read it when another
+    --! addon already loaded it, never install or require it. Resolved lazily because
+    --! those addons load after Cell.
+    local _cachedLGT
+    -- LibGroupTalents role vocabulary -> Cell contract. Same mapping DBM uses
+    -- (LGTRoleTable, DBM-Core.lua:5624); WeakAuras maps melee/caster onto the
+    -- DAMAGER role icon as well (BuffTrigger2.lua:551-554).
+    local LGT_ROLE_TO_CELL = {
+        tank = "TANK",
+        healer = "HEALER",
+        melee = "DAMAGER",
+        caster = "DAMAGER",
+    }
+
+    --! WotLK fix: one resolver for both the live role and the /cell debug roles
+    --! snapshot, so diagnostics cannot silently disagree with the frames.
+    local function ResolveCellUnitRole(unit, wantDetails)
+        local details = wantDetails and {unit = unit} or nil
+        if not unit then
+            if details then
+                details.finalRole = "NONE"
+                details.source = "missing unit"
+            end
+            return "NONE", "missing unit", details
+        end
+
+        local result = nil
+        local roleSource = "none"
+
+        -- Native 3.3.5 LFD roles (three booleans), or a retail-style string
+        -- on custom cores that already backported the new contract
+        if orig_UnitGroupRolesAssigned then
+            local r1, r2, r3 = orig_UnitGroupRolesAssigned(unit)
+            if details then
+                details.native1, details.native2, details.native3 = r1, r2, r3
+            end
+            if type(r1) == "string" then
+                if r1 == "TANK" or r1 == "HEALER" or r1 == "DAMAGER" then
+                    result = r1
+                    roleSource = "native (string contract)"
+                end
+                -- "NONE" or anything else: fall through to the chain below
+            elseif r1 then
+                result = "TANK"
+                roleSource = "native LFD (boolean contract)"
+            elseif r2 then
+                result = "HEALER"
+                roleSource = "native LFD (boolean contract)"
+            elseif r3 then
+                result = "DAMAGER"
+                roleSource = "native LFD (boolean contract)"
+            end
+        end
+
+        --! WotLK fix (chat spam regression): the fallback chain below may
+        --! only run for PLAYER units in OUR group. GetPartyAssignment is
+        --! server-validated on some cores - calling it for pets / NPCs
+        --! ("pet", "raidpetN", "bossN") spams the ERR_NOT_IN_YOUR_PARTY
+        --! system message ("X is not in your party.") twice per button on
+        --! every roster update / relog. Pets and NPCs can't have roles:
+        --! return "NONE" immediately (retail contract does the same).
+        if not result then
+            local isPlayer = UnitIsPlayer(unit)
+            local inOurGroup = isPlayer and
+                (UnitIsUnit(unit, "player") or UnitInParty(unit) or UnitInRaid(unit))
+            if details then
+                details.isPlayer = not not isPlayer
+                details.inOurGroup = not not inOurGroup
+            end
+            if not isPlayer or not inOurGroup then
+                if details then
+                    details.finalRole = "NONE"
+                    details.source = not isPlayer and "non-player unit" or "unit outside group"
+                end
+                return "NONE", not isPlayer and "non-player unit" or "unit outside group", details
+            end
+        end
+
+        -- For raid members, get role from GetRaidRosterInfo
+        --! WotLK fix: UnitInRaid already RETURNS the roster index (0-based, nil
+        --! if not in the raid), so scanning the whole roster with UnitIsUnit and
+        --! building "raid"..i strings just to find it again is pure waste - this
+        --! runs for every unit button on every roster/role update. Blizzard's own
+        --! FrameXML does exactly this: TargetFrame.lua:659-661
+        --! (id = UnitInRaid("target"); GetRaidRosterInfo(id + 1)).
+        local raidIndex = (not result or details) and UnitInRaid(unit)
+        if details then details.raidIndex = raidIndex end
+        if raidIndex then
+            -- GetRaidRosterInfo returns: name, rank, subgroup, level, class, fileName, zone, online, isDead, role, isML
+            local _, _, _, _, _, _, _, _, _, role = GetRaidRosterInfo(raidIndex + 1)
+            if details then details.raidRosterRole = role end
+            if not result and role and role ~= "NONE" and role ~= "" then
+                roleSource = "GetRaidRosterInfo"
+                if role == "MAINTANK" or role == "TANK" then
+                    result = "TANK"
+                elseif role == "HEALER" then
+                    result = "HEALER"
+                elseif role == "MAINASSIST" or role == "DAMAGER" or role == "DPS" then
+                    result = "DAMAGER"
+                end
+            end
+        end
+
+        -- Fallback: Check party assignments (Main Tank/Main Assist)
+        --! WotLK fix: only meaningful while actually in a group. On some
+        --! cores GetPartyAssignment("MAINTANK", "player") returns true when
+        --! SOLO, painting a tank icon on any ungrouped character (tester:
+        --! resto shaman solo in Dalaran showed a tank icon). Retail
+        --! assignments only exist in groups; skip to spec-based detection.
+        local grouped = GetNumRaidMembers() > 0 or GetNumPartyMembers() > 0
+        if grouped and (not result or details) then
+            local isMainTank = GetPartyAssignment("MAINTANK", unit)
+            local isMainAssist = GetPartyAssignment("MAINASSIST", unit)
+            if details then
+                details.mainTank = not not isMainTank
+                details.mainAssist = not not isMainAssist
+            end
+            if not result then
+                if isMainTank then
+                    result = "TANK"
+                    roleSource = "MainTank assignment"
+                elseif isMainAssist then
+                    result = "DAMAGER"
+                    roleSource = "MainAssist assignment"
+                end
+            end
+        end
+
+        -- Fallback: talent-based detection via LibGroupInfo (specRole ONLY)
+        if (not result or details) and not _cachedLGI and LibStub then
+            _cachedLGI = LibStub:GetLibrary("LibGroupInfo", true)
+        end
+        local LibGroupInfo = _cachedLGI
+        if LibGroupInfo and (not result or details) then
+            local guid = UnitGUID(unit)
+            if details then details.guid = guid end
+            if guid then
+                local cachedInfo = LibGroupInfo:GetCachedInfo(guid)
+                if details then
+                    details.lgiCached = not not cachedInfo
+                    if cachedInfo then
+                        details.lgiSpecRole = cachedInfo.specRole
+                        details.lgiAssignedRole = cachedInfo.assignedRole
+                        details.lgiInspected = cachedInfo.inspected
+                        details.lgiSpecName = cachedInfo.specName
+                    end
+                end
+                if not result and cachedInfo then
+                    local specRole = cachedInfo.specRole
+                    if specRole and specRole ~= "NONE" then
+                        roleSource = "LibGroupInfo (spec-based)"
+                        if specRole == "TANK" then
+                            result = "TANK"
+                        elseif specRole == "HEALER" then
+                            result = "HEALER"
+                        elseif specRole == "DAMAGER" or specRole == "MELEE" or specRole == "RANGED" then
+                            result = "DAMAGER"
+                        end
+                    end
+                end
+            end
+        end
+
+        --! WotLK fix: last source before the default. Deliberately AFTER
+        --! LibGroupInfo: our own inspect result is validated per class, this is a
+        --! foreign cache we merely read. GetUnitRole starts no inspect.
+        if (not result or details) and not _cachedLGT and LibStub then
+            local lgt = LibStub:GetLibrary("LibGroupTalents-1.0", true)
+            if type(lgt) == "table" and type(lgt.GetUnitRole) == "function" then
+                _cachedLGT = lgt
+            end
+        end
+        if _cachedLGT and _cachedLGT.GetUnitRole and (not result or details) then
+            local lgtRole = _cachedLGT:GetUnitRole(unit)
+            if details then details.lgtRole = lgtRole end
+            local mapped = lgtRole and LGT_ROLE_TO_CELL[lgtRole]
+            if not result and mapped then
+                result = mapped
+                roleSource = "LibGroupTalents (spec-based)"
+            end
+        end
+
+        -- Final fallback: Default to DAMAGER if still no role detected
+        -- This helps on custom servers like Ascension where spec detection may not work
+        if not result then
+            result = "DAMAGER"
+            roleSource = "default fallback"
+        end
+
+        if details then
+            details.finalRole = result
+            details.source = roleSource
+        end
+        return result, roleSource, details
+    end
+
+    function Cell.UnitGroupRolesAssigned(unit)
+        local result, roleSource = ResolveCellUnitRole(unit, false)
+        if roleDebugEnabled then
+            print(string.format("[Role Debug] %s -> %s (source: %s)",
+                UnitName(unit) or unit, result, roleSource))
+        end
+        return result
+    end
+
+    --! WotLK fix: diagnostic-only role snapshot used by /cell debug roles.
+    function Cell.GetUnitRoleDebugInfo(unit)
+        local _, _, details = ResolveCellUnitRole(unit, true)
+        return details
+    end
+
+    -- /cell roledebug
+    Cell.sFuncs = Cell.sFuncs or {}
+    Cell.sFuncs.ToggleRoleDebug = function()
+        roleDebugEnabled = not roleDebugEnabled
+        print(string.format("[Cell] Role debug: %s", roleDebugEnabled and "enabled" or "disabled"))
+    end
+end
+
+-- Cell.RegisterLGTRoleCallback
+--! WotLK fix: fan-out for LibGroupTalents role updates, modelled on WeakAuras'
+--! LibGroupTalentsWrapper.lua. Needed because the library answers late - talents of
+--! a unit outside inspect range arrive by addon comm seconds after the roster event,
+--! so without this the frames keep the stale role. Registration is deferred to
+--! PLAYER_LOGIN: DBM and WeakAuras carry the library and both load after Cell.
+do
+    local subscribers = {}
+
+    function Cell.RegisterLGTRoleCallback(func)
+        subscribers[#subscribers + 1] = func
+    end
+
+    local bridge = CreateFrame("Frame")
+    bridge:RegisterEvent("PLAYER_LOGIN")
+    bridge:SetScript("OnEvent", function(self)
+        self:UnregisterAllEvents()
+        self:SetScript("OnEvent", nil)
+        if #subscribers == 0 then return end
+        local lgt = LibStub and LibStub:GetLibrary("LibGroupTalents-1.0", true)
+        if type(lgt) ~= "table" or type(lgt.RegisterCallback) ~= "function" then return end
+        -- fired as (event, guid, unit, newSpec, ...) - LibGroupTalents-1.0.lua:899
+        lgt.RegisterCallback("CellLGTRoleBridge", "LibGroupTalents_Update", function(_, guid, unit)
+            for i = 1, #subscribers do
+                subscribers[i](guid, unit)
+            end
+        end)
+    end)
+end
 
 -------------------------------------------------
 -- color
@@ -834,6 +1220,15 @@ end
 --     return string.gsub(GetRealmName(), " ", "")
 -- end
 
+--! WotLK fix: no native GetNormalizedRealmName on 3.3.5a. Keep the dash/space
+--! normalization private instead of publishing a shared global.
+local function GetNormalizedRealmName()
+    local realm = GetRealmName()
+    if not realm then return "" end
+    return (string.gsub(realm, "[-%s]", ""))
+end
+Cell.GetNormalizedRealmName = GetNormalizedRealmName
+
 function F.UnitFullName(unit)
     if not unit or not UnitIsPlayer(unit) then return end
 
@@ -906,17 +1301,27 @@ local separatedHeaders = {"CellRaidFrameHeader1", "CellRaidFrameHeader2", "CellR
 --! RegisterFrame/UnregisterFrame producer exists in this backport; active secure
 --! buttons are enumerated directly by F.IterateAllUnitButtons instead.
 
+--! WotLK perf: the only steady-state hot path of the group layer - 1051 calls in run 43,
+--! each re-reading `Cell.unitButtons` up to 8 times and `Cell.vars` up to 6, every read a
+--! GETGLOBAL lookup in _G plus chained fields. Both hoisted once. `not ucgo or (ucgo and X)`
+--! is just `not ucgo or X`, four times. `ipairs` -> numeric for over the header arrays:
+--! they are dense by construction, `CellUnitButton_OnLoad` fills slots 1..N in creation
+--! order (`UnitButton_Cata_Wrath.lua:5526`) and nothing ever removes one.
 function F.IterateAllUnitButtons(func, updateCurrentGroupOnly, updateQuickAssists, skipShared)
+    local ub = Cell.unitButtons
+    local all = not updateCurrentGroupOnly
+    local groupType = Cell.vars.groupType
+
     -- solo
-    if not updateCurrentGroupOnly or (updateCurrentGroupOnly and Cell.vars.groupType == "solo") then
-        for _, b in pairs(Cell.unitButtons.solo) do
+    if all or groupType == "solo" then
+        for _, b in pairs(ub.solo) do
             func(b)
         end
     end
 
     -- party
-    if not updateCurrentGroupOnly or (updateCurrentGroupOnly and Cell.vars.groupType == "party") then
-        for index, b in pairs(Cell.unitButtons.party) do
+    if all or groupType == "party" then
+        for index, b in pairs(ub.party) do
             if index ~= "units" then
                 func(b)
             end
@@ -924,30 +1329,35 @@ function F.IterateAllUnitButtons(func, updateCurrentGroupOnly, updateQuickAssist
     end
 
     -- raid
-    if not updateCurrentGroupOnly or (updateCurrentGroupOnly and Cell.vars.groupType == "raid") then
-        if not updateCurrentGroupOnly or Cell.vars.currentLayoutTable.main.combineGroups then
-            for _, b in ipairs(Cell.unitButtons.raid[combinedHeader]) do
-                func(b)
+    if all or groupType == "raid" then
+        local raid = ub.raid
+        local combineGroups = not all and Cell.vars.currentLayoutTable.main.combineGroups
+
+        if all or combineGroups then
+            local t = raid[combinedHeader]
+            for i = 1, #t do
+                func(t[i])
             end
         end
 
-        if not updateCurrentGroupOnly or not Cell.vars.currentLayoutTable.main.combineGroups then
-            for _, header in ipairs(separatedHeaders) do
-                for _, b in ipairs(Cell.unitButtons.raid[header]) do
-                    func(b)
+        if all or not combineGroups then
+            for h = 1, #separatedHeaders do
+                local t = raid[separatedHeaders[h]]
+                for i = 1, #t do
+                    func(t[i])
                 end
             end
         end
 
         -- arena pet
-        for _, b in pairs(Cell.unitButtons.arena) do
+        for _, b in pairs(ub.arena) do
             func(b)
         end
     end
 
     -- group pet
-    if not updateCurrentGroupOnly or (updateCurrentGroupOnly and Cell.vars.groupType == "raid") or (updateCurrentGroupOnly and Cell.vars.groupType == "party") then
-        for index, b in pairs(Cell.unitButtons.pet) do
+    if all or groupType == "raid" or groupType == "party" then
+        for index, b in pairs(ub.pet) do
             if index ~= "units" then
                 func(b)
             end
@@ -956,12 +1366,13 @@ function F.IterateAllUnitButtons(func, updateCurrentGroupOnly, updateQuickAssist
 
     if not skipShared then
         -- npc
-        for _, b in ipairs(Cell.unitButtons.npc) do
-            func(b)
+        local npc = ub.npc
+        for i = 1, #npc do
+            func(npc[i])
         end
 
         -- spotlight
-        for _, b in pairs(Cell.unitButtons.spotlight) do
+        for _, b in pairs(ub.spotlight) do
             func(b)
         end
     end
@@ -970,8 +1381,9 @@ end
 
 function F.IterateSharedUnitButtons(func)
     -- npc
-    for _, b in ipairs(Cell.unitButtons.npc) do
-        func(b)
+    local npc = Cell.unitButtons.npc
+    for i = 1, #npc do
+        func(npc[i])
     end
 
     -- spotlight
@@ -1379,6 +1791,19 @@ end
 -------------------------------------------------
 -- units
 -------------------------------------------------
+-- Cell.UnitInPhase
+--! WotLK fix: preserve a real custom-core phase API, but keep the stock fallback
+--! private so foreign addons do not mistake an unconditional true for support.
+do
+    local nativeUnitInPhase = UnitInPhase
+    function Cell.UnitInPhase(unit)
+        if type(nativeUnitInPhase) == "function" then
+            return not not nativeUnitInPhase(unit)
+        end
+        return true
+    end
+end
+
 function F.GetNumSubgroupMembers(group)
     local n = 0
     for i = 1, GetNumGroupMembers() do
@@ -1935,6 +2360,27 @@ end
 -------------------------------------------------
 -- frame
 -------------------------------------------------
+-- Cell.RegisterAttributeDriver / Cell.UnregisterAttributeDriver
+--! WotLK fix: RegisterAttributeDriver is a later shared API with a different
+--! attribute-name contract. Strip "state-" and delegate to native 3.3.5
+--! RegisterStateDriver; never publish or replace the foreign-facing globals.
+do
+    local function ToStateName(attribute)
+        if type(attribute) == "string" then
+            return string.match(attribute, "^state%-(.+)$") or attribute
+        end
+        return attribute
+    end
+
+    function Cell.RegisterAttributeDriver(frame, attribute, state)
+        return RegisterStateDriver(frame, ToStateName(attribute), state)
+    end
+
+    function Cell.UnregisterAttributeDriver(frame, attribute)
+        return UnregisterStateDriver(frame, ToStateName(attribute))
+    end
+end
+
 --! WotLK fix: здесь была обёртка F.GetMouseFocus, которая сначала пробовала
 --! ретейловый GetMouseFoci() и индексировала его результат как [1], а лишь потом
 --! падала на нативный GetMouseFocus(). На 3.3.5 ретейлового имени нет ни в C-API
@@ -2004,6 +2450,25 @@ end
 -------------------------------------------------
 -- spell
 -------------------------------------------------
+-- Cell.UnitBuff / Cell.UnitDebuff
+--! WotLK fix: 3.3.5 returns (name, rank, icon, ...), retail drops rank. These
+--! private wrappers reshape it to the retail tuple; the globals stay untouched.
+do
+    local nativeUnitBuff, nativeUnitDebuff = UnitBuff, UnitDebuff
+
+    function Cell.UnitBuff(unit, index, filter)
+        local name, _, icon, count, debuffType, duration, expirationTime, caster, isStealable, _, spellId = nativeUnitBuff(unit, index, filter)
+        if not name then return nil end
+        return name, icon, count, debuffType, duration, expirationTime, caster, isStealable, nil, spellId
+    end
+
+    function Cell.UnitDebuff(unit, index, filter)
+        local name, _, icon, count, debuffType, duration, expirationTime, caster, isStealable, _, spellId = nativeUnitDebuff(unit, index, filter)
+        if not name then return nil end
+        return name, icon, count, debuffType, duration, expirationTime, caster, isStealable, nil, spellId
+    end
+end
+
 -- https://wow.gamepedia.com/UIOBJECT_GameTooltip
 -- local function EnumerateTooltipLines_helper(...)
 --     for i = 1, select("#", ...) do
@@ -2476,8 +2941,8 @@ local IsSpellKnownOrOverridesKnown = IsSpellKnownOrOverridesKnown or IsSpellKnow
 --! локал захватывал nil, и отладочный вид `/cellrc` падал в "attempt to call
 --! a nil value" каждый кадр, пока был открыт. Работало это только потому, что
 --! имя давал внешний !!!ClassicAPI - ровно класс GAP-015. Cell.UnitInPhase
---! (Polyfills.lua) - приватная nil-безопасная версия: зовёт натив, если ядро
---! сервера его всё-таки добавило, иначе true (фазинга на 3.3.5 нет).
+--! (секция "units" выше) - приватная nil-безопасная версия: зовёт натив, если
+--! ядро сервера его всё-таки добавило, иначе true (фазинга на 3.3.5 нет).
 local UnitInSamePhase = Cell.UnitInPhase
 
 local playerClass = UnitClassBase("player")
@@ -2486,7 +2951,7 @@ local friendSpells = {
     -- ["DEATHKNIGHT"] = 47541,
     -- ["DEMONHUNTER"] = ,
     --! WotLK fix: тернарники по Cell.isWrath/isRetail свёрнуты в константы 3.3.5 -
-    --! флаги заданы литералами выше (строки 24-28), ветка выбиралась статически.
+    --! флаги заданы в Core_Wrath.lua, ветка выбиралась статически.
     ["DRUID"] = 5185, -- 治疗之触 (Healing Touch)
     -- FIXME: [361469 活化烈焰] 会被英雄天赋 [431443 时序烈焰] 替代，但它而且有问题
     -- IsSpellInRange 始终返回 nil

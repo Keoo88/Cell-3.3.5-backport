@@ -1509,6 +1509,10 @@ local function CreateListPane()
 
     Cell.CreateScrollFrame(bindingsFrame, -5, 5)
     bindingsFrame.scrollFrame:SetScrollStep(25)
+    --! WotLK fix: the scroll frame itself ate clicks meant for the binding rows;
+    --! only its content needs the mouse.
+    bindingsFrame.scrollFrame:EnableMouse(false)
+    bindingsFrame.scrollFrame.content:EnableMouse(true)
 
     -- new & save & cancel
     local newBtn = Cell.CreateButton(listPane, L["New"], "blue-hover", {141, 20})

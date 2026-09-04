@@ -112,12 +112,11 @@ local shieldEnabled, overshieldEnabled, overshieldReverseFillEnabled
 
 --! WotLK fix: Cell's health/power smoothing must not depend on the global
 --! SmoothStatusBarMixin. Standalone !!!ClassicAPI may load first and own that
---! global, while without it Polyfills.lua previously supplied only snap-to-value
---! stubs. Keep a private two-phase driver and attach its methods directly to
---! Cell bars so both load modes have identical behavior.
+--! global, and a bare client has no such mixin at all. Keep a private two-phase
+--! driver and attach its methods directly to Cell bars so both load modes have
+--! identical behavior.
 local smoothBars = {}
 local smoothDriver = CreateFrame("Frame")
-local ProcessCellSmoothBars
 --! WotLK perf: the snapshot buffer is a file-local reused every frame instead of a
 --! fresh `{}` inside the OnUpdate. This handler runs at full framerate while any bar
 --! is animating, and at 40 units it grew an 80-slot table 60 times a second - pure
@@ -133,7 +132,10 @@ local function ClampBarValue(bar, value)
     return value
 end
 
-ProcessCellSmoothBars = function(self, elapsed)
+--! WotLK perf: published on B instead of a file-local. The driver frame is anonymous, so a
+--! name-based frame walk cannot reach this handler at all; through B it is measurable. Also
+--! one file-local less in a chunk close to Lua's 200-local ceiling. See GAP-133.
+function B.ProcessSmoothBars(self, elapsed)
     local pending = smoothPending
     local n = 0
     for bar, target in pairs(smoothBars) do
@@ -143,8 +145,8 @@ ProcessCellSmoothBars = function(self, elapsed)
     end
 
     local active
-    --! WotLK perf: доля интерполяции зависит только от elapsed, а он один на кадр -
-    --! считать её внутри цикла значило звать min по разу на каждую полосу.
+    --! WotLK perf: the interpolation share depends only on elapsed, and elapsed is one per
+    --! frame - computing it inside the loop meant one min() call per bar.
     local amount = min(elapsed * 15, 1)
     for i = 1, n, 2 do
         local bar = pending[i]
@@ -153,13 +155,12 @@ ProcessCellSmoothBars = function(self, elapsed)
         --! this snapshot is being processed. Only consume the entry when it is
         --! still the same target; a newer target is left for the next frame.
         if smoothBars[bar] == queuedTarget then
-            --! WotLK perf: GetMinMaxValues спрашивался у клиента дважды на каждую
-            --! полосу в кадре - внутри ClampBarValue и ещё раз ниже, под range.
-            --! Это C-вызов, между двумя чтениями нет ни одного SetValue, ответ
-            --! гарантированно тот же. При 40 юнитах и двух полосах на кнопку это
-            --! 80 лишних переходов Lua->C в кадре, ~4800 в секунду на анимации.
-            --! Тело ClampBarValue вставлено сюда как есть; сама функция остаётся,
-            --! её зовёт ResetSmoothedValue (холодный путь).
+            --! WotLK perf: GetMinMaxValues used to be asked twice per bar per frame - once
+            --! inside ClampBarValue and again below for range. It is a C call, no SetValue
+            --! happens between the two reads, so the answer is guaranteed identical. At 40
+            --! units and two bars per button that is 80 needless Lua->C crossings per frame,
+            --! ~4800 per second while animating. ClampBarValue's body is inlined here as is;
+            --! the function itself stays, ResetSmoothedValue calls it on the cold path.
             local minValue, maxValue = bar:GetMinMaxValues()
             local target = queuedTarget
             if target < minValue then
@@ -196,7 +197,8 @@ end
 local function AttachCellSmoothing(bar)
     function bar:SetSmoothedValue(value)
         smoothBars[self] = value
-        smoothDriver:SetScript("OnUpdate", ProcessCellSmoothBars)
+        --! Read from B, not captured: whatever B holds right now is what gets installed.
+        smoothDriver:SetScript("OnUpdate", B.ProcessSmoothBars)
     end
 
     function bar:SetMinMaxSmoothedValue(minValue, maxValue)
@@ -727,7 +729,16 @@ local function FlushQueue()
     wipe(queue)
 end
 
-local function AddToInitQueue(b)
+--! WotLK perf: the 15 spotlight buttons exist from load, but spotlight.enabled is false
+--! by default - half of a 5-man rebuild and ~28% of a 25-man one on a frame nobody sees.
+--! Dormant buttons are skipped only once they are BUILT, so b.indicators stays complete
+--! for the incremental branches of UpdateIndicators. `force`: caller holds a button that
+--! must be built regardless.
+local function AddToInitQueue(b, force)
+    if not force and b.isSpotlight and not b._waitingForIndicatorCreation then
+        local spotlight = Cell.vars.currentLayoutTable["spotlight"]
+        if not (spotlight and spotlight["enabled"]) then return end
+    end
     b._indicatorsReady = nil
     b._status = WAITING_FOR_INIT
     b._config = Cell.vars.currentLayoutTable["indicators"]
@@ -753,6 +764,16 @@ local function AddToUpdateQueue(b)
     b._status = WAITING_FOR_UPDATE
     queue[b] = true
     F.Debug("UpdateQueue +", b:GetName(), "unit", b.states.unit or "nil")
+end
+
+--! WotLK perf: wake-up for buttons AddToInitQueue skipped as dormant, called from
+--! SpotlightFrame's UpdateLayout listener. A _config that is not the current layout's
+--! indicator table means a layout switch passed the button by while it was dormant.
+function B.QueueIndicatorInit(b)
+    if queue[b] then return end
+    if b._indicatorsReady and b._config == Cell.vars.currentLayoutTable["indicators"] then return end
+    AddToInitQueue(b)
+    if not updater:IsShown() then updater:Show() end
 end
 
 -------------------------------------------------
@@ -1575,13 +1596,35 @@ local function UnitButton_UpdateDebuffs(self)
                 refreshing = false
             end
 
+            -- prepare raidDebuffs
+            --! WotLK perf: I.GetDebuffOrder was called twice per matching debuff -
+            --! once as the condition, once for the stored order - and it is not a
+            --! plain lookup: it re-evaluates the aura's stack condition every call.
+            --! One call, one local.
+            --! WotLK fix: moved above the debuffs block, which now needs the same
+            --! answer (see the dispellable-by-me note there) - still one call.
+            local debuffOrder
+            if raidDebuffsOn then
+                debuffOrder = I.GetDebuffOrder(name, spellId, count)
+            end
+
             if debuffsOn and not debuffBlacklist[spellId] and FilterWeakenedSoul(spellId) then
                 local isBigDebuff = bigDebuffs[spellId]
                 if not isBigDebuff and name then
                     isBigDebuff = bigDebuffNames[name]
                 end
 
-                if isBigDebuff or (not debuffsOnlyDispellable or I.CanDispel(debuffType)) then
+                --! WotLK fix: "only show debuffs dispellable by me" also hid every
+                --! raid-boss debuff. Nearly all WotLK encounter mechanics carry no
+                --! dispel type at all (Spell.dbc Dispel = 0: Vile Gas, Mutated
+                --! Infection, Vampiric Bite, Pact of the Darkfallen, Sticky Ooze...),
+                --! so I.CanDispel(nil) returns nil and the filter dropped them. The
+                --! Raid Debuffs indicator still caught them, but it shows 1-3 icons by
+                --! default, so on a boss the rest vanished from the frames. Same shape
+                --! of exception the dispels path already carries for Bleed: the filter
+                --! is meant to trim dispel clutter, not to hide encounter damage.
+                --! Debuffs the addon knows as raid debuffs bypass the gate.
+                if isBigDebuff or debuffOrder or (not debuffsOnlyDispellable or I.CanDispel(debuffType)) then
                     if isBigDebuff then  -- isBigDebuff
                         debuffsBig[i] = refreshing
                     else
@@ -1598,15 +1641,6 @@ local function UnitButton_UpdateDebuffs(self)
             --! buff path does (upstream computes it for both aura types).
             I.UpdateCustomIndicators(self, "debuff", spellId, name, start, duration, debuffType or "", icon, count, refreshing, source == "player" or source == "pet")
 
-            -- prepare raidDebuffs
-            --! WotLK perf: I.GetDebuffOrder was called twice per matching debuff -
-            --! once as the condition, once for the stored order - and it is not a
-            --! plain lookup: it re-evaluates the aura's stack condition every call.
-            --! One call, one local.
-            local debuffOrder
-            if raidDebuffsOn then
-                debuffOrder = I.GetDebuffOrder(name, spellId, count)
-            end
             if debuffOrder then
                 raidDebuffsFound = true
                 tinsert(debuffsRaid, i)
@@ -1997,14 +2031,27 @@ local function UnitButton_UpdateBuffs(self)
         end
     end
 
-    -- update defensiveCooldowns
-    indicators.defensiveCooldowns:UpdateSize(defensiveFound - 1)
+    --! WotLK perf: these three ran unconditionally -- even for a disabled indicator,
+    --! whose count is always 0, and even when the count did not change. Same count means
+    --! same size, so remember it; geometry changes clear _lastShown in Built-in.lua.
+    --! See GAP-131 / STUDY_PERFORMANCE 10.24.
+    local shown = defensiveFound - 1
+    if defensiveOn and indicators.defensiveCooldowns._lastShown ~= shown then
+        indicators.defensiveCooldowns._lastShown = shown
+        indicators.defensiveCooldowns:UpdateSize(shown)
+    end
 
-    -- update externalCooldowns
-    indicators.externalCooldowns:UpdateSize(externalFound - 1)
+    shown = externalFound - 1
+    if externalOn and indicators.externalCooldowns._lastShown ~= shown then
+        indicators.externalCooldowns._lastShown = shown
+        indicators.externalCooldowns:UpdateSize(shown)
+    end
 
-    -- update allCooldowns
-    indicators.allCooldowns:UpdateSize(allFound - 1)
+    shown = allFound - 1
+    if allOn and indicators.allCooldowns._lastShown ~= shown then
+        indicators.allCooldowns._lastShown = shown
+        indicators.allCooldowns:UpdateSize(shown)
+    end
 
     -- hide drinking
     if not drinkingFound and indicators.statusText:GetStatus() == "DRINKING" then
@@ -2852,20 +2899,27 @@ function B.GetThreatMobUnit()
     end
 end
 
-local function UnitButton_UpdateThreat(self)
+--! WotLK perf: mobArg lets a pass resolve the threat mob once instead of per button;
+--! false = resolved, no mob; nil = resolve here. See P-65 / GAP-132.
+local function UnitButton_UpdateThreat(self, mobArg)
     local unit = self.states.displayedUnit
     if not unit or not UnitExists(unit) then return end
 
     local blink = enabledIndicators["aggroBlink"]
     local border = enabledIndicators["aggroBorder"]
     if not blink and not border then
-        --! WotLK perf: оба индикатора выключены - ни одного C-вызова угрозы.
+        --! WotLK perf: both indicators off - not a single threat C call.
         self.indicators.aggroBlink:Hide()
         self.indicators.aggroBorder:Hide()
         return
     end
 
-    local mob = B.GetThreatMobUnit()
+    local mob = mobArg
+    if mob == nil then
+        mob = B.GetThreatMobUnit()
+    elseif mob == false then
+        mob = nil
+    end
     local status, percent, isTanking
 
     if mob then
@@ -2932,7 +2986,8 @@ local function UnitButton_UpdateThreat(self)
     end
 end
 
-local function UnitButton_UpdateThreatBar(self)
+--! WotLK perf: mobArg as in UnitButton_UpdateThreat above.
+local function UnitButton_UpdateThreatBar(self, mobArg)
     if not enabledIndicators["aggroBar"] then
         self.indicators.aggroBar:Hide()
         return
@@ -2944,7 +2999,12 @@ local function UnitButton_UpdateThreatBar(self)
     --! WotLK fix: моба берём тем же правилом, что и мигание с рамкой (см.
     --! B.GetThreatMobUnit). Жёсткий "target" означал, что у хилера - который
     --! целится в рейд, а не в босса - полоска угрозы не показывала вообще ничего.
-    local mob = B.GetThreatMobUnit()
+    local mob = mobArg
+    if mob == nil then
+        mob = B.GetThreatMobUnit()
+    elseif mob == false then
+        mob = nil
+    end
     if not mob then
         self.indicators.aggroBar:Hide()
         return
@@ -2988,17 +3048,49 @@ do
     local ticker = CreateFrame("Frame")
     local nextAllowed, pending = 0, false
 
-    local function UpdateButtonThreat(b)
-        UnitButton_UpdateThreat(b)
-        UnitButton_UpdateThreatBar(b)
+    --! WotLK perf: the mob of the whole pass, resolved once in Refresh. false = no mob.
+    local passMob = false
+
+    --! WotLK perf: three walkers instead of one, picked by what is actually enabled -
+    --! a disabled half used to be entered per button only to hide already hidden frames.
+    local function UpdateButtonBoth(b)
+        UnitButton_UpdateThreat(b, passMob)
+        UnitButton_UpdateThreatBar(b, passMob)
+    end
+    local function UpdateButtonBlink(b)
+        UnitButton_UpdateThreat(b, passMob)
+    end
+    local function UpdateButtonBar(b)
+        UnitButton_UpdateThreatBar(b, passMob)
+    end
+
+    --! WotLK perf: a half that goes from enabled to disabled needs exactly one clearing
+    --! pass; skipping it forever would leave a lit border after a layout switch.
+    local lastBlink, lastBar = false, false
+    local function ClearBlink(b)
+        b.indicators.aggroBlink:Hide()
+        b.indicators.aggroBorder:Hide()
+    end
+    local function ClearBar(b)
+        b.indicators.aggroBar:Hide()
     end
 
     local function Refresh()
         if not Cell.loaded then return end
+        local blink = enabledIndicators["aggroBlink"] or enabledIndicators["aggroBorder"]
+            or false
+        local bar = enabledIndicators["aggroBar"] or false
+
+        if lastBlink and not blink then F.IterateAllUnitButtons(ClearBlink, true) end
+        if lastBar and not bar then F.IterateAllUnitButtons(ClearBar, true) end
+        lastBlink, lastBar = blink, bar
+
         --! Все три индикатора выключены - ни одного C-вызова и ни одного прохода.
-        if not (enabledIndicators["aggroBlink"] or enabledIndicators["aggroBorder"]
-            or enabledIndicators["aggroBar"]) then return end
-        F.IterateAllUnitButtons(UpdateButtonThreat, true)
+        if not blink and not bar then return end
+
+        passMob = B.GetThreatMobUnit() or false
+        F.IterateAllUnitButtons(blink and (bar and UpdateButtonBoth or UpdateButtonBlink)
+            or UpdateButtonBar, true)
     end
 
     ticker:Hide()
@@ -4732,7 +4824,7 @@ local function UnitButton_OnTick(self)
         if not self._forcedIndicatorInit and not queue[self]
         and Cell.vars.currentLayoutTable and Cell.vars.currentLayoutTable["indicators"] then
             self._forcedIndicatorInit = true
-            AddToInitQueue(self)
+            AddToInitQueue(self, true)
             --! Show() fires the hooksecurefunc that recomputes CellLoadingBar's total,
             --! so calling it on an already-visible updater would jerk the bar backwards
             --! mid-drain. An updater that is already running picks this button up on its
@@ -5453,11 +5545,19 @@ function B.UpdatePixelPerfect(button, updateIndicators)
     B.UpdateHighlightSize(button)
     B.UpdateBackdrop(button)
 
+    --! WotLK perf: this pass only replays geometry that P.Point/P.Size already stored at
+    --! the current scale, so it is a no-op unless the scale changed - yet HandleIndicators
+    --! runs it on every rebuild: 2400 P.Repoint calls per 10 buttons, 12 ms of a 64 ms
+    --! frame in run 43. Stamp the scale and skip while the stamp holds.
     if updateIndicators then
-        -- indicators
-        for _, i in pairs(button.indicators) do
-            if i.UpdatePixelPerfect then
-                i:UpdatePixelPerfect()
+        local scale = P.GetScale()
+        if button._ppScale ~= scale then
+            button._ppScale = scale
+            -- indicators
+            for _, i in pairs(button.indicators) do
+                if i.UpdatePixelPerfect then
+                    i:UpdatePixelPerfect()
+                end
             end
         end
     end

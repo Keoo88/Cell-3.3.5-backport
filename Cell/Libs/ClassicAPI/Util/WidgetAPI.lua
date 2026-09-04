@@ -5,7 +5,7 @@
 --!   * standalone !!!ClassicAPI absent  -> guard never fired, this file already installed its
 --!     additive subset (audited runs 6/9/10/11: changed 0 / added 16, zero Lua errors;
 --!     those runs predate the SetAtlas removal and the dormant-method purge — the manifest
---!     installs 8 methods today, and the count is pinned by global_hook_ownership_smoke.py);
+--!     installs 2 methods today, and the count is pinned by global_hook_ownership_smoke.py);
 --!   * standalone !!!ClassicAPI present -> guard fired, Cell installed nothing at all and
 --!     silently depended on a foreign addon's version of every method it calls.
 --! The second shape is what CLAUDE.md rule 3 forbids: an early exit hands the hot path to
@@ -16,11 +16,11 @@
 
 local _, Private = ...
 
-local _G = _G
-local PCall = pcall
 local Pairs = pairs
 --! WotLK fix: локалы error/string.format ушли вместе с шимом SetColorTexture -
 --! единственным местом в файле, которое печатало Usage-ошибку.
+--! WotLK fix: _G and pcall went with the class-probing machinery — the FontString
+--! metatable is reached through one frame, not through _G[Class] lookups.
 local CreateFrame = CreateFrame
 local GetMetaTable = getmetatable
 local Ceil = math.ceil
@@ -47,42 +47,22 @@ local UIObject
 
 --[[
 
-	WidgetAPI is a system to automatically add or modify the methods/functions on an object.
-	You can define custom methods within the "UIObject" table.
-
-	This code implements inheritance. All child objects receive the methods of the parent object.
-	Therefore, you only need to add methods to root objects.
+	WidgetAPI adds missing 3.3.5 methods to a shared widget metatable.
 
 	Information:
 		-- https://warcraft.wiki.gg/wiki/Widget_API
 		-- https://warcraft.wiki.gg/wiki/Widget_API?oldid=348056 (3.3.5)
-		-- https://warcraft.wiki.gg/wiki/Widget_API#/media/File:Widget_Hierarchy.png
 
-	Example:
-		The SetEnabled method is listed in the "Button" section, so we define it in
-		the "Button" table and every metatable that answers the Button signature
-		below receives it.
+	--! WotLK fix: only the FontString section is left, so the ClassicAPI class-probing
+	--! machinery (ObjectSignature/GetObject/Process, ~150 lines) is gone with it — one
+	--! hidden probe frame yields that metatable directly. Every other section was either
+	--! dead or moved to a per-instance field on the widgets Cell builds itself; the
+	--! examples that used to stand here (ScriptRegion:SetShown, TextureBase:SetColorTexture,
+	--! Button:SetEnabled) all describe removed sections. The rule they illustrated still
+	--! holds: the higher the section sits in the widget hierarchy, the wider the tax on
+	--! the whole client.
 
-		--! WotLK fix: примером служил сначала ScriptRegion:SetShown, потом
-		--! TextureBase:SetColorTexture - оба метода удалены (первый попадал во все
-		--! метатаблицы клиента, второй - во все текстуры; оба заменены нативными
-		--! вызовами на местах). Пример намеренно указывает на узкую конкретную
-		--! секцию: чем выше в иерархии секция, тем шире налог на весь клиент.
-		--! Абстрактная секция (вида TextureBase) сама себя не устанавливает -
-		--! GetObject для неё падает на PCall(CreateFrame, Class); в метатаблицу она
-		--! попадает только через конкретный класс из этого же манифеста, чья подпись
-		--! совпала. Убрав конкретный класс, убираешь и абстрактную секцию.
-
-		If method(s) already exist define a "Prehook" or "Posthook" table within the object class:
-			FrameScriptObject = {
-				Posthook = {
-					GetName = function()end
-					...
-				}
-				...
-			}
-
-		To avoid collision/errors with other addons (eg. self.duration), we prefix object stored data with "_".
+	To avoid collision/errors with other addons (eg. self.duration), we prefix object stored data with "_".
 
 ]]
 
@@ -168,13 +148,11 @@ UIObject = {
 	--! shared methods and their timer/closure machinery instead of maintaining a
 	--! broad foreign-facing approximation layer.
 
-	Button = {
-		SetEnabled = function(Self, Enabled)
-			if ( Enabled ) then Self:Enable() else Self:Disable() end
-		end,
-		--! WotLK fix: atlas-state and clear-texture helpers have no active Cell
-		--! consumers. Retain only the proven button enable adapter.
-	},
+	--! WotLK fix: the Button section is gone. SetEnabled moved to a per-instance
+	--! field in Cell.CreateButton / Cell.CreateColorPicker (Widgets.lua,
+	--! Widget_SetEnabled). Its body was the native Enable/Disable pair, so every
+	--! button in the client carried a wrapper that only Cell called. Cell.SetEnabled
+	--! falls back to the native pair for raw frames.
 
 	--! WotLK fix: model transform approximations have no active Cell consumer;
 	--! do not publish them on the shared Model metatable.
@@ -182,41 +160,10 @@ UIObject = {
 	--! WotLK fix: PlayerModel:SetPortraitZoom is native on 3.3.5. Do not
 	--! publish a retail approximation on the shared PlayerModel metatable.
 
-	EditBox = {
-		Enable = function(Self)
-			Self._Enabled = true
-			Self:SetFontObject("GameFontWhite")
-			Self:EnableMouse(true)
-			Self:ClearFocus()
-			local Script = Self:GetScript("OnEnable")
-			if ( Script ) then
-				Script(Self)
-			end
-		end,
-
-		Disable = function(Self)
-			Self._Enabled = nil
-			Self:SetFontObject("GameFontDisable")
-			Self:EnableMouse(false)
-			Self:ClearFocus()
-			local Script = Self:GetScript("OnDisable")
-			if ( Script ) then
-				Script(Self)
-			end
-		end,
-
-		SetEnabled = function(Self, State)
-			if ( State ) then
-				Self:Enable()
-			else
-				Self:Disable()
-			end
-		end,
-
-		IsEnabled = function(Self)
-			return Self._Enabled or false
-		end,
-	},
+	--! WotLK fix: the EditBox section (Enable/Disable/SetEnabled/IsEnabled) is gone:
+	--! Cell.CreateEditBox owns all four per instance since August (EditBox_* in
+	--! Widgets.lua), so the shared copies had zero Cell consumers — and they swapped
+	--! the font object, which is why the per-instance ones exist.
 
 	--! WotLK fix: SimpleHTML content-height and GameTooltip line/item helpers have
 	--! no active Cell consumers. Do not publish them as foreign-facing contracts.
@@ -226,11 +173,8 @@ UIObject = {
 	--! Cell owns completion, duration, OmniCC, and swipe-visibility state on the
 	--! cooldown instances created in Indicators/Base.lua.
 
-	Slider = {
-		SetEnabled = function(Self, State)
-			if ( State ) then Self:Enable() else Self:Disable() end
-		end,
-	},
+	--! WotLK fix: the Slider section is gone the same way — Cell.CreateSlider sets
+	--! SetEnabled per instance.
 
 	--! WotLK fix: SetObeyStepOnDrag cannot change native 3.3.5 behavior.
 	--! Cell call sites already guard the optional method, so leave it absent
@@ -238,134 +182,20 @@ UIObject = {
 
 }
 
-local function ObjectSignature(Class, Meta)
-	-- Identify objects by checking their intrinsic API...
+-- Install the absent methods on the shared FontString metatable.
+--! WotLK fix: the probe frame stays hidden and parents nothing; a FontString needs
+--! no template, so this cannot capture keyboard input the way the old EditBox probe did.
+local Probe = CreateFrame("Frame")
+Probe:Hide()
 
-	if Class == "FrameScriptObject" then return Meta.GetName
-	elseif Class == "Object" then return Meta.GetParent -- ScriptObject
-	elseif Class == "ScriptRegion" then return Meta.SetAllPoints -- ScriptRegionResizing, AnimatableObject
-	elseif Class == "Region" then return Meta.GetDrawLayer
-
-	-- Frame
-	elseif Class == "Frame" then return Meta.GetFrameLevel
-
-	-- Button
-	elseif Class == "Button" then return Meta.Click
-	elseif Class == "CheckButton" then return Meta.SetChecked
-
-	-- Model
-	elseif Class == "Model" then return Meta.ClearModel
-	elseif Class == "PlayerModel" then return Meta.RefreshUnit
-	elseif Class == "DressUpModel" then return Meta.Dress
-	elseif Class == "TabardModel" then return Meta.CanSaveTabardNow
-
-	-- Blob
-	elseif Class == "QuestPOIFrame" then return Meta.DrawQuestBlob
-
-	-- Misc Frame
-	elseif Class == "Cooldown" then return Meta.SetCooldown
-	elseif Class == "GameTooltip" then return Meta.AddLine
-	elseif Class == "ScrollFrame" then return Meta.GetScrollChild
-	elseif Class == "StatusBar" then return Meta.SetStatusBarTexture
-	elseif Class == "Slider" then return Meta.GetThumbTexture
-	elseif Class == "ColorSelect" then return Meta.GetColorRGB
-
-	elseif Class == "Minimap" then return Meta.PingLocation
-	elseif Class == "MovieFrame" then return Meta.StartMovie
-	--elseif Class == "WorldFrame" then return
-
-	elseif Class == "EditBox" then return Meta.HighlightText
-	elseif Class == "MessageFrame" then return Meta.GetInsertMode and not Meta.AtBottom
-	elseif Class == "ScrollingMessageFrame" then return Meta.AtBottom
-	elseif Class == "SimpleHTML" then return Meta.SetHyperlinkFormat
-
-	-- Texture
-	elseif Class == "TextureBase" then return Meta.SetTexture
-	elseif Class == "Texture" then return Meta.SetGradient
-
-	-- Font
-	elseif Class == "Font" then return Meta.SetFontObject
-	elseif Class == "FontInstance" then return Meta.GetFontObject and not Meta.SetHyperlinkFormat
-	elseif Class == "FontString" then return Meta.GetStringWidth
-
-	-- Animation
-	elseif Class == "AnimationGroup" then return Meta.CreateAnimation
-	elseif Class == "Animation" then return Meta.Play and Meta.GetRegionParent
-	elseif Class == "Alpha" then return Meta.Play and Meta.SetChange
-	elseif Class == "Scale" then return Meta.Play and Meta.SetScale
-	elseif Class == "Rotation" then return Meta.Play and Meta.SetRadians
-	elseif Class == "Translation" then return Meta.Play and Meta.SetOffset
-	elseif Class == "Path" then return Meta.CreateControlPoint
-	elseif Class == "ControlPoint" then return Meta.SetOrder and not Meta.Play
-	end
-end
-
-local GetObjectCache = {}
-local function GetObject(Class)
-	local Object = GetObjectCache[Class]
-
-	if ( not Object ) then
-		if ( Class == "Font" ) then
-			Object = CreateFont("__")
-			_G["__"] = nil
-		elseif ( Class == "Texture" ) then
-			Object = GetObject("Frame"):CreateTexture()
-		elseif ( Class == "FontString" ) then
-			Object = GetObject("Frame"):CreateFontString()
-		elseif ( Class == "ControlPoint" ) then
-			Object = GetObject("Path"):CreateControlPoint()
-		elseif ( Class == "AnimationGroup" ) then
-			Object = GetObject("Frame"):CreateAnimationGroup()
-		elseif ( Class == "Animation" ) then
-			--! WotLK fix: the native base Animation is abstract for Lua creation on
-			--! some 3.3.5 clients. Any concrete child exposes the same inherited
-			--! Animation metatable, so probe it through a native Alpha object.
-			Object = GetObject("AnimationGroup"):CreateAnimation("Alpha")
-		elseif ( Class == "Translation" or Class == "Rotation" or Class == "Scale" or Class == "Alpha" or Class == "Path" ) then
-			Object = GetObject("AnimationGroup"):CreateAnimation(Class)
-		elseif ( Class == "WorldFrame" or Class == "Minimap" or Class == "MovieFrame" ) then
-			Object = true
-		else
-			-- Exception handling for "Frame", "Button", etc.
-			-- It will safely fail for abstract classes "ScriptRegion", "FrameScriptObject", etc.
-			local Success
-			Success, Object = PCall(CreateFrame, Class)
-			if ( not Success ) then return end
-		end
-
-		if ( Object ~= true and Object.Hide ) then
-			Object:Hide() -- REQUIRED! Otherwise, the keyboard input will cease to work if EditBox is created, as it captures input.
-		end
-
-		GetObjectCache[Class] = Object
-	end
-
-	return Object
-end
-
--- Process classes and inject only absent compatibility methods.
-local function Process(Metatable)
-	for Class, Data in Pairs(UIObject) do
-		if ( ObjectSignature(Class, Metatable) ) then
-			for Method, Function in Pairs(Data) do
-				--! WotLK fix: embedded compatibility methods are additive only.
-				--! Never replace or hook a native 3.3.5 method, or a method already
-				--! owned by another addon, on a shared widget metatable.
-				if ( Metatable[Method] == nil ) then
-					Metatable[Method] = Function
-				end
-			end
-		end
-	end
-end
-
--- Manifest UIObjects, automatically determining if they're abstract, unique, or not.
-for Class in Pairs(UIObject) do
-	local Object = GetObject(Class)
-	if ( Object ) then
-		local Metatable = ( Object == true ) and _G[Class] or GetMetaTable(Object).__index
-		if ( Metatable ) then
-			Process(Metatable)
+local Metatable = GetMetaTable(Probe:CreateFontString()).__index
+if ( Metatable ) then
+	for Method, Function in Pairs(UIObject.FontString) do
+		--! WotLK fix: embedded compatibility methods are additive only.
+		--! Never replace or hook a native 3.3.5 method, or a method already
+		--! owned by another addon, on a shared widget metatable.
+		if ( Metatable[Method] == nil ) then
+			Metatable[Method] = Function
 		end
 	end
 end

@@ -101,6 +101,11 @@ function I.JustifyText(text, point)
     end
 end
 
+--! WotLK perf: memo the layout half. Every layout rebuild re-fonts every icon of
+--! every button, so this ran ~12000 times in a 5-man run, each time 8 C-calls plus a
+--! fresh points table. Resolved font is memoised, not the raw name: F.GetFont depends
+--! on CellDB useGameFont and must stay live. The colour block below is NOT memoised -
+--! SetIconDurationColor rewrites duration's colour every OnUpdate tick.
 function I.SetFont(fs, anchorTo, font, size, outline, shadow, anchor, xOffset, yOffset, color)
     font = F.GetFont(font)
 
@@ -113,19 +118,27 @@ function I.SetFont(fs, anchorTo, font, size, outline, shadow, anchor, xOffset, y
         flags = "OUTLINE,MONOCHROME"
     end
 
-    fs:SetFont(font, size, flags)
+    shadow = shadow and true or false
 
-    if shadow then
-        fs:SetShadowOffset(1, -1)
-        fs:SetShadowColor(0, 0, 0, 1)
-    else
-        fs:SetShadowOffset(0, 0)
-        fs:SetShadowColor(0, 0, 0, 0)
+    if fs._fsFont ~= font or fs._fsSize ~= size or fs._fsFlags ~= flags or fs._fsShadow ~= shadow
+        or fs._fsAnchorTo ~= anchorTo or fs._fsAnchor ~= anchor or fs._fsX ~= xOffset or fs._fsY ~= yOffset then
+        fs._fsFont, fs._fsSize, fs._fsFlags, fs._fsShadow = font, size, flags, shadow
+        fs._fsAnchorTo, fs._fsAnchor, fs._fsX, fs._fsY = anchorTo, anchor, xOffset, yOffset
+
+        fs:SetFont(font, size, flags)
+
+        if shadow then
+            fs:SetShadowOffset(1, -1)
+            fs:SetShadowColor(0, 0, 0, 1)
+        else
+            fs:SetShadowOffset(0, 0)
+            fs:SetShadowColor(0, 0, 0, 0)
+        end
+
+        P.ClearPoints(fs)
+        P.Point(fs, anchor, anchorTo, anchor, xOffset, yOffset)
+        I.JustifyText(fs, anchor)
     end
-
-    P.ClearPoints(fs)
-    P.Point(fs, anchor, anchorTo, anchor, xOffset, yOffset)
-    I.JustifyText(fs, anchor)
 
     if color then
         fs.r = color[1]

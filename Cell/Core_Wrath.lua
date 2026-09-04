@@ -4,10 +4,17 @@ local Cell = select(2, ...)
 local C_Timer = Cell.C_Timer
 _G.Cell = Cell
 
+--! WotLK fix: this backport targets Interface 30300 whatever retail-style project
+--! constants a custom core exposes. Keep the decision private to Cell: rewriting
+--! WOW_PROJECT_ID or the Blizzard expansion constants changes code paths in every
+--! foreign addon.
+Cell.flavor = "wrath"
 Cell.isRetail = false
 Cell.isWrath = true
-Cell.isMists = false
 Cell.isVanilla = false
+Cell.isCata = false
+Cell.isMists = false
+Cell.isTWW = false
 
 ---@class Cell
 ---@field defaults table
@@ -267,6 +274,84 @@ local function PreUpdateLayout()
 end
 Cell.RegisterCallback("GroupTypeChanged", "Core_GroupTypeChanged", PreUpdateLayout)
 Cell.RegisterCallback("ActiveTalentGroupChanged", "Core_ActiveTalentGroupChanged", PreUpdateLayout)
+
+-------------------------------------------------
+-- group
+-------------------------------------------------
+--! WotLK fix: modern group helpers do not exist in stock 3.3.5a. Keep Cell's
+--! contract private and derive it only from verified native roster APIs.
+do
+    function Cell.IsInRaid()
+        return GetNumRaidMembers() > 0
+    end
+
+    function Cell.IsInGroup()
+        return GetNumRaidMembers() > 0 or GetNumPartyMembers() > 0
+    end
+
+    function Cell.GetNumGroupMembers()
+        local raidMembers = GetNumRaidMembers()
+        if raidMembers > 0 then
+            return raidMembers
+        end
+        local partyMembers = GetNumPartyMembers()
+        return partyMembers > 0 and partyMembers + 1 or 0
+    end
+
+    --! WotLK perf: both questions have one-value natives on 3.3.5a, so ask them
+    --! directly instead of GetRaidRosterInfo, which returns eleven values including
+    --! five fresh strings just to read the rank. UnitButton_UpdateLeader calls these
+    --! once per button on every roster change - a 25-man threw away 100+ strings per
+    --! event on Lua 5.1 without a JIT.
+    --! Shape from the two implementations known to work here: Blizzard's
+    --! TargetFrame.lua pairs UnitIsPartyLeader with UnitInRaid (proof that "party"
+    --! covers raids), and oUF under ElvUI 6.09 writes assistant as
+    --! `UnitIsRaidOfficer(unit) and not UnitIsPartyLeader(unit)`. That second half
+    --! keeps the states mutually exclusive: on 3.3.5a the raid leader also answers
+    --! yes to UnitIsRaidOfficer. The group guard stops a solo player from being
+    --! called leader. Both natives are 1/nil; normalised because states.isLeader is
+    --! stored and read back elsewhere.
+    local UnitIsPartyLeader = UnitIsPartyLeader
+    local UnitIsRaidOfficer = UnitIsRaidOfficer
+
+    function Cell.UnitIsGroupLeader(unit)
+        return (Cell.IsInGroup() and UnitIsPartyLeader(unit)) and true or false
+    end
+
+    function Cell.UnitIsGroupAssistant(unit)
+        return (UnitIsRaidOfficer(unit) and not UnitIsPartyLeader(unit)) and true or false
+    end
+
+    local everyoneAssistant, assistantTicker
+    function Cell.SetEveryoneIsAssistant(enable)
+        local numMembers = GetNumRaidMembers()
+        if numMembers <= 0 then return end
+
+        if assistantTicker then
+            assistantTicker:Cancel()
+            assistantTicker = nil
+        end
+
+        everyoneAssistant = not not enable
+        assistantTicker = C_Timer.NewTicker(0.2, function(ticker)
+            local unit = "raid"..ticker.Index
+            if not UnitIsUnit(unit, "player") then
+                local _, rank = GetRaidRosterInfo(ticker.Index)
+                if everyoneAssistant and rank == 0 then
+                    PromoteToAssistant(unit)
+                elseif not everyoneAssistant and rank == 1 then
+                    DemoteAssistant(unit)
+                end
+            end
+            ticker.Index = ticker.Index + 1
+        end, numMembers)
+        assistantTicker.Index = 1
+    end
+
+    function Cell.IsEveryoneAssistant()
+        return everyoneAssistant
+    end
+end
 
 -------------------------------------------------
 -- events
@@ -1275,6 +1360,125 @@ end
 eventFrame:SetScript("OnEvent", function(self, event, ...)
     self[event](self, ...)
 end)
+
+-------------------------------------------------
+-- encounter state (DBM bridge)
+-------------------------------------------------
+-- Cell.IsEncounterInProgress
+--! WotLK fix: preserve a real custom-core implementation when present, but keep the
+--! stock fallback private - a global that always returns false makes other addons
+--! believe encounter state is supported.
+--! WotLK feature: ENCOUNTER_START/ENCOUNTER_END arrived in 5.4, so on stock 3.3.5a
+--! nothing ever told Cell a boss fight had begun - the flag stayed false forever and
+--! three consumers were inert: the death-report cap that keeps a wipe from spamming
+--! 25 lines into /raid (DeathReport.lua), the dispel-request glow reset
+--! (Request_Show.lua) and the targeted-spells reset (TargetedSpells.lua). DBM is the
+--! only source of that state here and already broadcasts DBM_Pull/DBM_Kill/DBM_Wipe
+--! through its own callback registry. Read it, never write it (rule 3): this bridge
+--! only subscribes and re-fires through Cell's callbacks under the upstream event
+--! names. With no DBM installed nothing changes.
+do
+    local nativeIsEncounterInProgress = IsEncounterInProgress
+    local encounterInProgress = false
+    local attachedRevision -- nil = not attached
+
+    --! Only DBM_Pull carries "in progress"; both endings clear it.
+    local DBM_EVENTS = {
+        DBM_Pull = {"EncounterStart", nil, true},
+        DBM_Kill = {"EncounterEnd", 1, false},
+        DBM_Wipe = {"EncounterEnd", 0, false},
+    }
+
+    --! DBM only started exposing mod.encounterId in this revision. Older builds
+    --! (every 3.3.5a port) report 0 - no consumer in Cell reads the id, so the bridge
+    --! must not refuse to attach over it. Revision may be a string on old ports,
+    --! hence tonumber() rather than a type check.
+    local ENCOUNTER_ID_REVISION = 20250929200404
+
+    function Cell.IsEncounterInProgress()
+        if type(nativeIsEncounterInProgress) == "function" then
+            return not not nativeIsEncounterInProgress()
+        end
+        return encounterInProgress
+    end
+
+    --! For /cell debug env: says whether the bridge actually found DBM. A silent
+    --! no-op is exactly the failure this project cannot detect from a game run.
+    function Cell.GetEncounterBridgeState()
+        return attachedRevision ~= nil, attachedRevision
+    end
+
+    local function OnDBMEvent(dbmEvent, ...)
+        local spec = DBM_EVENTS[dbmEvent]
+        if not spec then return end
+
+        --! Do not trust argument order: DBM ports differ on whether the callback
+        --! receives (event, mod) or just (mod). Take the first table argument.
+        local mod
+        for i = 1, select("#", ...) do
+            local v = select(i, ...)
+            if type(v) == "table" then mod = v break end
+        end
+
+        local id = 0
+        local name = ""
+        if mod then
+            if attachedRevision and attachedRevision >= ENCOUNTER_ID_REVISION then
+                id = tonumber(mod.encounterId) or 0
+            end
+            --! combatInfo is absent on some mods; indexing it blind would throw
+            --! mid-fight, which is the worst possible moment for an error.
+            local info = mod.combatInfo
+            if type(info) == "table" and type(info.name) == "string" then
+                name = info.name
+            end
+        end
+
+        local _, _, difficulty, _, maxPlayers = GetInstanceInfo()
+        encounterInProgress = spec[3]
+        Cell.Fire(spec[1], id, name, difficulty or 0, maxPlayers or 0, spec[2])
+    end
+
+    local tracker = CreateFrame("Frame")
+
+    local function Attach()
+        if attachedRevision then return true end
+
+        local dbm = DBM
+        if type(dbm) ~= "table" or type(dbm.RegisterCallback) ~= "function" then
+            return false
+        end
+
+        attachedRevision = tonumber(dbm.Revision) or 0
+        --! One closure per event: the DBM event name comes from the closure, so a
+        --! port that omits the event argument still lands in the right branch.
+        for dbmEvent in pairs(DBM_EVENTS) do
+            dbm:RegisterCallback(dbmEvent, function(...)
+                OnDBMEvent(dbmEvent, ...)
+            end)
+        end
+
+        tracker:UnregisterEvent("ADDON_LOADED")
+        return true
+    end
+
+    tracker:SetScript("OnEvent", function(_, event, arg1)
+        if event == "ADDON_LOADED" then
+            if arg1 == "DBM-Core" then Attach() end
+        elseif encounterInProgress then
+            --! Anti-stick guard: leaving the instance (hearthstone, logout, disconnect
+            --! mid-pull) means DBM never sends Kill or Wipe, and a stuck flag would cap
+            --! death reports and freeze the mouseover status text for the session.
+            encounterInProgress = false
+            Cell.Fire("EncounterEnd", 0, "", 0, 0, 0)
+        end
+    end)
+    tracker:RegisterEvent("ADDON_LOADED")
+    tracker:RegisterEvent("PLAYER_ENTERING_WORLD")
+
+    --! DBM may already be loaded (it sorts before Cell for most managers).
+    Attach()
+end
 
 -------------------------------------------------
 -- slash command

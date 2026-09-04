@@ -17,8 +17,6 @@ DebugSnapshot.lua
 
 Libs\ClassicAPI\Load.xml
 
-Polyfills.lua
-
 Locales\LoadLocales.xml
 
 Libs\LoadLibs_Classic.xml
@@ -29,6 +27,9 @@ Core_Wrath.lua
 Debug.lua
 Debug_Wrath.lua
 Utils.lua
+# WotLK backport: LibGroupInfo captures Cell.GetUnitClassToken, GetNormalizedRealmName
+# and the group adapters at load time, so it must follow Utils.lua and Core_Wrath.lua.
+Libs\LibGroupInfo.lua
 Revise.lua
 Comm\LoadComm.xml
 Widgets\LoadWidgets_Classic.xml

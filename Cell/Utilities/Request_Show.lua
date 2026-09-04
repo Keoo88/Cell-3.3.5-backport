@@ -474,7 +474,7 @@ local function DR_UpdateRequests(which)
             --! WotLK fix: ENCOUNTER_START/END do not exist on 3.3.5 (added 5.4), so
             --! these registrations were silently inert and a dispel-request glow left
             --! over from the previous attempt survived the next pull and the wipe.
-            --! Polyfills.lua bridges DBM's pull/kill/wipe into Cell's own
+            --! Core_Wrath.lua bridges DBM's pull/kill/wipe into Cell's own
             --! EncounterStart/EncounterEnd callbacks - subscribe to those instead.
             Cell.RegisterCallback("EncounterStart", "DispelRequest_EncounterStart", HideAllDRGlows)
             Cell.RegisterCallback("EncounterEnd", "DispelRequest_EncounterEnd", HideAllDRGlows)

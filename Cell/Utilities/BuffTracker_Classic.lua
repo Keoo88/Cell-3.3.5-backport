@@ -41,7 +41,10 @@ local unaffected = {}
     buffs = {
         -- 1243: Power Word: Fortitude
         -- 21562: Prayer of Fortitude
-        ["PWF"] = {buff1 = 1243, buff2 = 21562, provider = "PRIEST", order = 1},
+        --! WotLK feature: 72590 is Runescroll of Fortitude, whose aura is named plain
+        --! "Fortitude" - so a scroll-buffed raid read as unbuffed. Detection only, never
+        --! a cast attribute (see aliases in the prepare loop below).
+        ["PWF"] = {buff1 = 1243, buff2 = 21562, aliases = {72590}, provider = "PRIEST", order = 1},
 
         -- 14752: Divine Spirit
         -- 27681: Prayer of Spirit
@@ -120,7 +123,7 @@ local classBuffs = {}
 local buffOrder = {}
 local buffsProvidedByMe = {}
 --! WotLK feature: every aura name that satisfies a buff, in scan order (see alt1/alt2
---! above and UnitBuffExists).
+--! and aliases above, and UnitBuffExists).
 local buffNames = {}
 --! WotLK feature: blessings are handled apart from the rest - see the blessings section.
 local isBlessing = {}
@@ -162,6 +165,15 @@ do
         if t.buff2 and t.buff2.name then tinsert(names, t.buff2.name) end
         if t.alt1 and t.alt1.name then tinsert(names, t.alt1.name) end
         if t.alt2 and t.alt2.name then tinsert(names, t.alt2.name) end
+        --! WotLK feature: consumable auras that satisfy the buff - detection only, so they
+        --! stay out of Handle() and never reach a cast attribute. Appended last: lastMatch
+        --! prefers the earlier names, and a raid is normally buffed by a caster.
+        if t.aliases then
+            for i = 1, #t.aliases do
+                local aliasName = F.GetSpellInfo(t.aliases[i])
+                if aliasName then tinsert(names, aliasName) end
+            end
+        end
         buffNames[k] = names
 
         if t.provider == "PALADIN" then

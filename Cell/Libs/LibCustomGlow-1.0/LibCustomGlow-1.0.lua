@@ -82,14 +82,12 @@ lib.stopList = {}
 
 local GlowParent = UIParent
 
---! WotLK fix: own mask capability and attachment bookkeeping inside this
---! library. Never rely on, probe, or add methods on the shared Texture
---! metatable; standalone !!!ClassicAPI may publish void stubs there.
+--! WotLK fix: 3.3.5a has no mask textures at all, so this is a hard false rather
+--! than a probe - a foreign stub on the shared Texture metatable must not be
+--! trusted. Never rely on, probe, or add methods on that metatable.
 local GlowMaskPool
 local GlowTextureMasks = setmetatable({}, {__mode = "k"})
-local NativeCreateMaskTexture = not (_G.Cell and _G.Cell.isWrath)
-    and type(GlowParent.CreateMaskTexture) == "function"
-    and GlowParent.CreateMaskTexture
+local NativeCreateMaskTexture = false
 
 local function GlowTextureAddMask(texture, mask)
     if not (NativeCreateMaskTexture and texture.AddMaskTexture and mask) then

@@ -130,6 +130,37 @@ local function ResetterFunc(_, canvas)
     canvas:Hide()
 end
 
+--! WotLK fix: upstream bounds-clips every travelling effect with a mask region
+--! (mask:SetAllPoints(canvas) + AddMaskTexture). 3.3.5 has neither MaskTexture
+--! nor SetClipsChildren, but a ScrollFrame natively clips its whole scroll-child
+--! subtree (FrameXML's channel and talent lists rely on exactly that), which
+--! costs nothing per frame. Art keeps anchoring to the canvas; only its parent
+--! changes, so effects can no longer paint over the neighbouring unit frames.
+local function CreateClip(canvas)
+    local clip = CreateFrame("ScrollFrame", nil, canvas)
+    clip:SetAllPoints(canvas)
+    clip:EnableMouse(false)
+
+    -- a ScrollFrame owns its scroll child's position, so the art lives one
+    -- level deeper, inside this unanchored content frame
+    local content = CreateFrame("Frame", nil, clip)
+    content:SetSize(1, 1)
+    content:EnableMouse(false)
+    clip:SetScrollChild(content)
+
+    canvas.clip = clip
+    return content
+end
+
+--! WotLK fix: canvas:SetParent() re-bases frame levels, so restore the original
+--! stacking on every Display: the art exactly one level above its canvas.
+local function AlignClip(canvas, f)
+    local level = canvas:GetFrameLevel()
+    canvas.clip:SetFrameLevel(level)
+    f:GetParent():SetFrameLevel(level)
+    f:SetFrameLevel(level + 1)
+end
+
 -------------------------------------------------
 -- animation: A
 -------------------------------------------------
@@ -137,15 +168,13 @@ local function CreateAnimationGroup_TypeA()
     local canvas = CreateFrame("Frame")
 
     -- frame
-    local f = CreateFrame("Frame", nil, canvas)
+    local f = CreateFrame("Frame", nil, CreateClip(canvas))
 
     -- texture
     local tex = f:CreateTexture(nil, "ARTWORK")
     tex:SetAllPoints(f)
     tex:SetTexture(Cell.vars.whiteTexture)
 
-    --! WotLK fix: native 3.3.5 has no mask regions. Keep the animated texture
-    --! on its Cell-owned canvas instead of relying on a fake shared mask API.
     canvas:EnableMouse(false)
     f:EnableMouse(false)
 
@@ -185,6 +214,10 @@ local function CreateAnimationGroup_TypeA()
     function ag:Display(parent, r, g, b)
         canvas:SetParent(parent)
         canvas:SetAllPoints(parent)
+        AlignClip(canvas, f)
+
+        -- the pool is shared between layouts: drop the previous orientation
+        f:ClearAllPoints()
 
         if parent.orientation == "horizontal" then
             f:SetPoint("TOPRIGHT", canvas, "TOPLEFT")
@@ -193,8 +226,10 @@ local function CreateAnimationGroup_TypeA()
 
             t1:SetOffset(canvas:GetWidth(), 0)
             -- tex:SetGradient("HORIZONTAL", CreateColor(r, g, b, 0), CreateColor(r, g, b, 1))
-            -- tex:SetGradientAlpha("HORIZONTAL", r, g, b, 0, r, g, b, 1)
+            --! WotLK fix: SetGradientAlpha(orientation, r,g,b,a, r,g,b,a) is the
+            --! native 3.3.5 form; keep SetVertexColor as a base tint below it.
             tex:SetVertexColor(r, g, b, 1)
+            tex:SetGradientAlpha("HORIZONTAL", r, g, b, 0, r, g, b, 1)
         else
             f:SetPoint("TOPLEFT", canvas, "BOTTOMLEFT")
             f:SetPoint("TOPRIGHT", canvas, "BOTTOMRIGHT")
@@ -202,8 +237,8 @@ local function CreateAnimationGroup_TypeA()
 
             t1:SetOffset(0, canvas:GetHeight())
             -- tex:SetGradient("VERTICAL", CreateColor(r, g, b, 0), CreateColor(r, g, b, 1))
-            -- tex:SetGradientAlpha("VERTICAL", r, g, b, 0, r, g, b, 1)
             tex:SetVertexColor(r, g, b, 1)
+            tex:SetGradientAlpha("VERTICAL", r, g, b, 0, r, g, b, 1)
         end
 
         a1:SetDuration(a1.duration / parent.speed)
@@ -232,22 +267,24 @@ local function CreateAnimationGroup_TypeB()
     local canvas = CreateFrame("Frame")
 
     -- frame
-    local f = CreateFrame("Frame", nil, canvas)
+    local f = CreateFrame("Frame", nil, CreateClip(canvas))
     f:SetPoint("TOPRIGHT", canvas, "TOPLEFT")
     f:SetPoint("BOTTOMRIGHT", canvas, "BOTTOMLEFT")
     f:SetWidth(WIDTH)
 
     -- texture
     local tex = f:CreateTexture(nil, "ARTWORK")
-    tex:SetPoint("BOTTOMRIGHT")
-    tex:SetWidth(WIDTH)
-    -- tex:SetRotation(45 * math.pi / 180, CreateVector2D(1, 0))
-    if tex.SetRotation then
-        tex:SetRotation(45 * math.pi / 180) -- WotLK SetRotation takes radians, no pivot vector
-    end
+    tex:SetAllPoints(f)
+    tex:SetTexture(Cell.vars.whiteTexture)
+    --! WotLK fix: upstream tilts this bar 45 degrees with
+    --! SetRotation(rad, CreateVector2D(1, 0)) and lets a mask cut the overhang.
+    --! On 3.3.5 SetRotation only spins the image inside its region, so on a plain
+    --! colour fill it changes nothing whatever we pass - the bar stays upright.
+    --! So keep it upright on purpose, filling the frame height, and set it apart
+    --! from type A the way the other 3.3.5 port does: wider, dimmer, eased at
+    --! both ends. The old code sized the texture for the tilt (1.41 x height,
+    --! anchored bottom right), which only ever showed as a bar too tall to fit.
 
-    --! WotLK fix: native 3.3.5 has no mask regions. Keep the animated texture
-    --! on its Cell-owned canvas instead of relying on a fake shared mask API.
     canvas:EnableMouse(false)
     f:EnableMouse(false)
 
@@ -255,24 +292,23 @@ local function CreateAnimationGroup_TypeB()
     local ag = f:CreateAnimationGroup()
     canvas.ag = ag
 
+    --! WotLK fix: upstream leaves the fade-out commented out, so the bar used to
+    --! appear at full strength. Fade it in with the same driven Alpha type A uses
+    --! (order 1, explicit smoothing) and let the sweep carry it out of the clip
+    --! instead of ending on a visible bar: the travel below overshoots the right
+    --! edge by the bar's own width, so there is nothing left to snap away.
     local a1 = ag:CreateAnimation("Alpha")
-    a1.duration = 0.35
-    --! WotLK fix: use Cell's private absolute-alpha driver; do not modify shared Alpha methods.
+    a1.duration = 0.7
     A.SetAbsoluteAlpha(a1, 0, 0.7)
+    a1:SetOrder(1)
     a1:SetDuration(a1.duration)
-    -- a1:SetSmoothing("IN")
+    a1:SetSmoothing("OUT")
 
     local t1 = ag:CreateAnimation("Translation")
     t1.duration = 0.7
+    t1:SetOrder(1)
     t1:SetSmoothing("IN_OUT")
     t1:SetDuration(t1.duration)
-
-    -- local a2 = ag:CreateAnimation("Alpha")
-    -- a2.duration = 0.3
-    -- a2:SetFromAlpha(0.7)
-    -- a2:SetToAlpha(0)
-    -- a2:SetDuration(a2.duration)
-    -- a2:SetStartDelay(t1.duration - a2.duration)
 
     ag:SetScript("OnPlay", function()
         canvas:Show()
@@ -285,15 +321,18 @@ local function CreateAnimationGroup_TypeB()
     function ag:Display(parent, r, g, b)
         canvas:SetParent(parent)
         canvas:SetAllPoints(parent)
+        AlignClip(canvas, f)
 
         a1:SetDuration(a1.duration / parent.speed)
         t1:SetDuration(t1.duration / parent.speed)
 
-        t1:SetOffset(canvas:GetWidth() + math.tan(math.pi / 4) * canvas:GetHeight() + WIDTH / math.cos(math.pi / 4), 0)
-        tex:SetHeight(canvas:GetHeight() / math.sin(math.pi / 4) + WIDTH)
-        -- tex:SetTexture(r, g, b)
-        tex:SetTexture(Cell.vars.whiteTexture)
+        -- starts just outside the left edge, leaves just past the right one
+        t1:SetOffset(canvas:GetWidth() + WIDTH, 0)
+
+        --! WotLK fix: SetGradientAlpha(orientation, r,g,b,a, r,g,b,a) is the
+        --! native 3.3.5 form; keep SetVertexColor as a base tint below it.
         tex:SetVertexColor(r, g, b, 1)
+        tex:SetGradientAlpha("HORIZONTAL", r, g, b, 0, r, g, b, 1)
 
         if ag:IsPlaying() then
             --! WotLK fix: AnimationGroup:Restart is not native on 3.3.5; keep
@@ -381,8 +420,10 @@ local function CreateAnimationGroup_TypeC()
         f:SetWidth(canvas:GetHeight() / 2)
         t1:SetOffset(0, canvas:GetHeight() / 2)
         -- tex:SetGradient("VERTICAL", CreateColor(r, g, b, 0), CreateColor(r, g, b, 1))
-        -- tex:SetGradientAlpha("VERTICAL", r, g, b, 0, r, g, b, 1)
+        --! WotLK fix: SetGradientAlpha(orientation, r,g,b,a, r,g,b,a) is the
+        --! native 3.3.5 form; keep SetVertexColor as a base tint below it.
         tex:SetVertexColor(r, g, b, 1)
+        tex:SetGradientAlpha("VERTICAL", r, g, b, 0, r, g, b, 1)
 
         if ag:IsPlaying() then
             --! WotLK fix: AnimationGroup:Restart is not native on 3.3.5; keep
@@ -404,16 +445,19 @@ local function CreateAnimationGroup_TypeD()
     local canvas = CreateFrame("Frame")
 
     -- frame
-    local f = CreateFrame("Frame", nil, canvas)
+    local f = CreateFrame("Frame", nil, CreateClip(canvas))
     f:SetAllPoints(canvas)
 
     -- texture
     local tex = f:CreateTexture(nil, "ARTWORK")
     tex:SetPoint("CENTER")
 
-    --! WotLK fix: Texture masks are unavailable on 3.3.5. The circular source
-    --! art already supplies the required shape; the canvas owns its clipping.
-    tex:SetTexture("Interface/AddOns/Cell/Media/Shapes/circle_filled_256")
+    --! WotLK fix: upstream cuts this circle out of a plain colour fill with a
+    --! mask region, which 3.3.5 does not have. Draw the circle art itself.
+    --! WotLK fix: backslashes only. Measured on 3.3.5a (harness art probe, run 46):
+    --! a forward slash never resolves for a file on disk, with or without the
+    --! extension, and SetTexture stays silent about it. MPQ paths accept both.
+    tex:SetTexture("Interface\\AddOns\\Cell\\Media\\Shapes\\circle_filled_256")
 
     canvas:EnableMouse(false)
     f:EnableMouse(false)
@@ -455,6 +499,7 @@ local function CreateAnimationGroup_TypeD()
     function ag:Display(parent, r, g, b)
         canvas:SetParent(parent)
         canvas:SetAllPoints(parent)
+        AlignClip(canvas, f)
 
         a1:SetDuration(a1.duration / parent.speed)
         s1:SetDuration(s1.duration / parent.speed)
@@ -462,7 +507,6 @@ local function CreateAnimationGroup_TypeD()
 
         local l = math.sqrt((parent:GetParent():GetHeight() / 2) ^ 2 + (parent:GetParent():GetWidth() / 2) ^ 2) * 2
         tex:SetSize(l, l)
-        tex:SetTexture("Interface/AddOns/Cell/Media/Shapes/circle_filled_256")
         tex:SetVertexColor(r, g, b, 0.6)
 
         if ag:IsPlaying() then
@@ -485,17 +529,18 @@ local function CreateAnimationGroup_TypeE()
     local canvas = CreateFrame("Frame")
 
     -- frame
-    local f = CreateFrame("Frame", nil, canvas)
+    local f = CreateFrame("Frame", nil, CreateClip(canvas))
     f:SetPoint("TOPRIGHT", canvas, "TOPLEFT")
     f:SetPoint("BOTTOMRIGHT", canvas, "BOTTOMLEFT")
 
     -- texture
+    --! WotLK fix: the arrow is twice the frame height and starts fully outside,
+    --! so CreateClip replaces the retail mask that bounded it to the frame.
     local tex = f:CreateTexture(nil, "ARTWORK")
     tex:SetAllPoints(f)
-    tex:SetTexture("Interface/AddOns/Cell/Media/Icons/arrow.tga")
+    --! WotLK fix: backslashes only - see the circle above.
+    tex:SetTexture("Interface\\AddOns\\Cell\\Media\\Icons\\arrow.tga")
 
-    --! WotLK fix: the translated arrow uses its own alpha channel and does not
-    --! require a fake mask region on 3.3.5.
     canvas:EnableMouse(false)
     f:EnableMouse(false)
 
@@ -503,23 +548,16 @@ local function CreateAnimationGroup_TypeE()
     local ag = f:CreateAnimationGroup()
     canvas.ag = ag
 
-    -- local a1 = ag:CreateAnimation("Alpha")
-    -- a1:SetFromAlpha(0)
-    -- a1:SetToAlpha(0.7)
-    -- a1:SetDuration(0.3)
-    -- a1:SetSmoothing("OUT")
-
+    --! WotLK fix: upstream leaves both of this effect's Alpha animations
+    --! commented out, so the arrow rides at a constant 0.6 tint. Left as it is:
+    --! the driven-alpha envelope tried here on 2026-09-04 relied on
+    --! GetSmoothProgress() with no smoothing set, which nothing on 3.3.5a
+    --! attests, and the arrow stopped showing at all.
     local t1 = ag:CreateAnimation("Translation")
     t1.duration = 0.8
+    t1:SetOrder(1)
     t1:SetSmoothing("IN_OUT")
     t1:SetDuration(t1.duration)
-
-    -- local a2 = ag:CreateAnimation("Alpha")
-    -- a2:SetFromAlpha(0.7)
-    -- a2:SetToAlpha(0)
-    -- a2:SetDuration(0.3)
-    -- a2:SetStartDelay(0.5)
-    -- a2:SetSmoothing("IN")
 
     ag:SetScript("OnPlay", function()
         canvas:Show()
@@ -532,13 +570,13 @@ local function CreateAnimationGroup_TypeE()
     function ag:Display(parent, r, g, b)
         canvas:SetParent(parent)
         canvas:SetAllPoints(parent)
+        AlignClip(canvas, f)
 
         t1:SetDuration(t1.duration / parent.speed)
 
         local l = canvas:GetHeight() * 2
         f:SetWidth(l)
         t1:SetOffset(l + canvas:GetWidth(), 0)
-
         tex:SetVertexColor(r, g, b, 0.6)
 
         if ag:IsPlaying() then
@@ -561,16 +599,17 @@ local function CreateAnimationGroup_TypeF()
     local canvas = CreateFrame("Frame")
 
     -- frame
-    local f = CreateFrame("Frame", nil, canvas)
+    local f = CreateFrame("Frame", nil, CreateClip(canvas))
     f:SetAllPoints(canvas)
 
     -- texture
     local tex = f:CreateTexture(nil, "ARTWORK")
     tex:SetPoint("CENTER")
 
-    --! WotLK fix: use the heart art directly; its alpha channel replaces the
-    --! retail mask while the Cell-owned canvas provides the animation bounds.
-    tex:SetTexture("Interface/AddOns/Cell/Media/Shapes/heart_filled_256")
+    --! WotLK fix: upstream cuts this heart out of a plain colour fill with a
+    --! mask region, which 3.3.5 does not have. Draw the heart art itself.
+    --! WotLK fix: backslashes only - see the circle above.
+    tex:SetTexture("Interface\\AddOns\\Cell\\Media\\Shapes\\heart_filled_256")
 
     canvas:EnableMouse(false)
     f:EnableMouse(false)
@@ -612,6 +651,7 @@ local function CreateAnimationGroup_TypeF()
     function ag:Display(parent, r, g, b)
         canvas:SetParent(parent)
         canvas:SetAllPoints(parent)
+        AlignClip(canvas, f)
 
         a1:SetDuration(a1.duration / parent.speed)
         s1:SetDuration(s1.duration / parent.speed)
@@ -619,7 +659,6 @@ local function CreateAnimationGroup_TypeF()
 
         local l = max(parent:GetParent():GetWidth(), parent:GetParent():GetHeight()) * 2
         tex:SetSize(l, l)
-        tex:SetTexture("Interface/AddOns/Cell/Media/Shapes/heart_filled_256")
         tex:SetVertexColor(r, g, b, 0.6)
 
         if ag:IsPlaying() then
@@ -686,10 +725,12 @@ local function CreateAnimationGroup_TypeG()
         canvas:SetAllPoints(parent)
 
         f:SetHeight(canvas:GetHeight() / 2)
-        
+
         -- tex:SetGradient("VERTICAL", CreateColor(r, g, b, 0), CreateColor(r, g, b, 1))
-        -- tex:SetGradientAlpha("VERTICAL", r, g, b, 0, r, g, b, 1)
+        --! WotLK fix: SetGradientAlpha(orientation, r,g,b,a, r,g,b,a) is the
+        --! native 3.3.5 form; keep SetVertexColor as a base tint below it.
         tex:SetVertexColor(r, g, b, 1)
+        tex:SetGradientAlpha("VERTICAL", r, g, b, 0, r, g, b, 1)
 
         a1:SetDuration(a1.duration / parent.speed)
         a2:SetDuration(a2.duration / parent.speed)

@@ -457,7 +457,10 @@ function U.CreateDispelRequestText(parent)
     function drText:SetType(type)
         --! WotLK fix: the 3.3.5a client reads BLP2 and TGA only - PNG silently
         --! renders nothing. Sheets converted to 32-bit uncompressed TGA.
-        tex:SetTexture("Interface/AddOns/Cell/Media/FlipBooks/dispel_"..type..".tga")
+        --! WotLK fix: backslashes only. Measured on 3.3.5a (harness art probe,
+        --! run 46): a forward slash never resolves for a file on disk, and
+        --! SetTexture stays silent about it.
+        tex:SetTexture("Interface\\AddOns\\Cell\\Media\\FlipBooks\\dispel_"..type..".tga")
         local info = flipBookInfo[type]
         if info then
             rows, columns, totalFrames = info[1], info[2], info[3]

@@ -1143,6 +1143,11 @@ local function UpdateLayout(layout, which)
                     end
                 end
                 RegisterUnitWatch(Cell.unitButtons.spotlight[i])
+                --! WotLK perf: the layout pass skips dormant spotlight buttons
+                --! (AddToInitQueue in UnitButton_Cata_Wrath.lua), so a layout switch made
+                --! while the frame was off left their indicators on the old config.
+                --! Rebuild them here; the call is a no-op when already current.
+                B.QueueIndicatorInit(Cell.unitButtons.spotlight[i])
                 assignmentButtons[i]:SetAttribute("text", unit)
             end
             tankUpdateRequired = true

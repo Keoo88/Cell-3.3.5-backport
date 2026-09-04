@@ -1,7 +1,7 @@
 --! WotLK fix: расширение отладки под 3.3.5a.
 --!
 --! Отдельный файл, а не правка Debug.lua — чтобы диф с upstream оставался чистым.
---! Грузится ПОСЛЕ Debug.lua и после Polyfills.lua.
+--! Грузится ПОСЛЕ Debug.lua.
 --!
 --! Команды закрывают те классы ошибок, которые аудит нашёл в этом бэкпорте:
 --!   shims  — что слой совместимости переопределил поверх нативного API
@@ -514,7 +514,7 @@ local function BuildEnvLines(lines)
         ownPixel and "наш приватный" or ("ЧУЖОЙ — " .. tostring(_G.PixelUtil))))
 
     --! WotLK fix: encounter state has no native source on 3.3.5a (ENCOUNTER_START/END
-    --! arrived in 5.4). Polyfills.lua bridges DBM instead, and a bridge that quietly
+    --! arrived in 5.4). Core_Wrath.lua bridges DBM instead, and a bridge that quietly
     --! failed to attach would look exactly like the old always-false behaviour - so
     --! report it here, where it also lands in the harness dump.
     if Cell.GetEncounterBridgeState then

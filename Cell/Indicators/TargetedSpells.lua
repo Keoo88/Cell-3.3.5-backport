@@ -515,7 +515,7 @@ function I.EnableTargetedSpells(enabled)
 
         --! WotLK fix: ENCOUNTER_END does not exist on 3.3.5 either (added 5.4), so the
         --! list of incoming casts was never cleared when a fight ended - icons from the
-        --! last attempt lingered until the next cast or instance change. Polyfills.lua
+        --! last attempt lingered until the next cast or instance change. Core_Wrath.lua
         --! bridges DBM's kill/wipe into Cell's own EncounterEnd callback.
         Cell.RegisterCallback("EncounterEnd", "TargetedSpells_EncounterEnd", EnterLeaveInstance)
         Cell.RegisterCallback("EnterInstance", "TargetedSpells_EnterInstance", EnterLeaveInstance)

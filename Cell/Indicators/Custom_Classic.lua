@@ -17,10 +17,22 @@ local customIndicators = {
 Cell.snippetVars.enabledIndicators = enabledIndicators
 Cell.snippetVars.customIndicators = customIndicators
 
+--! WotLK perf: entries per half, so the hot aura path can skip an empty one instead of
+--! setting up pairs() for nothing. Written by all three writers of customIndicators in
+--! this file; counts entries, not enabled ones. See GAP-130 / STUDY_PERFORMANCE 10.24.
+local customIndicatorNum = {
+    ["buff"] = 0,
+    ["debuff"] = 0,
+}
+
 --! init enabledIndicators & customIndicators
 function I.UpdateIndicatorTable(indicatorTable)
     local indicatorName = indicatorTable["indicatorName"]
     local auraType = indicatorTable["auraType"]
+
+    if not customIndicators[auraType][indicatorName] then
+        customIndicatorNum[auraType] = customIndicatorNum[auraType] + 1
+    end
 
     -- keep custom indicators in table
     if indicatorTable["enabled"] then enabledIndicators[indicatorName] = true end
@@ -106,6 +118,11 @@ function I.RemoveIndicator(parent, indicatorName, auraType)
     indicator:SetParent(nil)
     parent.indicators[indicatorName] = nil
     enabledIndicators[indicatorName] = nil
+    --! WotLK perf: called once per button, so count down only on the first one, while
+    --! the shared entry is still there.
+    if customIndicators[auraType][indicatorName] then
+        customIndicatorNum[auraType] = customIndicatorNum[auraType] - 1
+    end
     customIndicators[auraType][indicatorName] = nil
 end
 
@@ -177,6 +194,10 @@ function I.ResetCustomIndicatorTables()
     wipe(enabledIndicators)
     wipe(customIndicators["buff"])
     wipe(customIndicators["debuff"])
+    --! WotLK perf: both halves are empty again, so are their counters; the loop below
+    --! re-adds through I.UpdateIndicatorTable, which counts back up.
+    customIndicatorNum["buff"] = 0
+    customIndicatorNum["debuff"] = 0
 
     -- update customs
     for i = Cell.defaults.builtIns + 1, #Cell.vars.currentLayoutTable.indicators do
@@ -232,6 +253,8 @@ end
 -- reset
 -------------------------------------------------
 function I.ResetCustomIndicators(unitButton, auraType)
+    if customIndicatorNum[auraType] == 0 then return end --! WotLK perf: nothing of this type exists
+
     local unit = unitButton.states.displayedUnit
 
     for indicatorName, indicatorTable in pairs(customIndicators[auraType]) do
@@ -302,6 +325,8 @@ local function Update(indicator, indicatorTable, unit, spell, start, duration, d
 end
 
 function I.UpdateCustomIndicators(unitButton, auraType, spellId, spellName, start, duration, debuffType, icon, count, refreshing, castByMe)
+    if customIndicatorNum[auraType] == 0 then return end --! WotLK perf: nothing of this type exists
+
     local unit = unitButton.states.displayedUnit
 
     for indicatorName, indicatorTable in pairs(customIndicators[auraType]) do
@@ -356,6 +381,7 @@ end
 
 function I.ShowCustomIndicators(unitButton, auraType)
     if not unitButton._indicatorsReady then return end
+    if customIndicatorNum[auraType] == 0 then return end --! WotLK perf: nothing of this type exists
 
     local unit = unitButton.states.displayedUnit
     for indicatorName, indicatorTable in pairs(customIndicators[auraType]) do

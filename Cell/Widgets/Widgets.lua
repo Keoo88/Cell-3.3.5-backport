@@ -24,6 +24,43 @@ local P = Cell.pixelPerfectFuncs
 local LCG = LibStub("LibCustomGlow-1.0-Cell")
 
 -----------------------------------------
+-- SOUNDKIT
+-----------------------------------------
+--! WotLK fix: MERGE the defaults instead of an all-or-nothing `if not SOUNDKIT`.
+--! The standalone !!!ClassicAPI addon (Util/SoundKit.lua) creates SOUNDKIT before
+--! Cell loads but ships a smaller set with NO U_CHAT_SCROLL_BUTTON, and the exact
+--! set differs per client. With the old guard Cell skipped its own table entirely,
+--! so every button/checkbox PostClick called PlaySound(nil) and threw
+--! "Usage: PlaySound(\"sound\")", aborting the whole click chain: option dropdowns
+--! appeared to accept a choice but never applied it. Filling only the missing keys
+--! keeps whatever another addon already defined (rule 3).
+do
+    local soundkitDefaults = {
+        U_CHAT_SCROLL_BUTTON = "UChatScrollButton",
+        IG_MAINMENU_OPTION_CHECKBOX_ON = "igMainMenuOptionCheckBoxOn",
+        IG_MAINMENU_OPTION_CHECKBOX_OFF = "igMainMenuOptionCheckBoxOff",
+        IG_MAINMENU_OPEN = "igMainMenuOpen",
+        IG_MAINMENU_CLOSE = "igMainMenuClose",
+        --! WotLK fix: the 3.3.5a sound is spelled "igAbiliityPageTurn" - with
+        --! Blizzard's own double-i typo. "igAbilityPageTurn" appears in NO row of
+        --! the client's DBFilesClient\SoundEntries.dbc (12941 rows), and FrameXML
+        --! 3.3.5a itself calls the typo'd form (SpellBookFrame.lua:525,
+        --! MailFrame.lua:67). PlaySound on an unknown name plays nothing, so this
+        --! default was silently dead; no Cell call site uses this key, but Cell
+        --! publishes SOUNDKIT as a gap-fill and a foreign reader must not get a
+        --! dead name.
+        IG_ABILITY_PAGE_TURN = "igAbiliityPageTurn",
+        IG_CHARACTER_INFO_TAB = "igCharacterInfoTab",
+        IG_BACKPACK_OPEN = "igBackPackOpen",
+        IG_BACKPACK_CLOSE = "igBackPackClose",
+    }
+    if type(SOUNDKIT) ~= "table" then SOUNDKIT = {} end
+    for k, v in pairs(soundkitDefaults) do
+        if SOUNDKIT[k] == nil then SOUNDKIT[k] = v end
+    end
+end
+
+-----------------------------------------
 -- Color
 -----------------------------------------
 local colors = {
@@ -205,6 +242,13 @@ end
 -----------------------------------------
 -- enable/disable
 -----------------------------------------
+--! WotLK fix: SetEnabled exists on no 3.3.5 widget. Attach it per instance in the
+--! constructors below instead of writing it into the shared Button/Slider
+--! metatables, which taxed every button and slider in the client (rule 3).
+local function Widget_SetEnabled(self, enabled)
+    if enabled then self:Enable() else self:Disable() end
+end
+
 function Cell.SetEnabled(isEnabled, ...)
     for _, w in pairs({...}) do
         if w:IsObjectType("FontString") then
@@ -221,6 +265,11 @@ function Cell.SetEnabled(isEnabled, ...)
             end
         elseif w.SetEnabled then
             w:SetEnabled(isEnabled)
+        --! WotLK fix: raw Button/Slider frames (ColorPicker's alpha slider) carry no
+        --! SetEnabled now that the shared metatable adapter is gone -- use the native
+        --! pair instead of falling through to Show/Hide, which would make them vanish.
+        elseif w.Enable and w.Disable then
+            if isEnabled then w:Enable() else w:Disable() end
         elseif isEnabled then
             w:Show()
         else
@@ -554,6 +603,7 @@ end
 -----------------------------------------
 function Cell.CreateButton(parent, text, buttonColor, size, noBorder, noBackground, fontNormal, fontDisable, template, ...)
     local b = CreateFrame("Button", nil, parent, template)
+    b.SetEnabled = Widget_SetEnabled
     if parent then b:SetFrameLevel(parent:GetFrameLevel()+1) end
     b:SetText(text)
     P.Size(b, size[1], size[2])
@@ -966,6 +1016,7 @@ end
 -----------------------------------------
 function Cell.CreateColorPicker(parent, label, hasOpacity, onChange, onConfirm)
     local cp = CreateFrame("Button", nil, parent, nil)
+    cp.SetEnabled = Widget_SetEnabled
     P.Size(cp, 14, 14)
     cp:SetBackdrop({bgFile = Cell.vars.whiteTexture, edgeFile = Cell.vars.whiteTexture, edgeSize = P.Scale(1)})
     cp:SetBackdropBorderColor(0, 0, 0, 1)
@@ -1285,6 +1336,7 @@ end
 function Cell.CreateSlider(name, parent, low, high, width, step, onValueChangedFn, afterValueChangedFn, isPercentage, ...)
     local tooltips = {...}
     local slider = CreateFrame("Slider", nil, parent, nil)
+    slider.SetEnabled = Widget_SetEnabled
     --! WotLK fix: synthesize retail's userChanged contract only for this Cell
     --! slider; never replace the shared native Slider metatable.
     local NativeSetValue = slider.SetValue
@@ -3053,7 +3105,7 @@ list:SetScript("OnHide", function() list:Hide() end)
 
 --! WotLK fix: the dropdown list is a Cell-owned local frame. Expose only the
 --! close operation required by other Cell modules; do not create a disconnected
---! global CellDropdownList placeholder in Polyfills.lua.
+--! global CellDropdownList placeholder anywhere.
 function Cell.HideDropdownList()
     list:Hide()
 end
@@ -3136,7 +3188,12 @@ function Cell.CreateDropdown(parent, width, dropdownType, isMini, isHorizontal)
 
     -- Enable clicking on the main frame to toggle the dropdown
     menu:SetScript("OnMouseDown", function()
-        if menu.button:IsEnabled() then
+        --! WotLK fix: native Button:IsEnabled returns 1/0, not true/false (FrameXML
+        --! compares it numerically in all 24 of its call sites), and 0 is TRUTHY in
+        --! Lua 5.1 -- so this guard never held back a disabled dropdown. Cell's own
+        --! EditBox copy answers a real boolean, so accept both shapes.
+        local enabled = menu.button:IsEnabled()
+        if enabled and enabled ~= 0 then
             menu.button:Click()
         end
     end)
@@ -3607,6 +3664,13 @@ function Cell.CreateBindingListButton(parent, modifier, bindKey, bindType, bindA
     b.actionGrid = actionGrid
     actionGrid:SetPoint("BOTTOMLEFT", typeGrid, "BOTTOMRIGHT", P.Scale(-1), 0)
     actionGrid:SetPoint("BOTTOMRIGHT")
+
+    --! WotLK fix: CreateGrid hardcodes frame level 6 while this row sits at 530+,
+    --! so the grids drew under the binding list. Lift them one level above the row.
+    local gridLevel = b:GetFrameLevel() + 1
+    keyGrid:SetFrameLevel(gridLevel)
+    typeGrid:SetFrameLevel(gridLevel)
+    actionGrid:SetFrameLevel(gridLevel)
 
     actionGrid:HookScript("OnEnter", function()
         if actionGrid:IsTruncated() then

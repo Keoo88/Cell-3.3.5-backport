@@ -112,4 +112,24 @@ Cell_ExpansionData.instanceNameAliases = {
     --! на один инстанс карте не мешают: LoadList кладёт оба ключа на одну цель.
     ["Camáras de Reflexión"] = "Halls of Reflection",
     ["Pueba del Campeon"] = "Trial of the Champion",
+    --! WotLK fix: esES spellings this table did not carry. Same additive rule as the
+    --! two rows above - two keys on one instance cost nothing, LoadList maps both to
+    --! the same target, and only the one the client actually returns ever fires.
+    --! Source: the esES payload of the NoM0Re fork (reference/cell_NoM0Re).
+    --! The fork points this at "Tempest Keep"; on 3.3.5a the payload key is "The Eye".
+    ["El Castillo de la Tempestad"] = "The Eye",
+    ["La Cima Hyjal"] = "The Battle for Mount Hyjal",
+    ["Templo Oscuro"] = "Black Temple",
+    ["Meseta de La Fuente del Sol"] = "Sunwell Plateau",
+    ["Bancal del Magister"] = "Magisters' Terrace",
+    ["El Arcatraz"] = "The Arcatraz",
+    ["Ahn'Qiraj"] = "Temple of Ahn'Qiraj",
+    ["Cumbre de Roca Negra Inferior"] = "Lower Blackrock Spire",
+    ["Cumbre de Roca Negra inferior"] = "Lower Blackrock Spire",
+    ["Sima Ígnea"] = "Ragefire Chasm",
+    --! The client names the map "Stormwind Stockade" and the zone "The Stockade" -
+    --! both spellings resolve, so both are listed.
+    ["Mazmorras de Ventormenta"] = "The Stockade",
+    ["Templo Sumergido"] = "The Temple of Atal'hakkar",
+    ["El Templo Sumergido"] = "The Temple of Atal'hakkar",
 }

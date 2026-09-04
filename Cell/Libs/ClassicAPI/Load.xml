@@ -19,8 +19,8 @@
 	     so do not create the unused permanent EventHandler dispatcher frame. -->
 	<!-- WotLK fix: WidgetAPI is the single owner of proven shared adapters:
 	     FontString line/truncation queries and Button/EditBox/Slider SetEnabled.
-	     It installs only absent methods; Polyfills.lua
-	     no longer creates duplicate widget probes or fallback owners.
+	     It installs only absent methods; no Cell file
+	     creates duplicate widget probes or fallback owners.
 	     2026-08-11: SetShown и SetAtlas отсюда удалены. SetShown прописывался в
 	     метатаблицу ScriptRegion, то есть всем виджетам клиента, ради четырёх
 	     точек вызова - все переведены на нативную пару Show/Hide. SetAtlas читал
@@ -38,7 +38,7 @@
 	     Cell keeps its extra cooldown state on Cell-owned instances, so do not
 	     load the global helpers or software-swipe capture backend. -->
 	<!-- WotLK fix: Cell owns its group/leader/assistant adapters privately in
-	     Polyfills.lua. Do not publish later-expansion group globals from the
+	     Core_Wrath.lua. Do not publish later-expansion group globals from the
 	     embedded copy; standalone !!!ClassicAPI/custom cores retain their owners. -->
 	<Script file="Util\HealPrediction.lua" />
 	<!-- 2026-08-11: HealPrediction.lua свёлся к одному раннему return и шапке
@@ -56,7 +56,7 @@
 	     Do not install two permanent global inspect hooks and an unused event frame
 	     solely to synthesize the non-native INSPECT_READY compatibility event. -->
 
-	<!-- WotLK fix: Cell builds its Wrath class tuples privately in Polyfills.lua.
+	<!-- WotLK fix: Cell builds its Wrath class tuples privately in Utils.lua.
 	     Do not publish the broad C_CreatureInfo/GetClassInfo compatibility owner or
 	     its unused, non-localized race table from the embedded copy. -->
 	<!-- WotLK fix: Cell's raid-debuff lookup now reads native legacy zone names.
@@ -70,10 +70,10 @@
 	<!-- WotLK fix: Cell macros use native SendAddonMessage and AceComm owns its
 	     implicit pre-4.1 prefix-registration result privately. Do not publish the
 	     later C_ChatInfo namespace from the embedded compatibility layer. -->
-	<!-- WotLK fix: Polyfills.lua supplies the one legacy spell-book helper used
+	<!-- WotLK fix: Utils.lua supplies the one legacy spell-book helper used
 	     by Cell; do not publish the unused C_SpellBook namespace and aliases. -->
-	<!-- WotLK fix: Cell needs only a small additive C_Spell surface provided by
-	     Polyfills.lua and no C_Item namespace methods. Do not publish the broad
+	<!-- WotLK fix: Cell reads the native spell API directly in Utils.lua and
+	     needs no C_Spell or C_Item namespace methods. Do not publish the broad
 	     embedded namespaces, deprecated aliases, tooltip scanner contracts, or
 	     unsupported item-location no-ops solely for unknown foreign consumers. -->
 	<!-- WotLK fix: Cell uses native addon APIs directly. Do not publish C_AddOns,
@@ -86,12 +86,12 @@
 	     ClassicAPI pool family or inherit standalone !!!ClassicAPI semantics. -->
 	<!-- WotLK fix: Color.lua/ColorUtil.lua publish retail-style color globals and
 	     mutate every entry of Blizzard's shared RAID_CLASS_COLORS table. Cell uses
-	     the private/additive adapters in Polyfills.lua instead; keeping these two
+	     the private/additive adapters in Utils.lua instead; keeping these two
 	     modules active leaks embedded-library behavior into foreign unit-frame
 	     addons (X-Perl 3.0.9 exposed the coexistence failure through class icons). -->
 	<!-- WotLK fix: API.lua publishes many dormant retail globals and frame helpers.
-	     Polyfills.lua retains only the guarded AnimateTexCoords helper required by
-	     Cell's embedded LibCustomGlow; other active consumers use native APIs. -->
+	     Cell's embedded LibCustomGlow keeps that helper private in its own file;
+	     other active consumers use native APIs. -->
 	<!-- WotLK fix: Cell has no AsyncCallbackSystem consumer and C_Item's load
 	     request is intentionally a no-op. Do not create two unused listener
 	     frames or publish ClassicAPI callback globals from the embedded copy. -->

@@ -11,7 +11,7 @@ local IsInRaid = Cell.IsInRaid
 --! WotLK fix: убран `local IsEncounterInProgress = IsEncounterInProgress`. Функции на
 --! 3.3.5 нет (добавлена в 5.0), так что локал всегда был nil, и оба места в файле
 --! (Report и GroupRosterUpdate) и без него зовут приватный Cell.IsEncounterInProgress
---! из Polyfills.lua, который теперь получает состояние боя от DBM.
+--! из Core_Wrath.lua, который теперь получает состояние боя от DBM.
 --! Мёртвая привязка опасна тем, что читает чужой глобал: аддон, объявивший своё
 --! IsEncounterInProgress, подсунул бы Cell чужую реализацию (CLAUDE.md §3).
 --! WotLK fix: bind the native 3.3.5 spell-link API directly; do not require a
@@ -163,7 +163,7 @@ local frame = CreateFrame("Frame")
 
 --! WotLK fix: ENCOUNTER_START/END do not exist on 3.3.5 (added 5.4), so these two
 --! handlers used to be unreachable and the report cap below never engaged - every
---! death of a 25-man wipe went to /raid. Polyfills.lua now bridges DBM's
+--! death of a 25-man wipe went to /raid. Core_Wrath.lua now bridges DBM's
 --! DBM_Pull/DBM_Kill/DBM_Wipe into Cell's own EncounterStart/EncounterEnd
 --! callbacks, so subscribe to those instead of to the missing frame events.
 local function EncounterStart()

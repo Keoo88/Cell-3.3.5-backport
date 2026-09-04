@@ -1,7 +1,7 @@
 --! WotLK fix: снимок НАТИВНОГО API до загрузки слоя совместимости.
 --!
 --! Файл обязан грузиться ПЕРВЫМ в Cell.toc — раньше Libs\ClassicAPI\Load.xml и
---! Polyfills.lua. Он запоминает, какие методы виджетов и какие глобалы существуют
+--! остальных файлов аддона. Он запоминает, какие методы виджетов и какие глобалы существуют
 --! в клиенте 3.3.5a САМИ ПО СЕБЕ. Дальше `/cell debug shims` показывает разницу:
 --! что слой совместимости добавил, а что ПЕРЕОПРЕДЕЛИЛ поверх нативного.
 --!
@@ -100,7 +100,7 @@ probeParent:SetScript("OnShow", probeParent.Hide)
 -- глобалы, которых касается слой совместимости
 -------------------------------------------------
 -- Снимаем не весь _G (это ~4000 имён в памяти на всю сессию), а точечный список
--- того, что Polyfills.lua и ClassicAPI трогают. Список пополнять по мере находок.
+-- того, что слой совместимости и ClassicAPI трогают. Список пополнять по мере находок.
 local WATCHED = {
     -- юниты и роли
     "UnitGroupRolesAssigned", "UnitIsGroupLeader", "UnitIsGroupAssistant",
@@ -135,7 +135,7 @@ local WATCHED = {
     --! То, что занимает отдельный аддон !!!ClassicAPI, если он установлен.
     --! Он грузится раньше Cell, и всё занятое им Cell своим полифиллом уже не создаст.
     --! Первый пойманный случай — SOUNDKIT: у него 12 ключей без U_CHAT_SCROLL_BUTTON,
-    --! из-за чего PlaySound(nil) рвал цепочку клика (см. Polyfills.lua, блок SOUNDKIT).
+    --! из-за чего PlaySound(nil) рвал цепочку клика (см. Widgets\Widgets.lua, блок SOUNDKIT).
     "SOUNDKIT", "PixelUtil", "Mixin", "CreateFromMixins", "AuraUtil",
     "ColorMixin", "Enum", "CreateVector2D", "WrapTextInColorCode",
     "GetPhysicalScreenSize", "IsAddOnLoaded", "GetAddOnMetadata",

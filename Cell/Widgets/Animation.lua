@@ -70,8 +70,9 @@ local function AbsoluteAnimation_OnUpdate(animation)
     local region = animation:GetRegionParent()
     if not region then return end
 
+    local progress = animation:GetSmoothProgress() or 0
     local from = info.from
-    local value = from + (info.to - from) * (animation:GetSmoothProgress() or 0)
+    local value = from + (info.to - from) * progress
 
     if info.kind == "alpha" then
         region:SetAlpha(value)

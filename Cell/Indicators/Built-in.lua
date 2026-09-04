@@ -31,6 +31,9 @@ local function noop() end
 function I.Cooldowns_SetSize(self, width, height)
     self.width = width
     self.height = height
+    --! WotLK perf: geometry changed under the count memo UnitButton_UpdateBuffs keeps,
+    --! so drop it -- the next aura pass must recompute. See GAP-131.
+    self._lastShown = nil
 
     for i = 1, #self do
         self[i]:SetSize(width, height)
@@ -126,6 +129,7 @@ end
 
 function I.Cooldowns_SetOrientation(self, orientation)
     local point1, point2, x, y
+    self._lastShown = nil --! WotLK perf: geometry changed, see I.Cooldowns_SetSize
 
     if orientation == "left-to-right" then
         point1 = "TOPLEFT"

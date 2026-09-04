@@ -15,7 +15,8 @@
     <Include file="LibDeflate\lib.xml"/>
     <Script file="LibBadWords.lua"/>
     <Include file="LibTranslit-1.0\LibTranslit-1.0.xml"/>
-    <Script file="LibGroupInfo.lua"/>
+    <!-- WotLK: LibGroupInfo.lua reads Cell.GetUnitClassToken / GetNormalizedRealmName /
+         group adapters at load, so it is loaded from Cell.toc after Utils.lua. -->
     <!-- WotLK: Cell consumes LibHealComm-4.0 privately for incoming-heal indicators. -->
     <Include file="LibHealComm-4.0\LibHealComm-4.0.xml"/>
     <!-- WotLK: Cell consumes LibResComm-1.0 privately for incoming-resurrection indicators. -->

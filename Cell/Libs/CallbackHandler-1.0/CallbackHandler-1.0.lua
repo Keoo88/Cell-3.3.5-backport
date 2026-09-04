@@ -7,7 +7,10 @@ if not CallbackHandler then return end -- No upgrade needed
 local meta = {__index = function(tbl, key) tbl[key] = {} return tbl[key] end}
 
 -- Lua APIs
-local securecallfunction, error = securecallfunction, error
+--! WotLK fix: 3.3.5a has native securecall but not the later securecallfunction
+--! alias. Fall back to it directly so return count and secure execution stay
+--! native; do not approximate with pcall.
+local securecallfunction, error = securecallfunction or securecall, error
 local setmetatable, rawget = setmetatable, rawget
 local next, select, pairs, type, tostring = next, select, pairs, type, tostring
 
